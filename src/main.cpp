@@ -2,6 +2,7 @@
 #include <fstream>
 #include <list>
 #include <sys/time.h>
+#include <CustomScalarReplacementOfAggregatesPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -13,6 +14,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar/LICM.h"
+#include "llvm/Transforms/Scalar.h"
 
 #include "cmdline_options_parser.hpp"
 
@@ -52,23 +54,13 @@ int main(int argc, char **argv) {
         llvm::errs() << "Error: Null module!\n";
         exit(-1);
     }
-/*
+
     char progName[] = "progName";
-    char ast_threshold_cmd[] = "-alias-set-saturation-threshold";
-    char ast_threshold_val[] = "4294967295";
-    char memdep_scanLimit_cmd[] = "-memdep-block-scan-limit";
-    char memdep_scanLimit_val[] = "4294967295";
-    char memdep_numberLimit_cmd[] = "-memdep-block-number-limit";
-    char memdep_numberLimit_val[] = "4294967295";
-    char unroll_threshold_cmd[] = "-unroll-threshold";
-    char unroll_threshold_val[] = "4294967295";
+    char debug[] = "-debug";
 
     char *opt_argv[] = {progName,
-                        ast_threshold_cmd, ast_threshold_val,
-                        memdep_scanLimit_cmd, memdep_scanLimit_val,
-                        memdep_numberLimit_cmd, memdep_numberLimit_val};
-    llvm::cl::ParseCommandLineOptions(7, opt_argv, "");
-*/
+                        debug};
+    llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
 
     // Run on module
     {
@@ -84,9 +76,15 @@ int main(int argc, char **argv) {
         passManagerBuilder.SLPVectorize = false;
         passManagerBuilder.populateModulePassManager(*passManager);
 */
+        passManager->add(llvm::createPromoteMemoryToRegisterPass());
+        passManager->add(createCustomScalarReplacementOfAggregatesPass(args_info.target_function));
+        //passManager->add(llvm::createDeadCodeEliminationPass());
+        passManager->add(llvm::createPromoteMemoryToRegisterPass());
 
         passManager->run(*module);
     }
+
+    module->dump();
 
     return 0;
 }

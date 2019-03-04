@@ -9,8 +9,13 @@ struct s1 {
     float *pf1;
 };
 
-int kernel(struct s1 s11) {
-    return s11.i1;
+int f1(struct s1 *s11);
+
+int kernel(struct s1 *s11) {
+
+    s11->i1++;
+    f1(s11);
+    return s11->i1;
 }
 
 int main(void) {
@@ -24,5 +29,5 @@ int main(void) {
     float bf1 = 1.1;
     s11.pf1 = &bf1;
 
-    return kernel(s11);
+    return kernel(&s11);
 }
