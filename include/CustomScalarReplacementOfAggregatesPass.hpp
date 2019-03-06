@@ -29,7 +29,7 @@ public:
     void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
 
 private:
-    void processArguments(llvm::Function *function);
+    void processFunction(llvm::Function *function);
 
     void expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str, std::vector<llvm::Value *> &expanded);
 };
