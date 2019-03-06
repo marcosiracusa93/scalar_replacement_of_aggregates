@@ -31,6 +31,7 @@ int kernel(struct s1 s11) {
     return s12.i1;
 }
 */
+
 int main(void) {
 
     struct s1 s11;

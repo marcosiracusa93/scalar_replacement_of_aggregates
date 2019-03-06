@@ -5,6 +5,7 @@
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/IntrinsicInst.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
 #define DEBUG_TYPE "csroa"
 
@@ -59,8 +60,7 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
 
 void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str,
                                                           std::vector<llvm::Value *> &expanded) {
-    llvm::errs() << "B: ";
-    use->dump();
+
     if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
 
         expanded.clear();
@@ -139,6 +139,8 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
         llvm::Function *called_function = call_inst->getCalledFunction();
 
+        assert(called_function != nullptr && "We also have the implementation of the called function");
+
         if (llvm::MemCpyInst *memcpy_inst = llvm::dyn_cast<llvm::MemCpyInst>(call_inst)) {
 
             llvm::Value *dst = call_inst->getOperand(0);
@@ -202,10 +204,8 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                         memcpy_ops.push_back(expanded.at(idx));
                     }
 
-                    llvm::APInt apint_size = llvm::APInt((unsigned int) 64,
-                                                         expanded.at(
-                                                                 idx)->getType()->getPointerElementType()->getPrimitiveSizeInBits(),
-                                                         false);
+                    llvm::APInt apint_size = llvm::APInt((unsigned int) 64, expanded.at(
+                            idx)->getType()->getPointerElementType()->getPrimitiveSizeInBits(), false);
                     llvm::ConstantInt *cint_size = llvm::ConstantInt::get(memcpy_inst->getContext(), apint_size);
                     memcpy_ops.push_back(cint_size);
                     // TODO fix the size parameter which goes to zero for complex (aggregate) types like nested structs
@@ -222,10 +222,62 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                                                                            memcpy_inst);
                 }
             }
+        } else {
+            llvm::Type *new_type = called_function->getFunctionType()->getReturnType();
+            std::vector<llvm::Type *> fun_args = std::vector<llvm::Type *>();
+            for (auto &a : called_function->args()) {
+                fun_args.push_back(a.getType());
+                llvm::errs() << "A: ";
+                a.getType()->dump();
+            }
+            for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
+                fun_args.push_back(llvm::PointerType::getUnqual(str->getContainedType(idx)));
+                llvm::errs() << "A: ";
+                llvm::PointerType::getUnqual(str->getContainedType(idx))->dump();
+            }
+
+            llvm::FunctionType *function_type = llvm::FunctionType::get(new_type, fun_args, false);
+            llvm::GlobalValue::LinkageTypes linkage = called_function->getLinkage();
+            std::string new_function_name = called_function->getName().str() + ".csroa." + str->getName().str();
+            llvm::Function *new_function = llvm::Function::Create(function_type, linkage, new_function_name,
+                                                                  called_function->getParent());
+
+            llvm::ValueToValueMapTy VMap;
+            llvm::Function::arg_iterator DestI = new_function->arg_begin();
+            for (const llvm::Argument &I : called_function->args()) {
+                if (VMap.count(&I) == 0) {
+                    DestI->setName(I.getName());
+                    VMap[&I] = &*DestI++;
+                }
+            }
+
+            llvm::SmallVector<llvm::ReturnInst *, 8> returns;
+            llvm::ClonedCodeInfo *codeInfo;
+            llvm::CloneFunctionInto(new_function, called_function, VMap, true, returns, "", codeInfo);
+            llvm::PreservedAnalyses::none();
+            std::string new_call_name = call_inst->getName().str() + ".csroa." + str->getName().str();
+
+            std::vector<llvm::Value *> call_args = std::vector<llvm::Value *>();
+
+            for (auto &a : call_inst->arg_operands()) {
+                call_args.push_back(a.get());
+                llvm::errs() << "O: ";
+                a.get()->getType()->dump();
+            }
+
+            for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
+                llvm::PointerType *ptr_ty = llvm::PointerType::getUnqual(str->getContainedType(idx));
+                call_args.push_back(llvm::ConstantPointerNull::get(ptr_ty));
+                llvm::errs() << "O: ";
+                llvm::ConstantPointerNull::get(ptr_ty)->dump();
+
+            }
+
+            llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, call_args, new_call_name, call_inst);
+
         }
     }
-    llvm::errs() << "E: ";
-    use->dump();
+
 /*
     if (true) {//llvm::PointerType *val_ptr = llvm::dyn_cast<llvm::PointerType>(prev->getType())) {
         if (true) {//llvm::StructType *str = llvm::dyn_cast<llvm::StructType>(val_ptr->getPointerElementType())) {
