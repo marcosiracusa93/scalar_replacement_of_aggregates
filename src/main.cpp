@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
     llvm::Module *module;                       // module to process
     std::string modulePath;                     // full path for the file to process
 
-    modulePath = std::string(args_info.ll_path) + std::string(args_info.ll_filename);
+    modulePath = std::string(args_info.ll_path) + "/"+ std::string(args_info.ll_filename);
 
     // check if the .ll file of the module exists and can be opened
     std::fstream file;
@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
 
     char *opt_argv[] = {progName,
                         debug};
-    llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
+    //llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
 
     // Run on module
     {
