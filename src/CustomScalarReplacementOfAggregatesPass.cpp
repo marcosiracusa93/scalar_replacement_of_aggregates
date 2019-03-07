@@ -319,11 +319,12 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                             for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
                                 *(op_it + 1 + idx) = expanded.at(idx);
                             }
-                            break;
                         }
                     }
                 }
             }
+
+            llvm::PreservedAnalyses::none();
         }
     }
 }
