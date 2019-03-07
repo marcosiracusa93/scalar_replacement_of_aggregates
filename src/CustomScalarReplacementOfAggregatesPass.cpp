@@ -51,7 +51,6 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
 
                     expandValue(alloca_inst, alloca_inst, str_ty, expanded);
 
-                    return;
                 }
             }
         }
@@ -147,7 +146,10 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
             llvm::Value *dst = call_inst->getOperand(0);
             llvm::Value *src = call_inst->getOperand(1);
-            if (llvm::isa<llvm::BitCastInst>(src) and llvm::isa<llvm::BitCastInst>(dst)) {
+            if (llvm::isa<llvm::BitCastInst>(src) and llvm::isa<llvm::BitCastInst>(dst) and
+                visited_memcpy.count(memcpy_inst) == 0) {
+
+                visited_memcpy.insert(memcpy_inst);
 
                 for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
                     llvm::Type *element = str->getContainedType(idx);
@@ -222,6 +224,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
                     llvm::CallInst *new_call_inst = llvm::CallInst::Create(called_function, memcpy_ops, "",
                                                                            memcpy_inst);
+
                 }
             }
         } else {

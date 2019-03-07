@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
 */
         passManager->add(llvm::createPromoteMemoryToRegisterPass());
         passManager->add(createCustomScalarReplacementOfAggregatesPass(args_info.target_function));
-        //passManager->add(llvm::createDeadCodeEliminationPass());
+        passManager->add(llvm::createDeadCodeEliminationPass());
         //passManager->add(llvm::createPromoteMemoryToRegisterPass());
 
         passManager->run(*module);
