@@ -137,9 +137,11 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
         }
     } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use)) {
 
+        llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(prev);
         llvm::Function *called_function = call_inst->getCalledFunction();
 
-        assert(called_function != nullptr && "We also have the implementation of the called function");
+        assert(called_function != nullptr && "Implementation needed");
+        //assert(arg != nullptr && "Argument reference needed");
 
         if (llvm::MemCpyInst *memcpy_inst = llvm::dyn_cast<llvm::MemCpyInst>(call_inst)) {
 
@@ -224,224 +226,103 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
             }
         } else {
             llvm::Type *new_type = called_function->getFunctionType()->getReturnType();
-            std::vector<llvm::Type *> fun_args = std::vector<llvm::Type *>();
-            for (auto &a : called_function->args()) {
-                fun_args.push_back(a.getType());
-                llvm::errs() << "A: ";
-                a.getType()->dump();
-            }
-            for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                fun_args.push_back(llvm::PointerType::getUnqual(str->getContainedType(idx)));
-                llvm::errs() << "A: ";
-                llvm::PointerType::getUnqual(str->getContainedType(idx))->dump();
-            }
 
-            llvm::FunctionType *function_type = llvm::FunctionType::get(new_type, fun_args, false);
-            llvm::GlobalValue::LinkageTypes linkage = called_function->getLinkage();
-            std::string new_function_name = called_function->getName().str() + ".csroa." + str->getName().str();
-            llvm::Function *new_function = llvm::Function::Create(function_type, linkage, new_function_name,
-                                                                  called_function->getParent());
-
-            llvm::ValueToValueMapTy VMap;
-            llvm::Function::arg_iterator DestI = new_function->arg_begin();
-            for (const llvm::Argument &I : called_function->args()) {
-                if (VMap.count(&I) == 0) {
-                    DestI->setName(I.getName());
-                    VMap[&I] = &*DestI++;
+            for (auto c2c_it = exp_call_map.begin(); c2c_it != exp_call_map.end(); c2c_it++) {
+                if (call_inst == c2c_it->second) {
+                    return;
                 }
             }
 
-            llvm::SmallVector<llvm::ReturnInst *, 8> returns;
-            llvm::ClonedCodeInfo *codeInfo;
-            llvm::CloneFunctionInto(new_function, called_function, VMap, true, returns, "", codeInfo);
-            llvm::PreservedAnalyses::none();
-            std::string new_call_name = call_inst->getName().str() + ".csroa." + str->getName().str();
+            std::vector<llvm::Type *> new_fun_args = std::vector<llvm::Type *>();
+            std::vector<llvm::Value *> new_call_args = std::vector<llvm::Value *>();
 
-            std::vector<llvm::Value *> call_args = std::vector<llvm::Value *>();
+            call_to_call_map_ty::iterator c2c_it = exp_call_map.find(call_inst);
 
-            for (auto &a : call_inst->arg_operands()) {
-                call_args.push_back(a.get());
-                llvm::errs() << "O: ";
-                a.get()->getType()->dump();
-            }
-
-            for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                llvm::PointerType *ptr_ty = llvm::PointerType::getUnqual(str->getContainedType(idx));
-                call_args.push_back(llvm::ConstantPointerNull::get(ptr_ty));
-                llvm::errs() << "O: ";
-                llvm::ConstantPointerNull::get(ptr_ty)->dump();
-
-            }
-
-            llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, call_args, new_call_name, call_inst);
-
-        }
-    }
-
-/*
-    if (true) {//llvm::PointerType *val_ptr = llvm::dyn_cast<llvm::PointerType>(prev->getType())) {
-        if (true) {//llvm::StructType *str = llvm::dyn_cast<llvm::StructType>(val_ptr->getPointerElementType())) {
-
-            if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
-                llvm::Function *function = arg->getParent();
-
-                expanded.clear();
-                for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                    llvm::Type *element = str->getContainedType(idx);
-
-                    llvm::Type *new_arg_type = llvm::PointerType::getUnqual(element);
-
-                    std::string new_arg_name = arg->getName().str() + ".csroa.arg." + std::to_string(idx);
-                    llvm::Argument *new_arg = new llvm::Argument(new_arg_type, new_arg_name, function);
-
-                    if(arg->hasByValAttr()) {
-                        new_arg->addAttr(llvm::Attribute::AttrKind::ByVal);
-                    }
-
-                    expanded.insert(expanded.begin() + idx, new_arg);
-                }
-
-                // https://stackoverflow.com/questions/22494422/adding-an-argument-to-a-function-in-llvm
-
-                for (auto user_it = function->user_begin(); user_it != function->user_end(); user_it++) {
-                    llvm::User *user = *user_it;
-
-                    if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
-                        std::vector<llvm::Value*> args = std::vector<llvm::Value*>();
-                        args.insert(args.begin(), call_inst->arg_operands().begin(), call_inst->arg_operands().end());
-llvm::errs() << "A1:\n";
-for(auto &a : args) {
-    a->dump();
-}
-llvm::errs() << "A1********\n";
-
-                        if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(call_inst->getOperand(arg->getArgNo()))) {
-                            for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                                llvm::Type *element = str->getContainedType(idx);
-
-                                llvm::Type *new_alloca_type = llvm::PointerType::getUnqual(element);
-                                std::string new_alloca_name =
-                                        alloca_inst->getName().str() + ".csroa.alloca." + std::to_string(idx);
-                                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(new_alloca_type,
-                                                                                         new_alloca_name, alloca_inst);
-
-                                args.push_back(new_alloca_inst);
-                            }
-
-llvm::errs() << "A2:\n";
-for(auto &a : args) {
-    a->dump();
-}
-llvm::errs() << "A2********\n";
-
-                            std::string new_name = call_inst->getName().str() + ".csroa.call";
-                            //llvm::CallInst *new_call_inst = llvm::CallInst::Create(function, args, new_name, call_inst);
-                        }
-                    }
-                }
-
-                for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
-                    llvm::User *user = *user_it;
-
-                    expandValue(user, arg, str, expanded);
-                }
-            } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(use)) {
-
-                if (store_inst->getValueOperand() == prev) {
-                    llvm::Function *function = store_inst->getFunction();
-
-                    std::vector<llvm::Value *> expanded_val = expanded;
-
-                    expandValue(store_inst->getPointerOperand(), prev, str, expanded);
-
-                    std::vector<llvm::Value *> expanded_ptr = expanded;
-
-                    expanded.clear();
-                    for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                        llvm::Type *element = str->getContainedType(idx);
-
-                        llvm::Type *new_store_type = llvm::PointerType::getUnqual(element);
-                        std::string new_store_name =
-                                store_inst->getName().str() + ".csroa.store." + std::to_string(idx);
-                        llvm::StoreInst *new_store_inst = new llvm::StoreInst(expanded_val.at(idx),
-                                                                              expanded_ptr.at(idx),
-                                                                              store_inst);
-
-                        expanded.insert(expanded.begin() + idx, new_store_inst);
-                    }
-                }
-            } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
-
-                expanded.clear();
-
-                for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                    llvm::Type *element = str->getContainedType(idx);
-
-                    llvm::Type *new_alloca_type = llvm::PointerType::getUnqual(element);
-                    std::string new_alloca_name = alloca_inst->getName().str() + ".csroa.alloca." + std::to_string(idx);
-                    llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(new_alloca_type, new_alloca_name,
-                                                                             alloca_inst);
-
-                    expanded.insert(expanded.begin() + idx, new_alloca_inst);
-                }
-
-                for (auto user_it = alloca_inst->user_begin(); user_it != alloca_inst->user_end(); user_it++) {
-                    llvm::User *user = *user_it;
-
-                    expandValue(user, alloca_inst, str, expanded);
-                }
-            } else if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use)) {
-                llvm::Function *function = load_inst->getFunction();
-
-                std::vector<llvm::Value *> expanded_val = expanded;
-                std::vector<llvm::Value *> expanded_res = std::vector<llvm::Value *>(str->getNumContainedTypes(),
-                                                                                     nullptr);
-
-                for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
-                    llvm::Type *element = str->getContainedType(idx);
-
-                    llvm::Type *new_load_type = llvm::PointerType::getUnqual(element);
-                    std::string new_load_name = load_inst->getName().str() + ".csroa.load." + std::to_string(idx) + ".";
-
-                    llvm::LoadInst *new_load_inst = new llvm::LoadInst(expanded_val.at(idx), new_load_name, load_inst);
-
-                    expanded_res.insert(expanded_res.begin() + idx, new_load_inst);
-                }
-
-                for (auto user_it = load_inst->user_begin(); user_it != load_inst->user_end(); user_it++) {
-                    llvm::User *user = *user_it;
-
-                    expandValue(user, load_inst, str, expanded_res);
-                }
-            } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use)) {
-                if (gep_inst->getPointerOperand() == prev) {
-                    if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
-                        if (cint->getValue().getSExtValue() == 0) {
-                            if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(2))) {
-                                llvm::Value *ptr = expanded.at(cint->getValue().getSExtValue());
-                                std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
-                                ops.insert(ops.end(), gep_inst->op_begin() + 3, gep_inst->op_end());
-                                std::string new_name = gep_inst->getName().str() + ".csroa.gepi." +
-                                                       std::to_string(cint->getValue().getSExtValue());
-
-                                llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(ptr->getType()->getScalarType());
-                                llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(ptr->getType()->getScalarType())->getElementType();
-
-                                llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(new_type, ptr,
-                                                                                                        ops, new_name,
-                                                                                                        gep_inst);
-
-                                gep_inst->replaceAllUsesWith(new_gep_inst);
+            llvm::CallInst *call_to_use = nullptr;
+            if (c2c_it == exp_call_map.end()) {
+                for (auto &a : called_function->args()) {
+                    new_fun_args.push_back(a.getType());
+                    new_call_args.push_back(call_inst->getOperand(a.getArgNo()));
+                    if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(a.getType())) {
+                        if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                            for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                                new_fun_args.push_back(llvm::PointerType::getUnqual(str_ty->getContainedType(idx)));
+                                new_call_args.push_back(llvm::ConstantPointerNull::get(
+                                        llvm::PointerType::getUnqual(str_ty->getContainedType(idx))));
                             }
                         }
                     }
                 }
-            } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use)) {
 
+                fun_to_fun_map_ty::iterator f2f_it = exp_fun_map.find(called_function);
+
+                llvm::Function *fun_to_call = nullptr;
+                if (f2f_it == exp_fun_map.end()) {
+
+                    llvm::FunctionType *new_function_type = llvm::FunctionType::get(new_type, new_fun_args, false);
+                    llvm::GlobalValue::LinkageTypes linkage = called_function->getLinkage();
+                    std::string new_function_name = called_function->getName().str() + ".csroa.";
+                    llvm::Function *new_function = llvm::Function::Create(new_function_type, linkage, new_function_name,
+                                                                          called_function->getParent());
+
+                    llvm::ValueToValueMapTy VMap;
+                    llvm::Function::arg_iterator DestI = new_function->arg_begin();
+                    for (auto &a : called_function->args()) {
+                        if (VMap.count(&a) == 0) {
+                            DestI->setName(a.getName());
+                            VMap[&a] = &*DestI++;
+
+                            if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(a.getType())) {
+                                if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(
+                                        ptr_ty->getElementType())) {
+                                    for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                                        DestI->setName(a.getName().str() + "." + std::to_string(idx));
+                                        DestI++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    llvm::SmallVector<llvm::ReturnInst *, 8> returns;
+                    llvm::ClonedCodeInfo *codeInfo;
+                    llvm::CloneFunctionInto(new_function, called_function, VMap, true, returns, "", codeInfo);
+                    llvm::PreservedAnalyses::none();
+
+                    exp_fun_map.insert(std::make_pair(called_function, new_function));
+                    fun_to_call = new_function;
+                } else {
+                    fun_to_call = f2f_it->second;
+                }
+
+                std::string new_call_name = call_inst->getName().str() + ".csroa";
+
+                llvm::CallInst *new_call_inst = llvm::CallInst::Create(fun_to_call, new_call_args, new_call_name,
+                                                                       call_inst);
+
+                exp_call_map[call_inst] = new_call_inst;
+
+                call_to_use = new_call_inst;
+            } else {
+                call_to_use = c2c_it->second;
+            }
+
+            for (auto op_it = call_to_use->op_begin(); op_it != call_to_use->op_end(); op_it++) {
+                llvm::Value *op = *op_it;
+
+                if (op == prev) {
+                    if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(op->getType())) {
+                        if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                            for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                                *(op_it + 1 + idx) = expanded.at(idx);
+                            }
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
-*/
 }
 
 

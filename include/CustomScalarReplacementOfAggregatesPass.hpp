@@ -10,6 +10,25 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Instructions.h>
 
+typedef std::pair<llvm::Function *, unsigned long long> fun_arg_key_ty;
+
+struct Compare_fun_arg_key {
+    bool operator()(const fun_arg_key_ty &lhs, const fun_arg_key_ty &rhs) {
+        if (lhs.first < rhs.first) {
+            return true;
+        } else if (lhs.first == rhs.first) {
+            return lhs.second < rhs.second;
+        } else {
+            return false;
+        }
+    }
+};
+
+typedef std::map<fun_arg_key_ty, std::vector<unsigned long long>, Compare_fun_arg_key> expanded_elements_in_args_ty;
+typedef std::map<llvm::Function *, llvm::Function *> fun_fun_map_ty;
+typedef std::map<llvm::Function *, llvm::Function *> fun_to_fun_map_ty;
+typedef std::map<llvm::CallInst *, llvm::CallInst *> call_to_call_map_ty;
+
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass {
 
 public:
@@ -17,6 +36,10 @@ public:
 
 private:
     const std::string kernel_name;
+
+    expanded_elements_in_args_ty expanded_elements_in_args;
+    fun_to_fun_map_ty exp_fun_map;
+    call_to_call_map_ty exp_call_map;
 
 public:
     explicit CustomScalarReplacementOfAggregatesPass(std::string kernel_name) : llvm::ModulePass(ID),
