@@ -17,7 +17,12 @@ struct s2 {
 };
 
 int f1(struct s1 *s11) {
-    return s11->i1;
+
+    struct s1 s12;
+    s12.i1 = s11->i1;
+    s12.d1 = s11->d1;
+
+    return s12.i1;
 }
 
 int kernel(struct s1 *s11, struct s2 *s21, int *s11i1, struct s1 *s12, struct s1 *s13) {

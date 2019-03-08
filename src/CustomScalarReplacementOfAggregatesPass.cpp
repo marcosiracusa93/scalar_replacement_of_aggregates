@@ -19,6 +19,19 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
     processFunction(kernel_function);
 
+    for (auto i2r_rit = inst_to_remove.rbegin(); i2r_rit != inst_to_remove.rend(); i2r_rit++) {
+        if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(*i2r_rit)) {
+
+            inst->eraseFromParent();
+        }
+    }
+
+    for (auto f_it = exp_fun_map.rbegin(); f_it != exp_fun_map.rend(); f_it++) {
+        llvm::Function *f = f_it->first;
+
+        f->eraseFromParent();
+    }
+
     return true;
 }
 
@@ -42,18 +55,33 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
     }
 */
 
-    for (auto &bb : *function) {
-        for (auto &i : bb) {
-            if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i)) {
-                if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
+    while (true) {
 
-                    std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
+        std::vector<llvm::AllocaInst *> alloca_vec = std::vector<llvm::AllocaInst *>();
 
-                    expandValue(alloca_inst, alloca_inst, str_ty, expanded);
-
+        for (auto &bb : *function) {
+            for (auto &i : bb) {
+                if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i)) {
+                    if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
+                        alloca_vec.push_back(alloca_inst);
+                    }
                 }
             }
         }
+
+        //if(alloca_vec.size() == 0) { break; }
+
+        for (auto &a : alloca_vec) {
+            if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(a)) {
+                if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
+                    std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
+
+                    expandValue(alloca_inst, alloca_inst, str_ty, expanded);
+                }
+            }
+        }
+
+        break;
     }
 }
 
@@ -82,17 +110,15 @@ CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_
             }
         }
     }
+
+    processFunction(new_function);
 }
 
 void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str,
                                                           std::vector<llvm::Value *> &expanded) {
 
     if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
-        llvm::errs() << "A: ";
-        arg->dump();
-        for (auto &e : expanded) {
-            e->dump();
-        }
+
         for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
             llvm::User *user = *user_it;
 
@@ -113,6 +139,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                                                                                          alloca_inst);
 
             expanded.insert(expanded.begin() + idx, new_alloca_inst);
+
         }
 
         for (auto user_it = alloca_inst->user_begin(); user_it != alloca_inst->user_end(); user_it++) {
@@ -122,6 +149,10 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
             expandValue(user, alloca_inst, str, expanded_val);
         }
+
+        alloca_inst->replaceAllUsesWith(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(str)));
+        inst_to_remove.insert(alloca_inst);
+
     } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use)) {
         if (gep_inst->getPointerOperand() == prev) {
             if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
@@ -147,6 +178,8 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                         } else {
                             gep_inst->replaceAllUsesWith(ptr);
                         }
+
+                        inst_to_remove.insert(gep_inst);
                     }
                 }
             }
@@ -174,6 +207,9 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
             expandValue(user, bitcast_inst, str, expanded);
         }
+
+        inst_to_remove.insert(bitcast_inst);
+
     } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use)) {
 
         llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(prev);
@@ -265,6 +301,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                     llvm::CallInst *new_call_inst = llvm::CallInst::Create(called_function, memcpy_ops, "",
                                                                            memcpy_inst);
 
+                    inst_to_remove.insert(memcpy_inst);
                 }
             }
         } else {
@@ -351,6 +388,8 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                 llvm::CallInst *new_call_inst = llvm::CallInst::Create(fun_to_call, new_call_args, new_call_name,
                                                                        call_inst);
 
+                call_inst->replaceAllUsesWith(new_call_inst);
+
                 exp_call_map[call_inst] = new_call_inst;
 
                 call_to_use = new_call_inst;
@@ -371,6 +410,8 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                     }
                 }
             }
+
+            inst_to_remove.insert(call_inst);
 
             llvm::PreservedAnalyses::none();
         }
