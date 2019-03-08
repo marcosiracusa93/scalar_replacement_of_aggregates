@@ -10,6 +10,8 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Instructions.h>
 
+#include <set>
+
 typedef std::pair<llvm::Function *, unsigned long long> fun_arg_key_ty;
 
 struct Compare_fun_arg_key {
@@ -28,6 +30,7 @@ typedef std::map<fun_arg_key_ty, std::vector<unsigned long long>, Compare_fun_ar
 typedef std::map<llvm::Function *, llvm::Function *> fun_fun_map_ty;
 typedef std::map<llvm::Function *, llvm::Function *> fun_to_fun_map_ty;
 typedef std::map<llvm::CallInst *, llvm::CallInst *> call_to_call_map_ty;
+typedef std::set<llvm::CallInst *> call_set_ty;
 
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass {
 
@@ -40,6 +43,7 @@ private:
     expanded_elements_in_args_ty expanded_elements_in_args;
     fun_to_fun_map_ty exp_fun_map;
     call_to_call_map_ty exp_call_map;
+    call_set_ty visited_memcpy;
 
 public:
     explicit CustomScalarReplacementOfAggregatesPass(std::string kernel_name) : llvm::ModulePass(ID),
@@ -53,6 +57,9 @@ public:
 
 private:
     void processFunction(llvm::Function *function);
+
+    void expandArguments(llvm::Function *called_function, llvm::Function *new_function,
+                         std::vector<unsigned long long> arg_map);
 
     void expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str, std::vector<llvm::Value *> &expanded);
 };

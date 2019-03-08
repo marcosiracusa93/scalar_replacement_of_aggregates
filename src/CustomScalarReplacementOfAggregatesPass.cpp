@@ -51,8 +51,34 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
 
                     expandValue(alloca_inst, alloca_inst, str_ty, expanded);
 
-                    return;
                 }
+            }
+        }
+    }
+}
+
+void
+CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_function, llvm::Function *new_function,
+                                                         std::vector<unsigned long long> arg_map) {
+
+    for (auto &a : arg_map) {
+        auto arg_it = new_function->arg_begin();
+
+        for (int i = 0; i < a; i++) { ++arg_it; }
+        llvm::Argument *arg = &*arg_it;
+
+        if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
+            if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+
+                std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
+
+                for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                    llvm::Type *element = str_ty->getContainedType(idx);
+
+                    expanded.push_back(&*(++arg_it));
+                }
+
+                expandValue(arg, arg, str_ty, expanded);
             }
         }
     }
@@ -61,7 +87,20 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
 void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str,
                                                           std::vector<llvm::Value *> &expanded) {
 
-    if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
+    if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
+        llvm::errs() << "A: ";
+        arg->dump();
+        for (auto &e : expanded) {
+            e->dump();
+        }
+        for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
+            llvm::User *user = *user_it;
+
+            std::vector<llvm::Value *> expanded_val = expanded;
+
+            expandValue(user, arg, str, expanded_val);
+        }
+    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
 
         expanded.clear();
 
@@ -147,7 +186,10 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
             llvm::Value *dst = call_inst->getOperand(0);
             llvm::Value *src = call_inst->getOperand(1);
-            if (llvm::isa<llvm::BitCastInst>(src) and llvm::isa<llvm::BitCastInst>(dst)) {
+            if (llvm::isa<llvm::BitCastInst>(src) and llvm::isa<llvm::BitCastInst>(dst) and
+                visited_memcpy.count(memcpy_inst) == 0) {
+
+                visited_memcpy.insert(memcpy_inst);
 
                 for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
                     llvm::Type *element = str->getContainedType(idx);
@@ -222,6 +264,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
                     llvm::CallInst *new_call_inst = llvm::CallInst::Create(called_function, memcpy_ops, "",
                                                                            memcpy_inst);
+
                 }
             }
         } else {
@@ -267,10 +310,15 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
                     llvm::ValueToValueMapTy VMap;
                     llvm::Function::arg_iterator DestI = new_function->arg_begin();
+
+                    std::vector<unsigned long long> arg_map = std::vector<unsigned long long>();
+                    unsigned long long arg_idx = 0;
                     for (auto &a : called_function->args()) {
                         if (VMap.count(&a) == 0) {
                             DestI->setName(a.getName());
                             VMap[&a] = &*DestI++;
+                            arg_map.push_back(arg_idx);
+                            arg_idx++;
 
                             if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(a.getType())) {
                                 if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(
@@ -278,6 +326,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                                     for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
                                         DestI->setName(a.getName().str() + "." + std::to_string(idx));
                                         DestI++;
+                                        arg_idx++;
                                     }
                                 }
                             }
@@ -285,11 +334,13 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                     }
 
                     llvm::SmallVector<llvm::ReturnInst *, 8> returns;
-                    llvm::ClonedCodeInfo *codeInfo;
+                    llvm::ClonedCodeInfo *codeInfo = nullptr;
                     llvm::CloneFunctionInto(new_function, called_function, VMap, true, returns, "", codeInfo);
                     llvm::PreservedAnalyses::none();
 
                     exp_fun_map.insert(std::make_pair(called_function, new_function));
+
+                    expandArguments(called_function, new_function, arg_map);
                     fun_to_call = new_function;
                 } else {
                     fun_to_call = f2f_it->second;
@@ -316,11 +367,12 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                             for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
                                 *(op_it + 1 + idx) = expanded.at(idx);
                             }
-                            break;
                         }
                     }
                 }
             }
+
+            llvm::PreservedAnalyses::none();
         }
     }
 }
