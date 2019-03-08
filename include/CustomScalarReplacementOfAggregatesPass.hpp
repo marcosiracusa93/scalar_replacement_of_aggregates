@@ -58,6 +58,9 @@ public:
 private:
     void processFunction(llvm::Function *function);
 
+    void expandArguments(llvm::Function *called_function, llvm::Function *new_function,
+                         std::vector<unsigned long long> arg_map);
+
     void expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str, std::vector<llvm::Value *> &expanded);
 };
 
