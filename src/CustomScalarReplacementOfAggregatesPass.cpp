@@ -19,6 +19,78 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
     processFunction(kernel_function);
 
+    for (auto &f : exp_fun_map) {
+        llvm::Function *function = f.second;
+
+        // Create the new function type based on the recomputed parameters.
+        std::vector<llvm::Type *> arg_tys;
+        for (auto &a : function->args()) {
+            if (args_to_remove[function].count(&a) == 0) {
+                arg_tys.push_back(a.getType());
+            }
+        }
+
+        llvm::FunctionType *new_fun_ty = llvm::FunctionType::get(function->getReturnType(), arg_tys,
+                                                                 function->isVarArg());
+
+        std::string new_fun_name = function->getName().str() + "clean";
+        llvm::Function *new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name,
+                                                              function->getParent());
+        new_function->copyAttributesFrom(function);
+        new_function->setComdat(function->getComdat());
+        //NF->setAttributes(NewPAL);
+
+        //function->getParent()->getFunctionList().insert(function->getIterator(), new_function);
+        //new_function->takeName(function);
+
+        new_function->getBasicBlockList().splice(new_function->begin(), function->getBasicBlockList());
+
+        unsigned int i = 0;
+        for (llvm::Function::arg_iterator fun_arg_it = function->arg_begin(), new_fun_arg_it = new_function->arg_begin();
+             fun_arg_it != function->arg_end(); ++fun_arg_it, ++i) {
+            if (args_to_remove[function].count(&*fun_arg_it) == 0) {
+                fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+                new_fun_arg_it->takeName(&*fun_arg_it);
+                ++new_fun_arg_it;
+            } else {
+                if (!fun_arg_it->getType()->isX86_MMXTy()) {
+                    fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
+                }
+            }
+        }
+
+        for (auto user_it = function->user_begin(); user_it != function->user_end(); user_it++) {
+            llvm::User *user = *user_it;
+
+            if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
+
+                std::vector<llvm::Value *> call_ops = std::vector<llvm::Value *>();
+                for (auto &op : call_inst->arg_operands()) {
+                    llvm::Value *operand = op.get();
+
+                    llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+                    for (auto i = 0; i < op.getOperandNo(); i++) { arg_it++; }
+                    if (args_to_remove[function].count(&*arg_it) == 0) {
+                        call_ops.push_back(operand);
+                    }
+                }
+
+
+                std::string new_call_name = call_inst->getName().str() + ".clean";
+                llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, call_ops, new_call_name,
+                                                                       call_inst);
+
+                call_inst->replaceAllUsesWith(new_call_inst);
+                call_inst->eraseFromParent();
+            } else {
+                llvm::errs() << "Funsction use should be call\n";
+                exit(-1);
+            }
+        }
+
+        function->eraseFromParent();
+    }
+
     for (auto i2r_rit = inst_to_remove.rbegin(); i2r_rit != inst_to_remove.rend(); i2r_rit++) {
         if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(*i2r_rit)) {
 
@@ -98,6 +170,7 @@ CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_
         if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
             if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
 
+                args_to_remove[arg->getParent()].insert(arg);
                 std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
 
                 for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
