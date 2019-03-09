@@ -2,8 +2,13 @@ cmake_minimum_required(VERSION 3.5.1)
 
 add_definitions(-Wall -v)
 
-set(CMAKE_C_COMPILER /usr/local/llvm-4.0.0/bin/clang)
-set(CMAKE_CXX_COMPILER /usr/local/llvm-4.0.0/bin/clang++)
+if (CMAKE_C_COMPILER STREQUAL "")
+  set(CMAKE_C_COMPILER /usr/local/llvm-4.0.0/bin/clang)
+endif()
+if (CMAKE_CXX_COMPILER STREQUAL "")
+  set(CMAKE_CXX_COMPILER /usr/local/llvm-4.0.0/bin/clang++)
+endif()
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_FLAGS -O3)
 
@@ -17,7 +22,7 @@ set(EXECUTABLE_OUTPUT_PATH "${PROJECT_SOURCE_DIR}/bin")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Set-up LLVM libraries
-find_package(LLVM REQUIRED CONFIG)
+find_package(LLVM 4.0.1 REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 message(STATUS "LLVM include dirs: ${LLVM_INCLUDE_DIRS}")

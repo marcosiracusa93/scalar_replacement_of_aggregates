@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
 
     char *opt_argv[] = {progName,
                         debug};
-    //llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
+    llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
 
     // Run on module
     {
@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
 */
         passManager->add(llvm::createPromoteMemoryToRegisterPass());
         passManager->add(createCustomScalarReplacementOfAggregatesPass(args_info.target_function));
-        passManager->add(llvm::createDeadCodeEliminationPass());
+        //passManager->add(llvm::createDeadCodeEliminationPass());
         //passManager->add(llvm::createPromoteMemoryToRegisterPass());
 
         passManager->run(*module);
