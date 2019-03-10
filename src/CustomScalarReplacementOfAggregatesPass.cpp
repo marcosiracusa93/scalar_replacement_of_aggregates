@@ -17,7 +17,179 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
     assert(kernel_function != nullptr && "Unknown kernel function!");
 
+    std::vector<llvm::Function *> inner_functions = std::vector<llvm::Function *>();
+    std::map<llvm::Function *, std::set<unsigned long long>> exp_args_map;
+    std::map<llvm::Function *, llvm::Function *> exp_fun_map;
+
+    inner_functions.push_back(kernel_function);
+
+    for (unsigned long long f_idx = 0; f_idx < inner_functions.size(); f_idx++) {
+        llvm::Function *function = inner_functions.at(f_idx);
+
+        for (llvm::BasicBlock &bb : *function) {
+            for (llvm::Instruction &i : bb) {
+                if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
+                    if (!llvm::isa<llvm::MemCpyInst>(call_inst)) {
+
+                        std::vector<llvm::Function *>::iterator if_it_b = inner_functions.begin();
+                        std::vector<llvm::Function *>::iterator if_it_e = inner_functions.end();
+
+                        if (std::find(if_it_b, if_it_e, call_inst->getCalledFunction()) == if_it_e) {
+                            inner_functions.push_back(call_inst->getCalledFunction());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    inner_functions.erase(inner_functions.begin());
+
+    for (llvm::Function *called_function : inner_functions) {
+
+        llvm::Type *new_return_type = called_function->getFunctionType()->getReturnType();
+
+        std::vector<llvm::Type *> new_fun_args = std::vector<llvm::Type *>();
+
+        for (auto &a : called_function->args()) {
+            new_fun_args.push_back(a.getType());
+        }
+
+        for (unsigned long long v_idx = 0; v_idx < new_fun_args.size(); v_idx++) {
+            llvm::Type *element = new_fun_args.at(v_idx);
+            if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(element)) {
+                if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                    for (unsigned long long e_idx = 0; e_idx != str_ty->getNumContainedTypes(); ++e_idx) {
+                        new_fun_args.insert(new_fun_args.begin() + v_idx + 1 + e_idx,
+                                            llvm::PointerType::getUnqual(str_ty->getContainedType(e_idx)));
+                    }
+                }
+            }
+        }
+
+        llvm::FunctionType *new_function_type = llvm::FunctionType::get(new_return_type, new_fun_args, false);
+        llvm::GlobalValue::LinkageTypes linkage = called_function->getLinkage();
+        std::string new_function_name = called_function->getName().str() + ".csroa";
+
+        llvm::Function *new_function = llvm::Function::Create(new_function_type, linkage, new_function_name,
+                                                              called_function->getParent());
+
+        llvm::ValueToValueMapTy VMap;
+        llvm::Function::arg_iterator DestI = new_function->arg_begin();
+
+        unsigned long long arg_idx = 0;
+        unsigned long long offset = 0;
+
+        class arg_rec {
+        public:
+            static void
+            rec(std::string name, llvm::Type *ty, unsigned long long &arg_idx, llvm::Function::arg_iterator &DestI,
+                std::set<unsigned long long> &exp_args_map_ref) {
+                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(ty)) {
+                    if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                        exp_args_map_ref.insert(arg_idx - 1);
+                        for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                            std::string new_name = name + "." + std::to_string(idx);
+                            DestI->setName(new_name);
+                            DestI++;
+                            arg_idx++;
+
+                            rec(new_name, llvm::PointerType::getUnqual(str_ty->getElementType(idx)), arg_idx, DestI,
+                                exp_args_map_ref);
+                        }
+                    }
+                }
+            }
+        };
+
+        std::set<unsigned long long> &exp_args_map_ref = exp_args_map[new_function];
+
+        for (auto &a : called_function->args()) {
+            if (VMap.count(&a) == 0) {
+                DestI->setName(a.getName());
+                VMap[&a] = &*DestI++;
+
+                arg_idx++;
+
+                arg_rec::rec(a.getName(), a.getType(), arg_idx, DestI, exp_args_map_ref);
+
+            }
+        }
+
+        llvm::SmallVector<llvm::ReturnInst *, 8> returns;
+        llvm::ClonedCodeInfo *codeInfo = nullptr;
+        llvm::CloneFunctionInto(new_function, called_function, VMap, true, returns, "", codeInfo);
+
+        exp_fun_map[called_function] = new_function;
+
+        llvm::PreservedAnalyses::none();
+
+        class op_rec {
+        public:
+            static void rec(llvm::Type *ty, std::vector<llvm::Value *> &ops) {
+
+                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(ty)) {
+                    if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+
+                        for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+
+                            ops.push_back(llvm::ConstantPointerNull::get(
+                                    llvm::PointerType::getUnqual(str_ty->getElementType(idx))));
+
+                            rec(llvm::PointerType::getUnqual(str_ty->getElementType(idx)), ops);
+                        }
+                    }
+                }
+            }
+        };
+
+        for (auto user_it = called_function->user_begin(); user_it != called_function->user_end(); user_it++) {
+            llvm::User *user = *user_it;
+
+            if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
+
+                std::vector<llvm::Function *>::iterator if_it_b = inner_functions.begin();
+                std::vector<llvm::Function *>::iterator if_it_e = inner_functions.end();
+
+                if (std::find(if_it_b, if_it_e, call_inst->getFunction()) != if_it_e or
+                    call_inst->getFunction() == kernel_function) {
+
+                    std::vector<llvm::Value *> new_call_ops = std::vector<llvm::Value *>();
+                    for (auto &op : call_inst->arg_operands()) {
+                        llvm::Value *operand = op.get();
+
+                        new_call_ops.push_back(operand);
+
+                        op_rec::rec(operand->getType(), new_call_ops);
+                    }
+
+                    std::string new_call_name = call_inst->getName().str() + ".csroa";
+                    llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, new_call_ops,
+                                                                           new_call_name,
+                                                                           call_inst);
+
+                    new_call_inst->takeName(call_inst);
+                    call_inst->replaceAllUsesWith(new_call_inst);
+                    call_inst->eraseFromParent();
+                }
+            }
+        }
+    }
+
     processFunction(kernel_function);
+
+    for (auto &f : exp_fun_map) {
+        llvm::Function *exp_fun = f.second;
+
+        expandArguments(nullptr, exp_fun, exp_args_map.at(exp_fun));
+
+        processFunction(exp_fun);
+    }
+
+    for (auto &i : inst_to_remove) {
+        i->replaceAllUsesWith(llvm::UndefValue::get(i->getType()));
+        i->eraseFromParent();
+    }
 
     for (auto &f : exp_fun_map) {
         llvm::Function *function = f.second;
@@ -25,7 +197,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         // Create the new function type based on the recomputed parameters.
         std::vector<llvm::Type *> arg_tys;
         for (auto &a : function->args()) {
-            if (args_to_remove[function].count(&a) == 0) {
+            if (exp_args_map[function].count(a.getArgNo()) == 0) {
                 arg_tys.push_back(a.getType());
             }
         }
@@ -33,7 +205,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         llvm::FunctionType *new_fun_ty = llvm::FunctionType::get(function->getReturnType(), arg_tys,
                                                                  function->isVarArg());
 
-        std::string new_fun_name = function->getName().str() + "clean";
+        std::string new_fun_name = function->getName().str() + ".clean";
         llvm::Function *new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name,
                                                               function->getParent());
         new_function->copyAttributesFrom(function);
@@ -48,14 +220,12 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         unsigned int i = 0;
         for (llvm::Function::arg_iterator fun_arg_it = function->arg_begin(), new_fun_arg_it = new_function->arg_begin();
              fun_arg_it != function->arg_end(); ++fun_arg_it, ++i) {
-            if (args_to_remove[function].count(&*fun_arg_it) == 0) {
+            if (exp_args_map[function].count(fun_arg_it->getArgNo()) == 0) {
                 fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
                 new_fun_arg_it->takeName(&*fun_arg_it);
                 ++new_fun_arg_it;
             } else {
-                if (!fun_arg_it->getType()->isX86_MMXTy()) {
-                    fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
-                }
+                fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
             }
         }
 
@@ -70,7 +240,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
                     llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
                     for (auto i = 0; i < op.getOperandNo(); i++) { arg_it++; }
-                    if (args_to_remove[function].count(&*arg_it) == 0) {
+                    if (exp_args_map[function].count(arg_it->getArgNo()) == 0) {
                         call_ops.push_back(operand);
                     }
                 }
@@ -91,19 +261,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         function->eraseFromParent();
     }
 
-    for (auto i2r_rit = inst_to_remove.rbegin(); i2r_rit != inst_to_remove.rend(); i2r_rit++) {
-        if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(*i2r_rit)) {
-
-            inst->eraseFromParent();
-        }
-    }
-
-    for (auto f_it = exp_fun_map.rbegin(); f_it != exp_fun_map.rend(); f_it++) {
-        llvm::Function *f = f_it->first;
-
-        f->eraseFromParent();
-    }
-
     return true;
 }
 
@@ -112,38 +269,29 @@ void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsa
 }
 
 void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *function) {
-/*
-    for (auto &arg : function->args()) {
-        if (!arg.hasByValAttr() or true) {
 
-            if (llvm::PointerType *ptr_arg = llvm::dyn_cast<llvm::PointerType>(arg.getType())) {
-                if (llvm::StructType *str_ptr = llvm::dyn_cast<llvm::StructType>(ptr_arg->getPointerElementType())) {
-                    std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>(str_ptr->getNumContainedTypes(),
-                                                                                     nullptr);
-                    expandValue(&arg, &arg, str_ptr, expanded);
-                }
-            }
-        }
-    }
-*/
+    std::set<llvm::AllocaInst *> alloca_vec = std::set<llvm::AllocaInst *>();
 
     while (true) {
 
-        std::vector<llvm::AllocaInst *> alloca_vec = std::vector<llvm::AllocaInst *>();
+        std::set<llvm::AllocaInst *> i_alloca_vec = std::set<llvm::AllocaInst *>();
 
         for (auto &bb : *function) {
             for (auto &i : bb) {
                 if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i)) {
                     if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
-                        alloca_vec.push_back(alloca_inst);
+                        if (alloca_vec.count(alloca_inst) == 0) {
+                            i_alloca_vec.insert(alloca_inst);
+                            alloca_vec.insert(alloca_inst);
+                        }
                     }
                 }
             }
         }
 
-        //if(alloca_vec.size() == 0) { break; }
+        if (i_alloca_vec.size() == 0) { break; }
 
-        for (auto &a : alloca_vec) {
+        for (auto &a : i_alloca_vec) {
             if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(a)) {
                 if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
                     std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
@@ -152,14 +300,12 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
                 }
             }
         }
-
-        break;
     }
 }
 
 void
 CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_function, llvm::Function *new_function,
-                                                         std::vector<unsigned long long> arg_map) {
+                                                         std::set<unsigned long long> arg_map) {
 
     for (auto &a : arg_map) {
         auto arg_it = new_function->arg_begin();
@@ -183,8 +329,6 @@ CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_
             }
         }
     }
-
-    processFunction(new_function);
 }
 
 void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str,
@@ -202,6 +346,8 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
     } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
 
         expanded.clear();
+
+        alloca_to_remove[alloca_inst->getFunction()].insert(alloca_inst);
 
         for (unsigned idx = 0; idx != str->getNumContainedTypes(); ++idx) {
             llvm::Type *element = str->getContainedType(idx);
@@ -223,7 +369,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
             expandValue(user, alloca_inst, str, expanded_val);
         }
 
-        alloca_inst->replaceAllUsesWith(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(str)));
+        //alloca_inst->replaceAllUsesWith(llvm::UndefValue::get(alloca_inst->getType()));
         inst_to_remove.insert(alloca_inst);
 
     } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use)) {
@@ -267,7 +413,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
             llvm::Type *element = str->getContainedType(idx);
 
             llvm::Type *new_bitcast_type = llvm::PointerType::getUnqual(element);
-            std::string new_bitcast_name = bitcast_inst->getName().str() + ".csroa.bitcast." + std::to_string(idx);
+            std::string new_bitcast_name = prev->getName().str() + "." + std::to_string(idx) + ".csroa.bitcast";
             llvm::BitCastInst *new_bitcast_inst = new llvm::BitCastInst(/*new_bitcast_type*/
                     expanded_val.at(idx), /*expanded_val.at(idx)->getType()*/bitcast_inst->getDestTy(),
                     new_bitcast_name, bitcast_inst);
@@ -343,7 +489,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                                                                                             bitcast_inst);
 
                     std::string new_bitcast_name =
-                            alloca_inst->getName().str() + ".csroa.bitcast.memcpy." + std::to_string(idx);
+                            alloca_inst->getName().str() + "." + std::to_string(idx) + ".csroa.bitcast.memcpy";
                     llvm::BitCastInst *new_bitcast_inst = new llvm::BitCastInst(new_gep_inst, bitcast_inst->getDestTy(),
                                                                                 new_bitcast_name, bitcast_inst);
 
@@ -374,10 +520,28 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                     llvm::CallInst *new_call_inst = llvm::CallInst::Create(called_function, memcpy_ops, "",
                                                                            memcpy_inst);
 
-                    inst_to_remove.insert(memcpy_inst);
                 }
+
+                inst_to_remove.insert(memcpy_inst);
             }
         } else {
+
+            for (auto op_it = call_inst->op_begin(); op_it != call_inst->op_end(); op_it++) {
+                llvm::Value *op = *op_it;
+
+                if (op == prev) {
+                    if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(op->getType())) {
+                        if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                            for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                                *(op_it + 1 + idx) = expanded.at(idx);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            /*
             llvm::Type *new_type = called_function->getFunctionType()->getReturnType();
 
             for (auto c2c_it = exp_call_map.begin(); c2c_it != exp_call_map.end(); c2c_it++) {
@@ -461,7 +625,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                 llvm::CallInst *new_call_inst = llvm::CallInst::Create(fun_to_call, new_call_args, new_call_name,
                                                                        call_inst);
 
-                call_inst->replaceAllUsesWith(new_call_inst);
+                // CLEAN call_inst->replaceAllUsesWith(new_call_inst);
 
                 exp_call_map[call_inst] = new_call_inst;
 
@@ -487,7 +651,9 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
             inst_to_remove.insert(call_inst);
 
             llvm::PreservedAnalyses::none();
+            */
         }
+
     }
 }
 

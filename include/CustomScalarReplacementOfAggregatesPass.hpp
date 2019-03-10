@@ -33,6 +33,7 @@ typedef std::map<llvm::CallInst *, llvm::CallInst *> call_to_call_map_ty;
 typedef std::set<llvm::CallInst *> call_set_ty;
 typedef std::set<llvm::Instruction *> inst_set_ty;
 typedef std::map<llvm::Function *, std::set<llvm::Argument *>> fun_to_args_map_ty;
+typedef std::map<llvm::Function *, std::set<llvm::AllocaInst *>> fun_to_alloca_map_ty;
 
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass {
 
@@ -48,6 +49,7 @@ private:
     call_set_ty visited_memcpy;
     inst_set_ty inst_to_remove;
     fun_to_args_map_ty args_to_remove;
+    fun_to_alloca_map_ty alloca_to_remove;
 
 public:
     explicit CustomScalarReplacementOfAggregatesPass(std::string kernel_name) : llvm::ModulePass(ID),
@@ -63,7 +65,7 @@ private:
     void processFunction(llvm::Function *function);
 
     void expandArguments(llvm::Function *called_function, llvm::Function *new_function,
-                         std::vector<unsigned long long> arg_map);
+                         std::set<unsigned long long> arg_map);
 
     void expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str, std::vector<llvm::Value *> &expanded);
 };
