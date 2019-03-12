@@ -31,6 +31,7 @@ int main(void) {
     struct s3 s31;
     s31.i1 = 1;
     s31.s11.i1 = 11;
+    s31.s11.i2 = 12;
     s31.s11.d1 = 123e+10;
     int res1 = kernel1(&s31);
     int res2 = kernel2(&s31.s11);

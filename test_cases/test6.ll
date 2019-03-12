@@ -62,33 +62,36 @@ define i32 @main() #0 {
   %9 = getelementptr inbounds %struct.s1, %struct.s1* %8, i32 0, i32 1
   store i32 11, i32* %9, align 8
   %10 = getelementptr inbounds %struct.s3, %struct.s3* %2, i32 0, i32 1
-  %11 = getelementptr inbounds %struct.s1, %struct.s1* %10, i32 0, i32 0
-  store double 1.230000e+12, double* %11, align 8
-  %12 = call i32 @kernel1(%struct.s3* %2)
-  store i32 %12, i32* %3, align 4
-  %13 = getelementptr inbounds %struct.s3, %struct.s3* %2, i32 0, i32 1
-  %14 = call i32 @kernel2(%struct.s1* %13)
-  store i32 %14, i32* %4, align 4
-  %15 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 0
-  store double 3.000000e+00, double* %15, align 8
-  %16 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 1
-  store i32 1, i32* %16, align 8
-  %17 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 2
-  store i32 2, i32* %17, align 4
-  %18 = call i32 @kernel2(%struct.s1* %5)
-  store i32 %18, i32* %6, align 4
-  %19 = load i32, i32* %6, align 4
-  %20 = load i32, i32* %3, align 4
-  %21 = add nsw i32 %19, %20
-  %22 = load i32, i32* %4, align 4
+  %11 = getelementptr inbounds %struct.s1, %struct.s1* %10, i32 0, i32 2
+  store i32 12, i32* %11, align 4
+  %12 = getelementptr inbounds %struct.s3, %struct.s3* %2, i32 0, i32 1
+  %13 = getelementptr inbounds %struct.s1, %struct.s1* %12, i32 0, i32 0
+  store double 1.230000e+12, double* %13, align 8
+  %14 = call i32 @kernel1(%struct.s3* %2)
+  store i32 %14, i32* %3, align 4
+  %15 = getelementptr inbounds %struct.s3, %struct.s3* %2, i32 0, i32 1
+  %16 = call i32 @kernel2(%struct.s1* %15)
+  store i32 %16, i32* %4, align 4
+  %17 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 0
+  store double 3.000000e+00, double* %17, align 8
+  %18 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 1
+  store i32 1, i32* %18, align 8
+  %19 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 2
+  store i32 2, i32* %19, align 4
+  %20 = call i32 @kernel2(%struct.s1* %5)
+  store i32 %20, i32* %6, align 4
+  %21 = load i32, i32* %6, align 4
+  %22 = load i32, i32* %3, align 4
   %23 = add nsw i32 %21, %22
-  %24 = getelementptr inbounds %struct.s3, %struct.s3* %2, i32 0, i32 0
-  %25 = load i32, i32* %24, align 8
-  %26 = add nsw i32 %23, %25
-  %27 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 3
-  %28 = load i32, i32* %27, align 8
-  %29 = add nsw i32 %26, %28
-  ret i32 %29
+  %24 = load i32, i32* %4, align 4
+  %25 = add nsw i32 %23, %24
+  %26 = getelementptr inbounds %struct.s3, %struct.s3* %2, i32 0, i32 0
+  %27 = load i32, i32* %26, align 8
+  %28 = add nsw i32 %25, %27
+  %29 = getelementptr inbounds %struct.s1, %struct.s1* %5, i32 0, i32 3
+  %30 = load i32, i32* %29, align 8
+  %31 = add nsw i32 %28, %30
+  ret i32 %31
 }
 
 attributes #0 = { noinline nounwind uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
