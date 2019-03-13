@@ -198,7 +198,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         std::vector<llvm::Type *> arg_tys;
         for (auto &a : function->args()) {
             if (exp_args_map[function].count(a.getArgNo()) == 0) {
-                arg_tys.push_back(a.getType());
+                if (a.getNumUses() > 0) {
+                    arg_tys.push_back(a.getType());
+                }
             }
         }
 
@@ -210,20 +212,22 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
                                                               function->getParent());
         new_function->copyAttributesFrom(function);
         new_function->setComdat(function->getComdat());
-        //NF->setAttributes(NewPAL);
-
-        //function->getParent()->getFunctionList().insert(function->getIterator(), new_function);
-        //new_function->takeName(function);
 
         new_function->getBasicBlockList().splice(new_function->begin(), function->getBasicBlockList());
 
+        std::set<llvm::Argument *> unused_args;
         unsigned int i = 0;
         for (llvm::Function::arg_iterator fun_arg_it = function->arg_begin(), new_fun_arg_it = new_function->arg_begin();
              fun_arg_it != function->arg_end(); ++fun_arg_it, ++i) {
+
             if (exp_args_map[function].count(fun_arg_it->getArgNo()) == 0) {
-                fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
-                new_fun_arg_it->takeName(&*fun_arg_it);
-                ++new_fun_arg_it;
+                if (fun_arg_it->getNumUses() > 0) {
+                    fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+                    new_fun_arg_it->takeName(&*fun_arg_it);
+                    ++new_fun_arg_it;
+                } else {
+                    unused_args.insert(&*fun_arg_it);
+                }
             } else {
                 fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
             }
@@ -239,9 +243,13 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
                     llvm::Value *operand = op.get();
 
                     llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+
                     for (auto i = 0; i < op.getOperandNo(); i++) { arg_it++; }
+
                     if (exp_args_map[function].count(arg_it->getArgNo()) == 0) {
-                        call_ops.push_back(operand);
+                        if (unused_args.count(&*arg_it) == 0) {
+                            call_ops.push_back(operand);
+                        }
                     }
                 }
 
