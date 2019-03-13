@@ -148,10 +148,13 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
             if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
 
-                std::vector<llvm::Function *>::iterator if_it_b = inner_functions.begin();
-                std::vector<llvm::Function *>::iterator if_it_e = inner_functions.end();
+                std::set<llvm::Function *> inner_functions_exp;
 
-                if (std::find(if_it_b, if_it_e, call_inst->getFunction()) != if_it_e or
+                for (auto &i_f : inner_functions) {
+                    inner_functions_exp.insert(i_f);
+                }
+
+                if (inner_functions_exp.count(call_inst->getCalledFunction()) != 0 or
                     call_inst->getFunction() == kernel_function) {
 
                     std::vector<llvm::Value *> new_call_ops = std::vector<llvm::Value *>();
@@ -191,14 +194,47 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         i->eraseFromParent();
     }
 
+    class CheckArg {
+    public:
+        static bool usedByArgsOnly(llvm::Argument *arg, std::set<llvm::Argument *> inspected_args) {
+
+            if (inspected_args.count(arg) == 0) {
+
+                inspected_args.insert(arg);
+
+                for (auto &use : arg->uses()) {
+                    if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
+
+                        llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+
+                        for (unsigned long long i = 0; i < use.getOperandNo(); i++) { arg_it++; }
+
+                        if (!usedByArgsOnly(&*arg_it, inspected_args)) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        static bool usedByArgsOnly_wrapper(llvm::Argument *arg) {
+            return usedByArgsOnly(arg, std::set<llvm::Argument *>());
+        }
+    };
+
     for (auto &f : exp_fun_map) {
         llvm::Function *function = f.second;
 
         // Create the new function type based on the recomputed parameters.
         std::vector<llvm::Type *> arg_tys;
         for (auto &a : function->args()) {
+
             if (exp_args_map[function].count(a.getArgNo()) == 0) {
-                if (a.getNumUses() > 0) {
+                if (!CheckArg::usedByArgsOnly_wrapper(&a)) {
                     arg_tys.push_back(a.getType());
                 }
             }
@@ -216,12 +252,13 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         new_function->getBasicBlockList().splice(new_function->begin(), function->getBasicBlockList());
 
         std::set<llvm::Argument *> unused_args;
+
         unsigned int i = 0;
         for (llvm::Function::arg_iterator fun_arg_it = function->arg_begin(), new_fun_arg_it = new_function->arg_begin();
              fun_arg_it != function->arg_end(); ++fun_arg_it, ++i) {
 
             if (exp_args_map[function].count(fun_arg_it->getArgNo()) == 0) {
-                if (fun_arg_it->getNumUses() > 0) {
+                if (!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it)) {
                     fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
                     new_fun_arg_it->takeName(&*fun_arg_it);
                     ++new_fun_arg_it;
