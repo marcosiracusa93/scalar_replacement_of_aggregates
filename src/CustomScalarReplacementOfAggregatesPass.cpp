@@ -269,6 +269,20 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         }
     };
 
+    struct sate_cmp {
+        bool operator()(const std::pair<llvm::CallInst *, unsigned long long> &lhs,
+                        const std::pair<llvm::CallInst *, unsigned long long> &rhs) const {
+            if (lhs.first < rhs.first) {
+                return true;
+            } else if (lhs.first == rhs.first) {
+                return lhs.second < rhs.second;
+            } else {
+                return false;
+            }
+        }
+    };
+    std::map<std::pair<llvm::CallInst *, unsigned long long>, llvm::Argument *, sate_cmp> scalar_args_to_expand;
+
     for (auto &f : exp_fun_map) {
         llvm::Function *function = f.second;
 
@@ -308,18 +322,25 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
             if (exp_args_map[function].count(fun_arg_it->getArgNo()) == 0) {
                 if (!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it)) {
                     if (CheckArg::loadedOnly_wrapper(&*fun_arg_it)) {
+                        llvm::LoadInst *li = nullptr;
                         for (auto &use : fun_arg_it->uses()) {
                             if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser())) {
                                 load_inst->replaceAllUsesWith(&*new_fun_arg_it);
-                                inst_to_remove.insert(load_inst);
+                                li = load_inst;
+
                             } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
-                                // TODO manage it
-                                llvm::errs() << "ERR\n";
-                                exit(-1);
+                                scalar_args_to_expand.insert(
+                                        std::make_pair(std::make_pair(call_inst, use.getOperandNo()),
+                                                       &*new_fun_arg_it));
+                                break;
                             } else {
                                 llvm::errs() << "ERR\n";
                                 exit(-1);
                             }
+                        }
+
+                        if (li != nullptr) {
+                            li->eraseFromParent();
                         }
 
                         scalar_args.insert(&*fun_arg_it);
@@ -331,6 +352,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
                     ++new_fun_arg_it;
                 } else {
                     unused_args.insert(&*fun_arg_it);
+                    fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
                 }
             } else {
                 fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
@@ -355,15 +377,23 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
                             if (scalar_args.count(&*arg_it) == 0) {
                                 call_ops.push_back(operand);
                             } else {
-                                std::string new_load_name = call_inst->getName().str() + ".load." + std::to_string(i);
-                                llvm::LoadInst *load_inst = new llvm::LoadInst(operand, new_load_name, call_inst);
 
-                                call_ops.push_back(load_inst);
+                                auto to_exp_it = scalar_args_to_expand.find(
+                                        std::make_pair(call_inst, arg_it->getArgNo()));
+
+                                if (to_exp_it == scalar_args_to_expand.end()) {
+                                    std::string new_load_name =
+                                            call_inst->getName().str() + ".load." + std::to_string(i);
+                                    llvm::LoadInst *load_inst = new llvm::LoadInst(operand, new_load_name, call_inst);
+
+                                    call_ops.push_back(load_inst);
+                                } else {
+                                    call_ops.push_back(to_exp_it->second);
+                                }
                             }
                         }
                     }
                 }
-
 
                 std::string new_call_name = call_inst->getName().str() + ".clean";
                 llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, call_ops, new_call_name,
