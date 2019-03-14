@@ -195,7 +195,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     }
 
     class CheckArg {
-    public:
+    private:
         static bool usedByArgsOnly(llvm::Argument *arg, std::set<llvm::Argument *> inspected_args) {
 
             if (inspected_args.count(arg) == 0) {
@@ -221,8 +221,51 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
             return true;
         }
 
+        static bool loadedOnly(llvm::Argument *arg, std::set<llvm::Argument *> inspected_args) {
+
+            if (inspected_args.count(arg) == 0) {
+
+                inspected_args.insert(arg);
+
+                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
+                    if (!ptr_ty->getElementType()->isAggregateType()) {
+
+                        for (auto &use : arg->uses()) {
+
+                            if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser())) {
+                                // nothing to do
+                            } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
+
+                                llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+
+                                for (unsigned long long i = 0; i < use.getOperandNo(); i++) { arg_it++; }
+
+                                if (!loadedOnly(&*arg_it, inspected_args)) {
+                                    return false;
+                                }
+
+                            } else {
+                                return false;
+                            }
+                        }
+                    } else {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+    public:
         static bool usedByArgsOnly_wrapper(llvm::Argument *arg) {
             return usedByArgsOnly(arg, std::set<llvm::Argument *>());
+        }
+
+        static bool loadedOnly_wrapper(llvm::Argument *arg) {
+            return loadedOnly(arg, std::set<llvm::Argument *>());
         }
     };
 
@@ -235,7 +278,11 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
             if (exp_args_map[function].count(a.getArgNo()) == 0) {
                 if (!CheckArg::usedByArgsOnly_wrapper(&a)) {
-                    arg_tys.push_back(a.getType());
+                    if (CheckArg::loadedOnly_wrapper(&a)) {
+                        arg_tys.push_back(a.getType()->getPointerElementType());
+                    } else {
+                        arg_tys.push_back(a.getType());
+                    }
                 }
             }
         }
@@ -252,6 +299,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         new_function->getBasicBlockList().splice(new_function->begin(), function->getBasicBlockList());
 
         std::set<llvm::Argument *> unused_args;
+        std::set<llvm::Argument *> scalar_args;
 
         unsigned int i = 0;
         for (llvm::Function::arg_iterator fun_arg_it = function->arg_begin(), new_fun_arg_it = new_function->arg_begin();
@@ -259,7 +307,26 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
             if (exp_args_map[function].count(fun_arg_it->getArgNo()) == 0) {
                 if (!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it)) {
-                    fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+                    if (CheckArg::loadedOnly_wrapper(&*fun_arg_it)) {
+                        for (auto &use : fun_arg_it->uses()) {
+                            if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser())) {
+                                load_inst->replaceAllUsesWith(&*new_fun_arg_it);
+                                inst_to_remove.insert(load_inst);
+                            } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
+                                // TODO manage it
+                                llvm::errs() << "ERR\n";
+                                exit(-1);
+                            } else {
+                                llvm::errs() << "ERR\n";
+                                exit(-1);
+                            }
+                        }
+
+                        scalar_args.insert(&*fun_arg_it);
+                        fun_arg_it->replaceAllUsesWith(llvm::UndefValue::get(fun_arg_it->getType()));
+                    } else {
+                        fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+                    }
                     new_fun_arg_it->takeName(&*fun_arg_it);
                     ++new_fun_arg_it;
                 } else {
@@ -285,7 +352,14 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
                     if (exp_args_map[function].count(arg_it->getArgNo()) == 0) {
                         if (unused_args.count(&*arg_it) == 0) {
-                            call_ops.push_back(operand);
+                            if (scalar_args.count(&*arg_it) == 0) {
+                                call_ops.push_back(operand);
+                            } else {
+                                std::string new_load_name = call_inst->getName().str() + ".load." + std::to_string(i);
+                                llvm::LoadInst *load_inst = new llvm::LoadInst(operand, new_load_name, call_inst);
+
+                                call_ops.push_back(load_inst);
+                            }
                         }
                     }
                 }
