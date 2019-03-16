@@ -43,9 +43,6 @@ public:
 private:
     const std::string kernel_name;
 
-    expanded_elements_in_args_ty expanded_elements_in_args;
-    fun_to_fun_map_ty exp_fun_map;
-    call_to_call_map_ty exp_call_map;
     call_set_ty visited_memcpy;
     inst_set_ty inst_to_remove;
     fun_to_args_map_ty args_to_remove;
@@ -62,12 +59,23 @@ public:
     void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
 
 private:
+
+    void populate_inner_functions(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
+
+    void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
+                                          std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
+                                          std::map<llvm::Function *, std::set<unsigned long long>> &exp_args_map,
+                                          llvm::Function *kernel_function);
+
     void processFunction(llvm::Function *function);
 
     void expandArguments(llvm::Function *called_function, llvm::Function *new_function,
                          std::set<unsigned long long> arg_map);
 
-    void expandValue(llvm::Value *use, llvm::Value *prev, llvm::StructType *str, std::vector<llvm::Value *> &expanded);
+    void expandValue(llvm::Value *use, llvm::Value *prev, llvm::Type *ty, std::vector<llvm::Value *> &expanded);
+
+    void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_args_map,
+                 std::map<llvm::Function *, llvm::Function *> &exp_fun_map);
 };
 
 CustomScalarReplacementOfAggregatesPass *createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);
