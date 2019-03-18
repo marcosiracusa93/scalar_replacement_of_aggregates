@@ -48,6 +48,9 @@ private:
     fun_to_args_map_ty args_to_remove;
     fun_to_alloca_map_ty alloca_to_remove;
 
+    // Map specifying how arguments have been expanded
+    std::map<llvm::Argument *, std::vector<llvm::Argument *>> exp_args_map;
+
 public:
     explicit CustomScalarReplacementOfAggregatesPass(std::string kernel_name) : llvm::ModulePass(ID),
                                                                                 kernel_name(kernel_name) {
@@ -64,17 +67,19 @@ private:
 
     void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
                                           std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
-                                          std::map<llvm::Function *, std::set<unsigned long long>> &exp_args_map,
+                                          std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
+                                          std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
                                           llvm::Function *kernel_function);
 
     void processFunction(llvm::Function *function);
 
     void expandArguments(llvm::Function *called_function, llvm::Function *new_function,
-                         std::set<unsigned long long> arg_map);
+                         std::set<unsigned long long> arg_map,
+                         std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map);
 
     void expandValue(llvm::Value *use, llvm::Value *prev, llvm::Type *ty, std::vector<llvm::Value *> &expanded);
 
-    void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_args_map,
+    void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
                  std::map<llvm::Function *, llvm::Function *> &exp_fun_map);
 };
 
