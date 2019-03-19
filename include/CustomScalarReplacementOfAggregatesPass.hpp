@@ -68,7 +68,7 @@ private:
     void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
                                           std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
                                           std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
-                                          std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
+            //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
                                           llvm::Function *kernel_function);
 
     void processFunction(llvm::Function *function);

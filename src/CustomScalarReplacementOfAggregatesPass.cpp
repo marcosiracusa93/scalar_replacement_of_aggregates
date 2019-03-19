@@ -33,7 +33,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     populate_inner_functions(kernel_function, inner_functions);
 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
-    expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, exp_args_map, kernel_function);
+    expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, /*exp_args_map,*/ kernel_function);
+
+    return true;
 
     // Start processing the kernel function
     processFunction(kernel_function);
@@ -47,7 +49,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         processFunction(exp_fun);
     }
 
-    cleanup(exp_idx_args_map, exp_fun_map);
+    //cleanup(exp_idx_args_map, exp_fun_map);
 
     return true;
 }
@@ -61,7 +63,6 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
     // Global alloca vec so to avoid loops in analysis
     std::set<llvm::AllocaInst *> alloca_vec = std::set<llvm::AllocaInst *>();
 
-    unsigned int idx = 0;
     while (true) {
 
         // Alloca vec for the current iteration
@@ -107,10 +108,6 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
                     expandValue(alloca_inst, alloca_inst, arr_ty, expanded);
                 }
             }
-        }
-
-        if (++idx >= 2) {
-            break;
         }
     }
 }
@@ -172,7 +169,7 @@ CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_
 
 void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm::Value *prev, llvm::Type *ty,
                                                           std::vector<llvm::Value *> &expanded) {
-    use->dump();
+
     if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
 
         for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
@@ -588,79 +585,151 @@ void CustomScalarReplacementOfAggregatesPass::populate_inner_functions(llvm::Fun
 } // end of populate_inner_functions
 
 void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
-        std::vector<llvm::Function *> &inner_functions, std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
+        std::vector<llvm::Function *> &inner_functions,
+        std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
         std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
-        std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map, llvm::Function *kernel_function) {
+        //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
+        llvm::Function *kernel_function) {
 
     // Loop through the inner functions:
     //  - recursively expanding the signatures
     //  - adapting the call sites those are called in
     for (llvm::Function *called_function : inner_functions) {
 
+        class ExpArgs {
+        public:
+
+            static void
+            rec(llvm::Argument *arg, std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map_ref) {
+
+                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
+
+                    if (arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
+                        bool canBeNull;
+                        unsigned long long dBytes = arg->getPointerDereferenceableBytes(
+                                arg->getParent()->getParent()->getDataLayout(), canBeNull);
+                        unsigned long long eBytes = arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(
+                                ptr_ty->getElementType()) / 8;
+                        unsigned long long elements = dBytes / eBytes;
+
+                        for (int e_idx = 0; e_idx < elements; ++e_idx) {
+
+                            if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
+                                std::string new_arg_name = arg->getName().str() + "." + std::to_string(e_idx);
+
+                                llvm::AttrBuilder attr_builder = llvm::AttrBuilder();
+                                llvm::Attribute attr = llvm::Attribute::getWithDereferenceableBytes(
+                                        arg->getContext(),
+                                        eBytes);
+                                attr_builder.addAttribute(attr);
+
+                                auto attr_set = llvm::AttributeSet::get(arg->getContext(), 0, attr_builder);
+
+                                llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(
+                                        arr_ty->getArrayElementType());
+                                llvm::Argument *new_arg = new llvm::Argument(new_arg_ty, new_arg_name,
+                                                                             arg->getParent());
+
+                                new_arg->addAttr(attr_set);
+
+                                exp_args_map_ref[arg].push_back(new_arg);
+
+                                rec(new_arg, exp_args_map_ref);
+                            } else {
+                                llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(ptr_ty->getElementType());
+                                std::string new_arg_name = arg->getName().str() + "." + std::to_string(e_idx);
+                                llvm::Argument *new_arg = new llvm::Argument(new_arg_ty, new_arg_name,
+                                                                             arg->getParent());
+
+                                exp_args_map_ref[arg].push_back(new_arg);
+
+                                rec(new_arg, exp_args_map_ref);
+                            }
+                        }
+                    } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+
+                        // Go through all of its elements and push them with null pointer values
+                        for (unsigned long long e_idx = 0; e_idx != str_ty->getNumContainedTypes(); ++e_idx) {
+                            llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(str_ty->getContainedType(e_idx));
+                            std::string new_arg_name = arg->getName().str() + "." + std::to_string(e_idx);
+                            llvm::Argument *new_arg = new llvm::Argument(new_arg_ty, new_arg_name, arg->getParent());
+
+                            exp_args_map_ref[arg].push_back(new_arg);
+
+                            rec(new_arg, exp_args_map_ref);
+                        }
+
+                    } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
+                        llvm::errs() << "ERR";
+                        exit(-1);
+                    }
+                }
+            }
+        };
+
+        std::vector<llvm::Type *> new_arg_ty_vec = std::vector<llvm::Type *>();
+
         // Keep the same return type
-        llvm::Type *new_return_type = called_function->getFunctionType()->getReturnType();
+        llvm::Type *new_mock_return_type = called_function->getFunctionType()->getReturnType();
 
-        // Vector containing the new argument set
-        std::vector<llvm::Type *> new_fun_args_tys = std::vector<llvm::Type *>();
-        std::vector<llvm::Argument *> new_fun_args = std::vector<llvm::Argument *>();
+        llvm::FunctionType *new_mock_function_type = llvm::FunctionType::get(new_mock_return_type, false);
+        llvm::GlobalValue::LinkageTypes mock_linkage = called_function->getLinkage();
+        std::string new_mock_function_name = called_function->getName().str() + ".csroa.mock";
 
-        // Initialize the new argument vector with the previous arguments
-        for (auto &a : called_function->args()) {
-            new_fun_args.push_back(&a);
-            new_fun_args_tys.push_back(a.getType());
-        }
+        // Create function prototype
+        llvm::Function *new_mock_function = llvm::Function::Create(new_mock_function_type, mock_linkage,
+                                                                   new_mock_function_name,
+                                                                   called_function->getParent());
 
-        // Loop through the argument vector expanding the aggregate elements
-        for (unsigned long long v_idx = 0; v_idx < new_fun_args_tys.size(); v_idx++) {
-            llvm::Type *element = new_fun_args_tys.at(v_idx);
+        llvm::ValueToValueMapTy mock_VMap;
 
-            // If pointer
-            if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(element)) {
+        llvm::Function::arg_iterator arg_it_b = called_function->arg_begin();
+        llvm::Function::arg_iterator arg_it_e = called_function->arg_end();
 
-                // Expand the arguments that:
-                //  - have the dereferenceable attribute (first array dimension)
-                //  - are structs
-                //  - are arrays
-                if (new_fun_args.at(v_idx) != nullptr and
-                    new_fun_args.at(v_idx)->hasAttribute(llvm::Attribute::Dereferenceable)) {
-                    llvm::Argument *arg = new_fun_args.at(v_idx);
+        std::map<unsigned long long, llvm::Argument *> idxs_of_exp_args;
+        std::map<llvm::Argument *, std::vector<llvm::Argument *>> mock_exp_args_map;
+
+        for (auto arg_it = arg_it_b; arg_it != arg_it_e; arg_it++) {
+            llvm::Argument *arg = &*arg_it;
+
+            if (mock_VMap.count(arg) == 0) {
+                llvm::Type *new_arg_ty = arg->getType();
+                std::string new_arg_name = arg->getName();
+
+                llvm::Argument *new_arg = new llvm::Argument(new_arg_ty, new_arg_name, new_mock_function);
+
+                if (arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
 
                     bool canBeNull;
                     unsigned long long dBytes = arg->getPointerDereferenceableBytes(
                             arg->getParent()->getParent()->getDataLayout(), canBeNull);
-                    unsigned long long eBytes =
-                            arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(ptr_ty->getElementType()) /
-                            8;
-                    unsigned long long elements = dBytes / eBytes;
 
-                    // Go through all of its elements and push them with null pointer values
-                    for (int e_idx = 0; e_idx < elements; ++e_idx) {
-                        new_fun_args_tys.insert(new_fun_args_tys.begin() + v_idx + 1 + e_idx,
-                                                llvm::PointerType::getUnqual(ptr_ty->getElementType()));
-                        new_fun_args.insert(new_fun_args.begin() + v_idx + 1 + e_idx, nullptr);
-                    }
-                } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                    llvm::AttrBuilder attr_builder = llvm::AttrBuilder();
+                    llvm::Attribute attr = llvm::Attribute::getWithDereferenceableBytes(new_arg->getContext(), dBytes);
+                    attr_builder.addAttribute(attr);
 
-                    // Go through all of its elements and push them with null pointer values
-                    for (unsigned long long e_idx = 0; e_idx != str_ty->getNumContainedTypes(); ++e_idx) {
-                        new_fun_args_tys.insert(new_fun_args_tys.begin() + v_idx + 1 + e_idx,
-                                                llvm::PointerType::getUnqual(str_ty->getContainedType(e_idx)));
-                        new_fun_args.insert(new_fun_args.begin() + v_idx + 1 + e_idx, nullptr);
-                    }
-                } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
-
-                    // Go through all of its elements and push them with null pointer values
-                    for (unsigned long long e_idx = 0; e_idx != arr_ty->getNumContainedTypes(); ++e_idx) {
-                        new_fun_args_tys.insert(new_fun_args_tys.begin() + v_idx + 1 + e_idx,
-                                                llvm::PointerType::getUnqual(arr_ty->getContainedType(e_idx)));
-                        new_fun_args.insert(new_fun_args.begin() + v_idx + 1 + e_idx, nullptr);
-                    }
+                    auto attr_set = llvm::AttributeSet::get(new_arg->getContext(), 0, attr_builder);
+                    new_arg->addAttr(attr_set);
                 }
+
+                mock_VMap[arg] = &new_mock_function->getArgumentList().back();
+                idxs_of_exp_args[new_arg->getArgNo()] = arg;
+
+                ExpArgs::rec(new_arg, mock_exp_args_map);
+
             }
         }
 
+        for (auto &a : new_mock_function->args()) {
+            new_arg_ty_vec.push_back(a.getType());
+        }
 
-        llvm::FunctionType *new_function_type = llvm::FunctionType::get(new_return_type, new_fun_args_tys, false);
+        //new_mock_function->eraseFromParent();
+
+        // Keep the same return type
+        llvm::Type *new_return_type = called_function->getFunctionType()->getReturnType();
+
+        llvm::FunctionType *new_function_type = llvm::FunctionType::get(new_return_type, new_arg_ty_vec, false);
         llvm::GlobalValue::LinkageTypes linkage = called_function->getLinkage();
         std::string new_function_name = called_function->getName().str() + ".csroa";
 
@@ -669,95 +738,50 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                                                               called_function->getParent());
 
         llvm::ValueToValueMapTy VMap;
-        llvm::Function::arg_iterator DestI = new_function->arg_begin();
 
-        unsigned long long arg_idx = 0;
-        unsigned long long offset = 0;
+        std::map<llvm::Argument *, llvm::Argument *> mock_to_new_arg_map;
+        llvm::Function::arg_iterator mf_arg_it_b = new_mock_function->arg_begin();
+        llvm::Function::arg_iterator mf_arg_it_e = new_mock_function->arg_end();
+        llvm::Function::arg_iterator nf_arg_it_b = new_function->arg_begin();
+        llvm::Function::arg_iterator nf_arg_it_e = new_function->arg_end();
+        llvm::Function::arg_iterator nf_arg_it = nf_arg_it_b;
+        llvm::Function::arg_iterator mf_arg_it = mf_arg_it_b;
+        for (; nf_arg_it != nf_arg_it_e; nf_arg_it++, mf_arg_it++) {
+            llvm::Argument *nf_arg = &*nf_arg_it;
+            llvm::Argument *mf_arg = &*mf_arg_it;
 
-        // Class used for recursively assigning argument names
-        class ExpArgs {
-        public:
+            mock_to_new_arg_map[mf_arg] = nf_arg;
 
-            // Assigns argument names in a recursive way
-            static void
-            rec(std::string name, llvm::Type *ty, unsigned long long &arg_idx,
-                llvm::Function::arg_iterator l_DestI, llvm::Function::arg_iterator &DestI,
-                std::set<unsigned long long> &exp_idx_args_map_ref,
-                std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
-                llvm::Argument *called_arg) {
+            if (idxs_of_exp_args.count(nf_arg->getArgNo()) != 0) {
+                VMap[idxs_of_exp_args[nf_arg->getArgNo()]] = nf_arg;
 
-                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(ty)) {
+                nf_arg->setName(mf_arg->getName());
 
-                    if (called_arg != nullptr and called_arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
-                        exp_idx_args_map_ref.insert(arg_idx - 1);
+                if (mf_arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
 
-                        bool canBeNull;
-                        unsigned long long dBytes = called_arg->getPointerDereferenceableBytes(
-                                called_arg->getParent()->getParent()->getDataLayout(), canBeNull);
-                        unsigned long long eBytes =
-                                called_arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(
-                                ptr_ty->getElementType()) / 8;
-                        unsigned long long elements = dBytes / eBytes;
+                    bool canBeNull;
+                    unsigned long long dBytes = mf_arg->getPointerDereferenceableBytes(
+                            mf_arg->getParent()->getParent()->getDataLayout(), canBeNull);
 
-                        // Go through all of its elements and push them with null pointer values
-                        for (int e_idx = 0; e_idx < elements; ++e_idx) {
-                            std::string new_name = name + "." + std::to_string(e_idx);
-                            DestI->setName(new_name);
-                            exp_args_map[&*l_DestI].push_back(&*DestI);
-                            llvm::Function::arg_iterator ll_DestI = DestI;
-                            DestI++;
-                            arg_idx++;
+                    llvm::AttrBuilder attr_builder = llvm::AttrBuilder();
+                    llvm::Attribute attr = llvm::Attribute::getWithDereferenceableBytes(nf_arg->getContext(), dBytes);
+                    attr_builder.addAttribute(attr);
 
-                            rec(new_name, llvm::PointerType::getUnqual(ptr_ty->getElementType()), arg_idx, ll_DestI,
-                                DestI,
-                                exp_idx_args_map_ref, exp_args_map, nullptr);
-                        }
-                    } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
-                        exp_idx_args_map_ref.insert(arg_idx - 1);
-                        for (unsigned e_idx = 0; e_idx != str_ty->getNumContainedTypes(); ++e_idx) {
-                            std::string new_name = name + "." + std::to_string(e_idx);
-                            DestI->setName(new_name);
-                            exp_args_map[&*l_DestI].push_back(&*DestI);
-                            llvm::Function::arg_iterator ll_DestI = DestI;
-                            DestI++;
-                            arg_idx++;
-
-                            rec(new_name, llvm::PointerType::getUnqual(str_ty->getElementType(e_idx)), arg_idx,
-                                ll_DestI, DestI,
-                                exp_idx_args_map_ref, exp_args_map, nullptr);
-                        }
-                    } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
-                        exp_idx_args_map_ref.insert(arg_idx - 1);
-                        for (unsigned e_idx = 0; e_idx != arr_ty->getNumContainedTypes(); ++e_idx) {
-                            std::string new_name = name + "." + std::to_string(e_idx);
-                            DestI->setName(new_name);
-                            exp_args_map[&*l_DestI].push_back(&*DestI);
-                            llvm::Function::arg_iterator ll_DestI = DestI;
-                            DestI++;
-                            arg_idx++;
-
-                            rec(new_name, llvm::PointerType::getUnqual(arr_ty->getElementType()), arg_idx, ll_DestI,
-                                DestI,
-                                exp_idx_args_map_ref, exp_args_map, nullptr);
-                        }
-                    }
+                    auto attr_set = llvm::AttributeSet::get(nf_arg->getContext(), 0, attr_builder);
+                    nf_arg->addAttr(attr_set);
                 }
             }
-        };
+        }
 
-        std::set<unsigned long long> &exp_idx_args_map_ref = exp_idx_args_map[new_function];
+        for (auto &ma1 : mock_exp_args_map) {
+            llvm::Argument *mf1_arg = ma1.first;
+            llvm::Argument *nf1_arg = mock_to_new_arg_map[mf1_arg];
 
-        // Go through all the arguments mapping old and new ones
-        for (auto &a : called_function->args()) {
-            if (VMap.count(&a) == 0) {
-                llvm::Function::arg_iterator l_DestI = DestI;
-                DestI->setName(a.getName());
-                VMap[&a] = &*DestI++;
+            for (auto &ma2 : ma1.second) {
+                llvm::Argument *mf2_arg = ma2;
+                llvm::Argument *nf2_arg = mock_to_new_arg_map[mf2_arg];
 
-                arg_idx++;
-
-                ExpArgs::rec(a.getName(), a.getType(), arg_idx, l_DestI, DestI, exp_idx_args_map_ref, exp_args_map, &a);
-
+                exp_args_map[nf1_arg].push_back(nf2_arg);
             }
         }
 
@@ -775,41 +799,25 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
         // Class used to recursively expand operands in call sites
         class op_rec {
         public:
-            static void rec(llvm::Type *ty, llvm::Argument *arg, std::vector<llvm::Value *> &ops) {
 
-                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(ty)) {
-                    if (arg != nullptr and arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
+            static void
+            rec(llvm::Argument *arg, std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map_ref,
+                std::vector<llvm::Value *> &ops, bool is_called_operand = false) {
 
-                        bool canBeNull;
-                        unsigned long long dBytes = arg->getPointerDereferenceableBytes(
-                                arg->getParent()->getParent()->getDataLayout(), canBeNull);
-                        unsigned long long eBytes = arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(
-                                ptr_ty->getElementType()) / 8;
-                        unsigned long long elements = dBytes / eBytes;
+                if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
 
-                        for (int e_idx = 0; e_idx < elements; ++e_idx) {
-                            ops.push_back(llvm::ConstantPointerNull::get(
-                                    llvm::PointerType::getUnqual(ptr_ty->getElementType())));
+                    if (!is_called_operand) {
+                        ops.push_back(
+                                llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(ptr_ty->getElementType())));
+                    }
 
-                            rec(llvm::PointerType::getUnqual(ptr_ty->getElementType()), nullptr, ops);
-                        }
-                    } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                    auto exp_arg_it = exp_args_map_ref.find(arg);
 
-                        for (unsigned e_idx = 0; e_idx != str_ty->getNumContainedTypes(); ++e_idx) {
+                    if (exp_arg_it != exp_args_map_ref.end()) {
+                        std::vector<llvm::Argument *> &exp_args_vec_ref = exp_arg_it->second;
 
-                            ops.push_back(llvm::ConstantPointerNull::get(
-                                    llvm::PointerType::getUnqual(str_ty->getElementType(e_idx))));
-
-                            rec(llvm::PointerType::getUnqual(str_ty->getElementType(e_idx)), nullptr, ops);
-                        }
-                    } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
-
-                        for (unsigned e_idx = 0; e_idx != arr_ty->getNumContainedTypes(); ++e_idx) {
-
-                            ops.push_back(llvm::ConstantPointerNull::get(
-                                    llvm::PointerType::getUnqual(arr_ty->getElementType())));
-
-                            rec(llvm::PointerType::getUnqual(arr_ty->getElementType()), nullptr, ops);
+                        for (auto &a : exp_args_vec_ref) {
+                            rec(a, exp_args_map_ref, ops);
                         }
                     }
                 }
@@ -839,18 +847,32 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                     std::vector<llvm::Value *> new_call_ops = std::vector<llvm::Value *>();
                     for (auto &op : call_inst->arg_operands()) {
                         llvm::Value *operand = op.get();
+
                         llvm::Argument *arg = nullptr;
-
-                        llvm::Function::arg_iterator arg_it = called_function->arg_begin();
-
-                        for (int i = 0; i < op.getOperandNo(); i++) {
-                            arg_it++;
+                        {
+                            llvm::Function::arg_iterator arg_it = new_function->arg_begin();
+                            for (int i = 0; i < op.getOperandNo(); i++) { arg_it++; }
+                            arg = &*arg_it;
                         }
-                        arg = &*arg_it;
+                        llvm::errs() << "O: ";
+                        operand->dump();
+                        llvm::errs() << "A: ";
+                        arg->dump();
 
                         new_call_ops.push_back(operand);
 
-                        op_rec::rec(operand->getType(), arg, new_call_ops);
+                        op_rec::rec(arg, exp_args_map, new_call_ops, true);
+                    }
+                    llvm::errs() << "FTy: ";
+                    new_function->getFunctionType()->dump();
+                    new_function->getParent()->dump();
+                    llvm::Function::arg_iterator argiter = new_function->arg_begin();
+                    for (auto &op : new_call_ops) {
+                        llvm::errs() << "O: ";
+                        op->getType()->dump();
+                        llvm::errs() << "A: ";
+                        argiter->getType()->dump();
+                        ++argiter;
                     }
 
                     // Build the new call site
@@ -868,6 +890,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
         }
     }
 
+    kernel_function->getParent()->dump();
+    exit(-1);
 } // end expand_signatures_and_call_sites
 
 void
