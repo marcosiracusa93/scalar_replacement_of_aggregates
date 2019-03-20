@@ -35,10 +35,10 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
     expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, /*exp_args_map,*/ kernel_function);
 
+    return true;
+
     // Start processing the kernel function
     processFunction(kernel_function);
-
-    return true;
 
     // And then expand all the expanded (inner) functions, processing those afterwards
     for (auto &f : exp_fun_map) {
@@ -767,7 +767,6 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
 
                     auto attr_set = llvm::AttributeSet::get(nf_arg->getContext(), 0, attr_builder);
                     nf_arg->addAttr(attr_set);
-                }
             }
         }
 
