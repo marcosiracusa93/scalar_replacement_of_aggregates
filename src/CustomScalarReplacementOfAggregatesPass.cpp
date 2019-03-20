@@ -35,10 +35,10 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
     expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, /*exp_args_map,*/ kernel_function);
 
-    return true;
-
     // Start processing the kernel function
     processFunction(kernel_function);
+
+    return true;
 
     // And then expand all the expanded (inner) functions, processing those afterwards
     for (auto &f : exp_fun_map) {
@@ -724,8 +724,6 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
             new_arg_ty_vec.push_back(a.getType());
         }
 
-        //new_mock_function->eraseFromParent();
-
         // Keep the same return type
         llvm::Type *new_return_type = called_function->getFunctionType()->getReturnType();
 
@@ -793,6 +791,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
         // Track the function mapping (old->new)
         exp_fun_map[called_function] = new_function;
 
+        new_mock_function->eraseFromParent();
+
         // Do not preserve any analysis
         llvm::PreservedAnalyses::none();
 
@@ -854,26 +854,14 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                             for (int i = 0; i < op.getOperandNo(); i++) { arg_it++; }
                             arg = &*arg_it;
                         }
-                        llvm::errs() << "O: ";
-                        operand->dump();
-                        llvm::errs() << "A: ";
-                        arg->dump();
 
                         new_call_ops.push_back(operand);
 
                         op_rec::rec(arg, exp_args_map, new_call_ops, true);
                     }
-                    llvm::errs() << "FTy: ";
-                    new_function->getFunctionType()->dump();
-                    new_function->getParent()->dump();
+
                     llvm::Function::arg_iterator argiter = new_function->arg_begin();
-                    for (auto &op : new_call_ops) {
-                        llvm::errs() << "O: ";
-                        op->getType()->dump();
-                        llvm::errs() << "A: ";
-                        argiter->getType()->dump();
-                        ++argiter;
-                    }
+                    for (auto &op : new_call_ops) { ++argiter; }
 
                     // Build the new call site
                     std::string new_call_name = call_inst->getName().str() + ".csroa";
@@ -890,8 +878,6 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
         }
     }
 
-    kernel_function->getParent()->dump();
-    exit(-1);
 } // end expand_signatures_and_call_sites
 
 void
