@@ -767,6 +767,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
 
                     auto attr_set = llvm::AttributeSet::get(nf_arg->getContext(), 0, attr_builder);
                     nf_arg->addAttr(attr_set);
+                }
             }
         }
 
