@@ -35,10 +35,10 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
     expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, /*exp_args_map,*/ kernel_function);
 
-    return true;
-
     // Start processing the kernel function
     processFunction(kernel_function);
+
+    return true;
 
     // And then expand all the expanded (inner) functions, processing those afterwards
     for (auto &f : exp_fun_map) {
@@ -224,6 +224,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
         inst_to_remove.insert(alloca_inst);
 
     } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use)) {
+
         if (gep_inst->getPointerOperand() == prev) {
             bool dereferenceable_arg = false;
             if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(prev)) {
@@ -302,45 +303,75 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
                     }
                 } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
                         prev->getType()->getPointerElementType())) {
-                    if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
-                        if (cint->getValue().getSExtValue() == 0) {
-                            if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(2))) {
-                                if (gep_inst->getNumOperands() == 3) {
-                                    for (auto user_it = gep_inst->user_begin();
-                                         user_it != gep_inst->user_end(); user_it++) {
-                                        llvm::User *user = *user_it;
+                    if (llvm::ConstantInt *cint1 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
+                        if (cint1->getValue().getSExtValue() == 0) {
+                            if (llvm::ConstantInt *cint2 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(2))) {
 
-                                        std::vector<llvm::Value *> expanded_val = expanded;
+                                std::map<llvm::Use *, llvm::Value *> use_to_set;
 
-                                        expandValue(user, gep_inst,
-                                                    gep_inst->getPointerOperand()->getType()->getPointerElementType(),
-                                                    expanded_val);
+                                for (llvm::Use &u : gep_inst->uses()) {
+                                    llvm::User *user = u.getUser();
+
+                                    if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
+
+                                        llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+                                        for (int i = 0; i < u.getOperandNo(); i++) { ++arg_it; }
+
+                                        if (arg_it->hasAttribute(llvm::Attribute::Dereferenceable)) {
+
+                                            bool canBeNull;
+                                            unsigned long long dBytes = arg_it->getPointerDereferenceableBytes(
+                                                    arg_it->getParent()->getParent()->getDataLayout(), canBeNull);
+                                            unsigned long long eBytes =
+                                                    arg_it->getParent()->getParent()->getDataLayout().getTypeSizeInBits(
+                                                            arr_ty->getArrayElementType()) / 8;
+                                            unsigned long long elements = dBytes / eBytes;
+
+                                            unsigned arg_idx = 0;
+
+                                            for (llvm::Argument *exp_arg : exp_args_map[&*arg_it]) {
+
+                                                llvm::Value *ptr = expanded.at(
+                                                        arg_idx++ + (unsigned long long) cint2->getSExtValue());
+                                                std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
+                                                llvm::Type *op1_ty = llvm::IntegerType::get(prev->getContext(), 64);
+                                                llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                                                ops.push_back(op1);
+                                                llvm::Type *op2_ty = llvm::IntegerType::get(prev->getContext(), 64);
+                                                llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
+                                                ops.push_back(op2);
+
+                                                std::string new_name =
+                                                        gep_inst->getName().str() + ".csroa.gepi.arraydecay." +
+                                                        arg_it->getName().str() + "." + std::to_string(arg_idx - 1);
+
+                                                llvm::Type *new_type = arr_ty->getArrayElementType();
+
+                                                if (new_type->isArrayTy()) {
+                                                    llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(
+                                                            new_type,
+                                                            ptr,
+                                                            ops,
+                                                            new_name,
+                                                            gep_inst);
+
+                                                    call_inst->setArgOperand(exp_arg->getArgNo(), new_gep_inst);
+                                                } else {
+                                                    call_inst->setArgOperand(exp_arg->getArgNo(), ptr);
+                                                }
+                                            }
+                                        } else {
+                                            use_to_set[&u] = expanded.at(cint2->getSExtValue());
+                                        }
+                                    } else {
+                                        use_to_set[&u] = expanded.at(cint2->getSExtValue());
                                     }
                                 }
-                                /*
-                                llvm::Value *ptr = expanded.at(cint->getValue().getSExtValue());
-                                std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
-                                ops.insert(ops.end(), gep_inst->op_begin() + 3, gep_inst->op_end());
-                                std::string new_name = gep_inst->getName().str() + ".csroa.gepi." +
-                                                       std::to_string(cint->getValue().getSExtValue());
 
-                                llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(
-                                        ptr->getType()->getScalarType());
-                                llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(
-                                        ptr->getType()->getScalarType())->getElementType();
-
-                                if (ops.size() != 0) {
-                                    llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(new_type,
-                                                                                                            ptr,
-                                                                                                            ops,
-                                                                                                            new_name,
-                                                                                                            gep_inst);
-
-                                    gep_inst->replaceAllUsesWith(new_gep_inst);
-                                } else {
-                                    //gep_inst->replaceAllUsesWith(ptr);
+                                for (auto &u2s : use_to_set) {
+                                    u2s.first->set(u2s.second);
                                 }
-                                */
+
                                 inst_to_remove.insert(gep_inst);
                             }
                         }
@@ -752,22 +783,22 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
 
             if (idxs_of_exp_args.count(nf_arg->getArgNo()) != 0) {
                 VMap[idxs_of_exp_args[nf_arg->getArgNo()]] = nf_arg;
+            }
 
-                nf_arg->setName(mf_arg->getName());
+            nf_arg->setName(mf_arg->getName());
 
-                if (mf_arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
+            if (mf_arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
 
-                    bool canBeNull;
-                    unsigned long long dBytes = mf_arg->getPointerDereferenceableBytes(
-                            mf_arg->getParent()->getParent()->getDataLayout(), canBeNull);
+                bool canBeNull;
+                unsigned long long dBytes = mf_arg->getPointerDereferenceableBytes(
+                        mf_arg->getParent()->getParent()->getDataLayout(), canBeNull);
 
-                    llvm::AttrBuilder attr_builder = llvm::AttrBuilder();
-                    llvm::Attribute attr = llvm::Attribute::getWithDereferenceableBytes(nf_arg->getContext(), dBytes);
-                    attr_builder.addAttribute(attr);
+                llvm::AttrBuilder attr_builder = llvm::AttrBuilder();
+                llvm::Attribute attr = llvm::Attribute::getWithDereferenceableBytes(nf_arg->getContext(), dBytes);
+                attr_builder.addAttribute(attr);
 
-                    auto attr_set = llvm::AttributeSet::get(nf_arg->getContext(), 0, attr_builder);
-                    nf_arg->addAttr(attr_set);
-                }
+                auto attr_set = llvm::AttributeSet::get(nf_arg->getContext(), 0, attr_builder);
+                nf_arg->addAttr(attr_set);
             }
         }
 
