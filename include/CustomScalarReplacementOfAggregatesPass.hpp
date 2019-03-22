@@ -73,9 +73,10 @@ private:
 
     void processFunction(llvm::Function *function);
 
-    void expandArguments(llvm::Function *called_function, llvm::Function *new_function,
-                         std::set<unsigned long long> arg_map,
-                         std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map);
+    void expandArguments(//llvm::Function *called_function,
+            llvm::Function *new_function);//,
+    //std::set<unsigned long long> arg_map,
+    //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map);
 
     void expandValue(llvm::Value *use, llvm::Value *prev, llvm::Type *ty, std::vector<llvm::Value *> &expanded);
 

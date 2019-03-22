@@ -38,24 +38,22 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Start processing the kernel function
     processFunction(kernel_function);
 
-    return true;
-
     // And then expand all the expanded (inner) functions, processing those afterwards
     for (auto &f : exp_fun_map) {
         llvm::Function *exp_fun = f.second;
 
-        expandArguments(nullptr, exp_fun, exp_idx_args_map.at(exp_fun), exp_args_map);
+        expandArguments(/*nullptr,*/ exp_fun/*, exp_idx_args_map.at(exp_fun), exp_args_map*/);
 
         processFunction(exp_fun);
     }
 
-    //cleanup(exp_idx_args_map, exp_fun_map);
+    cleanup(exp_idx_args_map, exp_fun_map);
 
     return true;
 }
 
 void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
-
+    AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
 }
 
 void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *function) {
@@ -113,57 +111,69 @@ void CustomScalarReplacementOfAggregatesPass::processFunction(llvm::Function *fu
 }
 
 void
-CustomScalarReplacementOfAggregatesPass::expandArguments(llvm::Function *called_function, llvm::Function *new_function,
-                                                         std::set<unsigned long long> arg_map,
-                                                         std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map) {
+CustomScalarReplacementOfAggregatesPass::expandArguments(//llvm::Function *called_function,
+        llvm::Function *new_function) {//,
+    //std::set<unsigned long long> arg_map,
+    //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map) {
 
-    for (auto &a : arg_map) {
-        auto arg_it = new_function->arg_begin();
+    for (auto &arg : new_function->args()) {
+        //for (auto &a : arg_map) {
+        auto exp_args_map_it = exp_args_map.find(&arg);
 
-        for (int i = 0; i < a; i++) { ++arg_it; }
-        llvm::Argument *arg = &*arg_it;
+        if (exp_args_map_it != exp_args_map.end()) {
 
-        if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
-
-            args_to_remove[arg->getParent()].insert(arg);
             std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
 
-            if (arg != nullptr and arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
+            for (auto &exp_arg : exp_args_map_it->second) {
+                expanded.push_back(exp_arg);
+            }
 
-                bool canBeNull;
-                unsigned long long dBytes = arg->getPointerDereferenceableBytes(
-                        arg->getParent()->getParent()->getDataLayout(), canBeNull);
-                unsigned long long eBytes =
-                        arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(ptr_ty->getElementType()) / 8;
-                unsigned long long elements = dBytes / eBytes;
+            expandValue(&arg, &arg, arg.getType(), expanded);
+        }
+        /*
+            //auto arg_it = new_function->arg_begin();
 
-                /*
-                for (int e_idx = 0; e_idx < elements; ++e_idx) {
-                    llvm::Type *element = ptr_ty->getElementType();
+            //for (int i = 0; i < a; i++) { ++arg_it; }
+            llvm::Argument *arg = &arg;
 
-                    expanded.push_back(&*(++arg_it));
-                }
-                */
-                for (auto &a : exp_args_map[&*arg_it]) {
-                    expanded.push_back(a);
-                }
-
-                expandValue(arg, arg, ptr_ty, expanded);
-
-            } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+            if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
 
                 args_to_remove[arg->getParent()].insert(arg);
                 std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
 
-                for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
-                    llvm::Type *element = str_ty->getContainedType(idx);
+                if (arg != nullptr and arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
 
-                    expanded.push_back(&*(++arg_it));
+                    bool canBeNull;
+                    unsigned long long dBytes = arg->getPointerDereferenceableBytes(
+                            arg->getParent()->getParent()->getDataLayout(), canBeNull);
+                    unsigned long long eBytes =
+                            arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(ptr_ty->getElementType()) /
+                            8;
+                    unsigned long long elements = dBytes / eBytes;
+
+
+                    for (auto &a : exp_args_map[&*arg_it]) {
+                        expanded.push_back(a);
+                    }
+
+                    expandValue(arg, arg, ptr_ty, expanded);
+
+                } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+
+                    args_to_remove[arg->getParent()].insert(arg);
+                    std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
+
+                    for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                        llvm::Type *element = str_ty->getContainedType(idx);
+
+                        expanded.push_back(&*(++arg_it));
+                    }
+
+                    expandValue(arg, arg, str_ty, expanded);
                 }
-
-                expandValue(arg, arg, str_ty, expanded);
             }
         }
+         */
     }
 }
 
@@ -172,6 +182,88 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
     if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
 
+        if (arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
+
+            bool canBeNull;
+            unsigned long long dBytes = arg->getPointerDereferenceableBytes(
+                    arg->getParent()->getParent()->getDataLayout(), canBeNull);
+            unsigned long long eBytes =
+                    arg->getParent()->getParent()->getDataLayout().getTypeSizeInBits(
+                            arg->getType()->getPointerElementType()) / 8;
+            unsigned long long elements = dBytes / eBytes;
+
+            for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
+                llvm::User *user = *user_it;
+
+                if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(user)) {
+                    if (gep_inst->getNumOperands() == 2) {
+                        if (llvm::ConstantInt *cint1 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
+
+                            for (auto &u : gep_inst->uses()) {
+
+                                if (llvm::GetElementPtrInst *gep_inst2 = llvm::dyn_cast<llvm::GetElementPtrInst>(
+                                        u.getUser())) {
+
+                                    llvm::Value *ptr = expanded.at(cint1->getValue().getSExtValue());
+
+                                    if (llvm::dyn_cast<llvm::Argument>(ptr)->hasAttribute(
+                                            llvm::Attribute::Dereferenceable)) {
+
+                                        std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
+                                        ops.insert(ops.end(), gep_inst2->op_begin() + 2, gep_inst2->op_end());
+                                        std::string new_name = gep_inst2->getName().str() + ".csroa.gepi.arg." +
+                                                               std::to_string(cint1->getValue().getSExtValue());
+
+                                        llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(
+                                                ptr->getType()->getScalarType());
+                                        llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(
+                                                ptr->getType()->getScalarType())->getElementType();
+
+                                        if (ops.size() != 0) {
+                                            llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(
+                                                    new_type,
+                                                    ptr,
+                                                    ops,
+                                                    new_name,
+                                                    gep_inst2);
+
+                                            gep_inst2->replaceAllUsesWith(new_gep_inst);
+                                        } else {
+                                            gep_inst2->replaceAllUsesWith(ptr);
+                                        }
+
+                                        inst_to_remove.insert(gep_inst2);
+                                    } else {
+                                        std::vector<llvm::Value *> expanded_vec;
+                                        for (auto &exp_arg : exp_args_map[llvm::cast<llvm::Argument>(ptr)]) {
+                                            expanded_vec.push_back(exp_arg);
+                                        }
+                                        expandValue(gep_inst2, gep_inst, gep_inst2->getType(), expanded_vec);
+                                    }
+                                }
+                            }
+
+                            inst_to_remove.insert(gep_inst);
+
+                        }
+                    }
+                }
+            }
+        } else if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
+            if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
+                    llvm::User *user = *user_it;
+
+                    std::vector<llvm::Value *> expanded_vec;
+                    for (auto &exp_arg : exp_args_map[arg]) {
+                        expanded_vec.push_back(exp_arg);
+                    }
+
+                    expandValue(user, arg, ty, expanded_vec);
+                }
+            }
+        }
+/*
         for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
             llvm::User *user = *user_it;
 
@@ -179,6 +271,7 @@ void CustomScalarReplacementOfAggregatesPass::expandValue(llvm::Value *use, llvm
 
             expandValue(user, arg, ty, expanded_val);
         }
+*/
     } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
 
         expanded.clear();
