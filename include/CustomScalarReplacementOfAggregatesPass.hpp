@@ -1,6 +1,41 @@
-//
-// Created by Marco Siracusa on 2/27/19.
-//
+/*
+ *
+ *                   _/_/_/    _/_/   _/    _/ _/_/_/    _/_/
+ *                  _/   _/ _/    _/ _/_/  _/ _/   _/ _/    _/
+ *                 _/_/_/  _/_/_/_/ _/  _/_/ _/   _/ _/_/_/_/
+ *                _/      _/    _/ _/    _/ _/   _/ _/    _/
+ *               _/      _/    _/ _/    _/ _/_/_/  _/    _/
+ *
+ *             ***********************************************
+ *                              PandA Project
+ *                     URL: http://panda.dei.polimi.it
+ *                       Politecnico di Milano - DEIB
+ *                        System Architectures Group
+ *             ***********************************************
+ *              Copyright (C) 2018-2019 Politecnico di Milano
+ *
+ *   This file is part of the PandA framework.
+ *
+ *   The PandA framework is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+/*
+ * The implementation performs scalar replacement of aggregates.
+ *
+ * @author Marco Siracusa <marco.siracusa@mail.polimi.it>
+ *
+ */
 
 #ifndef SCALAR_REPLACEMENT_OF_AGGREGATES_CUSTOMSCALARREPLACEMENTOFAGGREGATESPASS_HPP
 #define SCALAR_REPLACEMENT_OF_AGGREGATES_CUSTOMSCALARREPLACEMENTOFAGGREGATESPASS_HPP
@@ -51,6 +86,9 @@ private:
     // Map specifying how arguments have been expanded
     std::map<llvm::Argument *, std::vector<llvm::Argument *>> exp_args_map;
 
+    // Map specifying array argument sizes
+    std::map<llvm::Argument *, std::vector<unsigned long long>> arg_size_map;
+
 public:
     explicit CustomScalarReplacementOfAggregatesPass(std::string kernel_name) : llvm::ModulePass(ID),
                                                                                 kernel_name(kernel_name) {
@@ -63,6 +101,8 @@ public:
 
 private:
 
+    void replicate_calls(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
+
     void populate_inner_functions(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
     void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
@@ -71,17 +111,19 @@ private:
             //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
                                           llvm::Function *kernel_function);
 
-    void processFunction(llvm::Function *function);
+    void expand_allocas(llvm::Function *function);
 
-    void expandArguments(//llvm::Function *called_function,
+    void expand_arguments(//llvm::Function *called_function,
             llvm::Function *new_function);//,
     //std::set<unsigned long long> arg_map,
     //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map);
 
-    void expandValue(llvm::Value *use, llvm::Value *prev, llvm::Type *ty, std::vector<llvm::Value *> &expanded);
+    void expand_value(llvm::Value *use, llvm::Value *prev, llvm::Type *ty, std::vector<llvm::Value *> &expanded);
 
     void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
                  std::map<llvm::Function *, llvm::Function *> &exp_fun_map);
+
+    void get_array_size_of_arguments(std::vector<llvm::Function *> inner_functions);
 };
 
 CustomScalarReplacementOfAggregatesPass *createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);

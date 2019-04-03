@@ -10,7 +10,7 @@ if (CMAKE_CXX_COMPILER STREQUAL "")
 endif()
 
 set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_FLAGS -O3)
+#set(CMAKE_CXX_FLAGS -O3)
 
 project(scalar_replacement_of_aggregates)
 
