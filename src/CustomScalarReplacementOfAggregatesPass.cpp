@@ -44,6 +44,8 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+
 #define DEBUG_TYPE "csroa"
 
 #include "CustomScalarReplacementOfAggregatesPass.hpp"
@@ -300,6 +302,7 @@ CustomScalarReplacementOfAggregatesPass::expand_arguments(//llvm::Function *call
     }
 }
 
+/*
 void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llvm::Value *prev, llvm::Type *ty,
                                                            std::vector<llvm::Value *> &expanded) {
 
@@ -397,7 +400,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
 
                 llvm::Type *new_alloca_type = llvm::PointerType::getUnqual(element);
                 std::string new_alloca_name = alloca_inst->getName().str() + ".csroa.alloca." + std::to_string(idx);
-                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element, new_alloca_name,
+                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(element, new_alloca_name,
                                                                                              alloca_inst);
 
                 expanded.insert(expanded.begin() + idx, new_alloca_inst);
@@ -410,7 +413,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
 
                 llvm::Type *new_alloca_type = llvm::PointerType::getUnqual(element_ty);
                 std::string new_alloca_name = alloca_inst->getName().str() + ".csroa.alloca." + std::to_string(idx);
-                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
+                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(element_ty,
                                                                                              new_alloca_name,
                                                                                              alloca_inst);
 
@@ -589,6 +592,601 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
 
             llvm::Type *new_bitcast_type = llvm::PointerType::getUnqual(element);
             std::string new_bitcast_name = prev->getName().str() + "." + std::to_string(idx) + ".csroa.bitcast";
+            llvm::BitCastInst *new_bitcast_inst = new llvm::BitCastInst(
+                    expanded_val.at(idx), bitcast_inst->getDestTy(),
+                    new_bitcast_name, bitcast_inst);
+
+            expanded.insert(expanded.begin() + idx, new_bitcast_inst);
+        }
+
+        for (auto user_it = bitcast_inst->user_begin(); user_it != bitcast_inst->user_end(); user_it++) {
+            llvm::User *user = *user_it;
+
+            expand_value(user, bitcast_inst, ty, expanded);
+        }
+
+        inst_to_remove.insert(bitcast_inst);
+
+    } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use)) {
+
+        llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(prev);
+        llvm::Function *called_function = call_inst->getCalledFunction();
+
+        assert(called_function != nullptr && "Implementation needed");
+        //assert(arg != nullptr && "Argument reference needed");
+
+        if (llvm::MemCpyInst *memcpy_inst = llvm::dyn_cast<llvm::MemCpyInst>(call_inst)) {
+
+            llvm::Value *dst = call_inst->getOperand(0);
+            llvm::Value *src = call_inst->getOperand(1);
+            if (llvm::isa<llvm::BitCastInst>(src) and llvm::isa<llvm::BitCastInst>(dst) and
+                visited_memcpy.count(memcpy_inst) == 0) {
+
+                visited_memcpy.insert(memcpy_inst);
+
+                for (unsigned idx = 0; idx != ty->getNumContainedTypes(); ++idx) {
+                    llvm::Type *element = ty->getContainedType(idx);
+
+                    unsigned short case_idx = 0;
+                    llvm::BitCastInst *bitcast_inst = nullptr;
+                    llvm::AllocaInst *alloca_inst = nullptr;
+
+                    if (prev == src and llvm::isa<llvm::BitCastInst>(dst) and
+                        llvm::isa<llvm::AllocaInst>(llvm::dyn_cast<llvm::BitCastInst>(dst)->getOperand(0))) {
+                        bitcast_inst = llvm::dyn_cast<llvm::BitCastInst>(dst);
+                        case_idx = 1;
+                    } else if (prev == dst and llvm::isa<llvm::BitCastInst>(src) and
+                               llvm::isa<llvm::AllocaInst>(llvm::dyn_cast<llvm::BitCastInst>(src)->getOperand(0))) {
+                        bitcast_inst = llvm::dyn_cast<llvm::BitCastInst>(src);
+                        case_idx = 2;
+                    }
+
+                    assert(case_idx != 0 && "Wrong memcpy format");
+
+                    alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(bitcast_inst->getOperand(0));
+                    llvm::Value *ptr = alloca_inst;
+
+                    std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+
+                    llvm::APInt apint_op0 = llvm::APInt((unsigned int) 32, 0, false);
+                    llvm::ConstantInt *cint_op0 = llvm::ConstantInt::get(memcpy_inst->getContext(), apint_op0);
+                    gepi_ops.push_back(cint_op0);
+                    llvm::APInt apint_op1 = llvm::APInt((unsigned int) 32, idx, false);
+                    llvm::ConstantInt *cint_op1 = llvm::ConstantInt::get(memcpy_inst->getContext(), apint_op1);
+                    gepi_ops.push_back(cint_op1);
+                    std::string new_name = alloca_inst->getName().str() + ".csroa.gepi.memcpy." +
+                                           std::to_string(idx);
+
+                    llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(
+                            ptr->getType()->getScalarType());
+                    llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(
+                            ptr->getType()->getScalarType())->getElementType();
+
+                    llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(new_type, ptr,
+                                                                                            gepi_ops, new_name,
+                                                                                            bitcast_inst);
+
+                    std::string new_bitcast_name =
+                            alloca_inst->getName().str() + "." + std::to_string(idx) + ".csroa.bitcast.memcpy";
+                    llvm::BitCastInst *new_bitcast_inst = new llvm::BitCastInst(new_gep_inst, bitcast_inst->getDestTy(),
+                                                                                new_bitcast_name, bitcast_inst);
+
+                    std::vector<llvm::Value *> memcpy_ops = std::vector<llvm::Value *>();
+
+                    if (case_idx == 1) {
+                        memcpy_ops.push_back(expanded.at(idx));
+                        memcpy_ops.push_back(new_bitcast_inst);
+                    } else {
+                        memcpy_ops.push_back(new_bitcast_inst);
+                        memcpy_ops.push_back(expanded.at(idx));
+                    }
+
+                    llvm::APInt apint_size = llvm::APInt((unsigned int) 64, expanded.at(
+                            idx)->getType()->getPointerElementType()->getPrimitiveSizeInBits(), false);
+                    llvm::ConstantInt *cint_size = llvm::ConstantInt::get(memcpy_inst->getContext(), apint_size);
+                    memcpy_ops.push_back(cint_size);
+                    // TODO fix the size parameter which goes to zero for complex (aggregate) types like nested structs
+                    llvm::APInt apint_align = llvm::APInt((unsigned int) 32, expanded.at(idx)->getPointerAlignment(
+                            call_inst->getModule()->getDataLayout()), false);
+                    llvm::ConstantInt *cint_align = llvm::ConstantInt::get(call_inst->getContext(), apint_size);
+                    cint_align = memcpy_inst->getAlignmentCst();
+                    memcpy_ops.push_back(cint_align);
+                    llvm::APInt apint_vol = llvm::APInt((unsigned int) 1, 0, false);
+                    llvm::ConstantInt *cint_vol = llvm::ConstantInt::get(memcpy_inst->getContext(), apint_vol);
+                    memcpy_ops.push_back(cint_vol);
+
+                    llvm::CallInst *new_call_inst = llvm::CallInst::Create(called_function, memcpy_ops, "",
+                                                                           memcpy_inst);
+
+                }
+
+                inst_to_remove.insert(memcpy_inst);
+            }
+
+        } else {
+
+            unsigned long long op_idx = 0;
+            for (auto op_it = call_inst->op_begin(); op_it != call_inst->op_end(); op_it++) {
+                llvm::Value *op = *op_it;
+
+                if (op == prev) {
+                    llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+
+                    for (int i = 0; i < op_idx; i++) { ++arg_it; }
+
+                    bool is_array_decay = false;
+                    bool is_array = false;
+                    unsigned long long offset = 0;
+
+
+                    if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(prev)) {
+                        if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                                gep_inst->getPointerOperand()->getType()->getPointerElementType())) {
+
+                            is_array = true;
+
+                            if (arg_size_map.find(&*arg_it) != arg_size_map.end()) {
+                                is_array_decay = true;
+                            }
+
+                            if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(
+                                    gep_inst->getOperand(1))) {
+                                if (cint->getValue().getSExtValue() == 0) {
+                                    if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(
+                                            gep_inst->getOperand(2))) {
+                                        if (gep_inst->getNumOperands() == 3) {
+                                            offset = cint->getSExtValue();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (is_array_decay) {
+
+                        std::vector<llvm::Value *>::iterator exp_it = expanded.begin() + offset;
+                        for (auto &a : exp_args_map[&*arg_it]) {
+                            call_inst->setOperand(a->getArgNo(), *exp_it);
+                            exp_it++;
+                        }
+                    } else {
+
+                        if (is_array) {
+                            op_it->set(expanded.at(offset));
+                        } else {
+                            if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(op->getType())) {
+                                if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(
+                                        ptr_ty->getElementType())) {
+                                    for (unsigned idx = 0; idx != str_ty->getNumContainedTypes(); ++idx) {
+                                        *(op_it + 1 + idx) = expanded.at(idx);
+                                    }
+
+                                    std::vector<llvm::Value *>::iterator exp_it = expanded.begin() + offset;
+                                    for (auto &a : exp_args_map[&*arg_it]) {
+                                        call_inst->setOperand(a->getArgNo(), *exp_it);
+                                        exp_it++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                op_idx++;
+            }
+        }
+    }
+}
+*/
+void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llvm::Value *prev, llvm::Type *ty,
+                                                           std::vector<llvm::Value *> &expanded) {
+
+    if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
+
+        for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
+            llvm::User *user = *user_it;
+
+            expand_value(user, arg, nullptr, expanded);
+        }
+
+/*
+        auto size_it = arg_size_map.find(arg);
+
+        // If the arg has a known size (therefore it is an array)
+        if (size_it != arg_size_map.end()) {
+
+            unsigned long long elements = exp_args_map[arg].size();
+
+            for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
+                llvm::User *user = *user_it;
+
+                if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(user)) {
+                    if (gep_inst->getNumOperands() == 2) {
+                        if (llvm::ConstantInt *cint1 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
+
+                            for (auto &u : gep_inst->uses()) {
+
+                                if (llvm::GetElementPtrInst *gep_inst2 = llvm::dyn_cast<llvm::GetElementPtrInst>(
+                                        u.getUser())) {
+
+                                    llvm::Value *ptr = expanded.at(cint1->getValue().getSExtValue());
+
+                                    auto size_it2 = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(ptr));
+
+                                    // If the arg has a known size (therefore it is an array)
+                                    if (size_it2 != arg_size_map.end()) {
+
+                                        std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
+                                        ops.insert(ops.end(), gep_inst2->op_begin() + 2, gep_inst2->op_end());
+                                        std::string new_name = gep_inst2->getName().str() + ".csroa.gepi.arg." +
+                                                               std::to_string(cint1->getValue().getSExtValue());
+
+                                        llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(
+                                                ptr->getType()->getScalarType());
+                                        llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(
+                                                ptr->getType()->getScalarType())->getElementType();
+
+                                        if (ops.size() != 0) {
+                                            llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(
+                                                    new_type,
+                                                    ptr,
+                                                    ops,
+                                                    new_name,
+                                                    gep_inst2);
+
+                                            gep_inst2->replaceAllUsesWith(new_gep_inst);
+                                        } else {
+                                            gep_inst2->replaceAllUsesWith(ptr);
+                                        }
+
+                                        inst_to_remove.insert(gep_inst2);
+                                    } else {
+                                        std::vector<llvm::Value *> expanded_vec;
+                                        for (auto &exp_arg : exp_args_map[llvm::cast<llvm::Argument>(ptr)]) {
+                                            expanded_vec.push_back(exp_arg);
+                                        }
+                                        expand_value(gep_inst2, gep_inst, gep_inst2->getType(), expanded_vec);
+                                    }
+                                }
+                            }
+
+                            inst_to_remove.insert(gep_inst);
+
+                        }
+                    }
+                }
+            }
+        } else if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
+            if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
+                for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
+                    llvm::User *user = *user_it;
+
+                    std::vector<llvm::Value *> expanded_vec;
+                    for (auto &exp_arg : exp_args_map[arg]) {
+                        expanded_vec.push_back(exp_arg);
+                    }
+
+                    expand_value(user, arg, ty, expanded_vec);
+                }
+            }
+        }
+*/
+    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
+
+        expanded.clear();
+
+        alloca_to_remove[alloca_inst->getFunction()].insert(alloca_inst);
+
+        if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
+            for (unsigned idx = 0; idx < str_ty->getNumContainedTypes(); ++idx) {
+                llvm::Type *element = str_ty->getContainedType(idx);
+
+                llvm::Type *new_alloca_type = llvm::PointerType::getUnqual(element);
+                std::string new_alloca_name = alloca_inst->getName().str() + ".csroa.alloca." + std::to_string(idx);
+                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element, new_alloca_name,
+                                                                                             alloca_inst);
+
+                expanded.insert(expanded.begin() + idx, new_alloca_inst);
+
+            }
+        } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(alloca_inst->getAllocatedType())) {
+
+            for (unsigned idx = 0; idx < arr_ty->getNumElements(); ++idx) {
+                llvm::Type *element_ty = arr_ty->getArrayElementType();
+
+                llvm::Type *new_alloca_type = llvm::PointerType::getUnqual(element_ty);
+                std::string new_alloca_name = alloca_inst->getName().str() + ".csroa.alloca." + std::to_string(idx);
+                llvm::AllocaInst *new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
+                                                                                             new_alloca_name,
+                                                                                             alloca_inst);
+
+                expanded.insert(expanded.begin() + idx, new_alloca_inst);
+
+            }
+        }
+
+        for (auto user_it = alloca_inst->user_begin(); user_it != alloca_inst->user_end(); user_it++) {
+            llvm::User *user = *user_it;
+
+            std::vector<llvm::Value *> expanded_val = expanded;
+
+            expand_value(user, alloca_inst, nullptr, expanded_val);
+        }
+
+        inst_to_remove.insert(alloca_inst);
+
+    } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use)) {
+
+        if (gep_inst->getPointerOperand() == prev) {
+            bool is_ptr_array_arg = false;
+            if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(gep_inst->getPointerOperand())) {
+
+                auto size_it = arg_size_map.find(arg);
+
+                if (size_it != arg_size_map.end()) {
+                    is_ptr_array_arg = true;
+
+                    unsigned long long elements = exp_args_map[arg].size();
+
+                    if (gep_inst->getNumOperands() == 2) {
+                        if (llvm::ConstantInt *cint1 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
+
+                            for (auto &u : gep_inst->uses()) {
+
+                                if (llvm::GetElementPtrInst *gep_inst2 = llvm::dyn_cast<llvm::GetElementPtrInst>(
+                                        u.getUser())) {
+
+                                    llvm::Value *ptr = expanded.at(cint1->getValue().getSExtValue());
+
+                                    auto size_it2 = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(ptr));
+
+                                    // If the expanded arg has a known size (therefore it is an array)
+                                    if (size_it2 != arg_size_map.end()) {
+
+                                        std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
+                                        ops.insert(ops.end(), gep_inst2->op_begin() + 2, gep_inst2->op_end());
+                                        std::string new_name = gep_inst2->getName().str() + ".csroa.gepi.arg." +
+                                                               std::to_string(cint1->getValue().getSExtValue());
+
+                                        llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(
+                                                ptr->getType()->getScalarType());
+                                        llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(
+                                                ptr->getType()->getScalarType())->getElementType();
+
+                                        if (ops.size() != 0) {
+                                            llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(
+                                                    new_type,
+                                                    ptr,
+                                                    ops,
+                                                    new_name,
+                                                    gep_inst2);
+
+                                            gep_inst2->replaceAllUsesWith(new_gep_inst);
+                                        } else {
+                                            gep_inst2->replaceAllUsesWith(ptr);
+                                        }
+
+                                        inst_to_remove.insert(gep_inst2);
+                                    } else {
+                                        std::vector<llvm::Value *> expanded_vec;
+                                        for (auto &exp_arg : exp_args_map[llvm::cast<llvm::Argument>(ptr)]) {
+                                            expanded_vec.push_back(exp_arg);
+                                        }
+                                        expand_value(gep_inst2, gep_inst, gep_inst2->getType(), expanded_vec);
+                                    }
+                                } else {
+                                    llvm::errs() << "ERR\n";
+                                    exit(-1);
+                                }
+                            }
+
+                            inst_to_remove.insert(gep_inst);
+
+                        } else {
+                            llvm::Value *gep_op1 = gep_inst->getOperand(1);
+/*
+                            std::vector<llvm::User*> gepis_to_load;
+
+                            llvm::Instruction *i_to_add;
+                            bool well_formed = true;
+                            do {
+
+                                if (i_to_add->getNumUses() == 1) {
+                                    llvm::User *u = i_to_add->use_begin()->getUser();
+
+                                    gepis_to_load.push_back(u);
+
+                                    if(!llvm::isa<llvm::GetElementPtrInst>(u)) {
+                                        break;
+                                    }
+
+                                } else {
+                                    well_formed = false;
+                                    break;
+                                }
+
+                            } while (true);
+*/
+                            llvm::Instruction *split_before = gep_inst;
+
+                            for (unsigned long long e = 0; e < expanded.size(); e++) {
+
+                                llvm::APInt api_idx = llvm::APInt((unsigned int) 32, e, false);
+                                llvm::ConstantInt *c_idx = llvm::ConstantInt::get(gep_inst->getContext(), api_idx);
+                                std::string cmp_name = gep_inst->getName().str() + ".cmp." + std::to_string(0);
+                                llvm::CmpInst *cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp,
+                                                                            llvm::CmpInst::Predicate::ICMP_EQ,
+                                                                            gep_op1, c_idx, cmp_name, split_before);
+
+                                llvm::TerminatorInst *then_term;
+                                llvm::TerminatorInst *else_term;
+                                llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
+
+                                llvm::Instruction *i_to_add = gep_inst;
+                                llvm::Value *next_u = expanded.at(e);
+                                bool well_formed = true;
+                                do {
+
+                                    if (i_to_add->getNumUses() == 1) {
+                                        llvm::User *u = i_to_add->use_begin()->getUser();
+
+                                        if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(u)) {
+                                            llvm::Instruction *new_inst = inst->clone();
+                                            new_inst->insertBefore(then_term);
+                                            new_inst->getOperandUse(i_to_add->use_begin()->getOperandNo()) = next_u;
+                                            next_u = new_inst;
+
+                                            i_to_add = inst;
+
+                                            // TODO remove an operand from the gepi when operating on an array
+
+                                            if (!llvm::isa<llvm::GetElementPtrInst>(inst)) {
+                                                break;
+                                            }
+                                        } else {
+                                            llvm::errs() << "ERR\n";
+                                            exit(-1);
+                                        }
+
+                                    } else {
+                                        llvm::errs() << "ERR\n";
+                                        i_to_add->dump();
+                                        llvm::errs() << "U: " << i_to_add->getNumUses() << "\n";
+                                        exit(-1);
+                                    }
+
+                                } while (true);
+
+                                split_before = else_term;
+                            }
+                        }
+                    } else {
+                        llvm::errs() << "ERR\n";
+                        exit(-1);
+                    }
+                }
+            }
+
+            if (!is_ptr_array_arg) {
+                if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(
+                        prev->getType()->getPointerElementType())) {
+                    if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
+                        if (cint->getValue().getSExtValue() == 0) {
+                            if (llvm::ConstantInt *cint = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(2))) {
+                                llvm::Value *ptr = expanded.at(cint->getValue().getSExtValue());
+                                std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
+                                ops.insert(ops.end(), gep_inst->op_begin() + 3, gep_inst->op_end());
+                                std::string new_name = gep_inst->getName().str() + ".csroa.gepi." +
+                                                       std::to_string(cint->getValue().getSExtValue());
+
+                                llvm::PointerType *ptr_type = llvm::dyn_cast<llvm::PointerType>(
+                                        ptr->getType()->getScalarType());
+                                llvm::Type *new_type = llvm::dyn_cast<llvm::PointerType>(
+                                        ptr->getType()->getScalarType())->getElementType();
+
+                                if (ops.size() != 0) {
+                                    llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(new_type,
+                                                                                                            ptr,
+                                                                                                            ops,
+                                                                                                            new_name,
+                                                                                                            gep_inst);
+
+                                    gep_inst->replaceAllUsesWith(new_gep_inst);
+                                } else {
+                                    gep_inst->replaceAllUsesWith(ptr);
+                                }
+
+                                inst_to_remove.insert(gep_inst);
+                            }
+                        }
+                    }
+                } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                        prev->getType()->getPointerElementType())) {
+                    if (llvm::ConstantInt *cint1 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(1))) {
+                        if (cint1->getValue().getSExtValue() == 0) {
+                            if (llvm::ConstantInt *cint2 = llvm::dyn_cast<llvm::ConstantInt>(gep_inst->getOperand(2))) {
+
+                                std::map<llvm::Use *, llvm::Value *> use_to_set;
+
+                                for (llvm::Use &u : gep_inst->uses()) {
+                                    llvm::User *user = u.getUser();
+
+                                    if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
+
+                                        llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
+                                        for (int i = 0; i < u.getOperandNo(); i++) { ++arg_it; }
+
+                                        if (arg_size_map.find(&*arg_it) != arg_size_map.end()) {
+
+                                            unsigned long long elements = exp_args_map[&*arg_it].size();
+
+                                            unsigned arg_idx = 0;
+
+                                            for (llvm::Argument *exp_arg : exp_args_map[&*arg_it]) {
+
+                                                llvm::Value *ptr = expanded.at(
+                                                        arg_idx++ + (unsigned long long) cint2->getSExtValue());
+                                                std::vector<llvm::Value *> ops = std::vector<llvm::Value *>();
+                                                llvm::Type *op1_ty = llvm::IntegerType::get(prev->getContext(), 64);
+                                                llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                                                ops.push_back(op1);
+                                                llvm::Type *op2_ty = llvm::IntegerType::get(prev->getContext(), 64);
+                                                llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
+                                                ops.push_back(op2);
+
+                                                std::string new_name =
+                                                        gep_inst->getName().str() + ".csroa.gepi.arraydecay." +
+                                                        arg_it->getName().str() + "." + std::to_string(arg_idx - 1);
+
+                                                llvm::Type *new_type = arr_ty->getArrayElementType();
+
+                                                if (new_type->isArrayTy()) {
+                                                    llvm::GetElementPtrInst *new_gep_inst = llvm::GetElementPtrInst::Create(
+                                                            new_type,
+                                                            ptr,
+                                                            ops,
+                                                            new_name,
+                                                            gep_inst);
+
+                                                    call_inst->setArgOperand(exp_arg->getArgNo(), new_gep_inst);
+                                                } else {
+                                                    call_inst->setArgOperand(exp_arg->getArgNo(), ptr);
+                                                }
+                                            }
+                                        } else {
+                                            use_to_set[&u] = expanded.at(cint2->getSExtValue());
+                                        }
+                                    } else {
+                                        use_to_set[&u] = expanded.at(cint2->getSExtValue());
+                                    }
+                                }
+
+                                for (auto &u2s : use_to_set) {
+                                    u2s.first->set(u2s.second);
+                                }
+
+                                inst_to_remove.insert(gep_inst);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            llvm::errs() << "ERR\n";
+            exit(-1);
+        }
+    } else if (llvm::BitCastInst *bitcast_inst = llvm::dyn_cast<llvm::BitCastInst>(use)) {
+        llvm::errs() << "ERR\n";
+        exit(-1);
+        std::vector<llvm::Value *> expanded_val = expanded;
+
+        expanded.clear();
+
+        for (unsigned idx = 0; idx != bitcast_inst->getSrcTy()->getNumContainedTypes(); ++idx) {
+            llvm::Type *element = bitcast_inst->getSrcTy()->getContainedType(idx);
+
+            llvm::Type *new_bitcast_type = llvm::PointerType::getUnqual(element);
+            std::string new_bitcast_name = prev->getName().str() + "." + std::to_string(idx) + ".csroa.bitcast";
             llvm::BitCastInst *new_bitcast_inst = new llvm::BitCastInst(/*new_bitcast_type*/
                     expanded_val.at(idx), /*expanded_val.at(idx)->getType()*/bitcast_inst->getDestTy(),
                     new_bitcast_name, bitcast_inst);
@@ -599,7 +1197,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
         for (auto user_it = bitcast_inst->user_begin(); user_it != bitcast_inst->user_end(); user_it++) {
             llvm::User *user = *user_it;
 
-            expand_value(user, bitcast_inst, ty, expanded);
+            expand_value(user, bitcast_inst, nullptr, expanded);
         }
 
         inst_to_remove.insert(bitcast_inst);
