@@ -85,6 +85,8 @@ private:
 
     // Map specifying how arguments have been expanded
     std::map<llvm::Argument *, std::vector<llvm::Argument *>> exp_args_map;
+    // Map specifying how allocas have been expanded
+    std::map<llvm::AllocaInst *, std::vector<llvm::AllocaInst *>> exp_allocas_map;
 
     // Map specifying array argument sizes
     std::map<llvm::Argument *, std::vector<unsigned long long>> arg_size_map;
