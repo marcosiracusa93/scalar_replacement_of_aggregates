@@ -238,11 +238,11 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function *fun
                 if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType())) {
                     std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
 
-                    expand_value(alloca_inst, alloca_inst, str_ty, expanded);
+                    expand_value(nullptr, alloca_inst, alloca_inst, str_ty, expanded);
                 } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(alloca_inst->getAllocatedType())) {
                     std::vector<llvm::Value *> expanded = std::vector<llvm::Value *>();
 
-                    expand_value(alloca_inst, alloca_inst, arr_ty, expanded);
+                    expand_value(nullptr, alloca_inst, alloca_inst, arr_ty, expanded);
                 }
             }
         }
@@ -268,24 +268,23 @@ CustomScalarReplacementOfAggregatesPass::expand_arguments(//llvm::Function *call
                 expanded.push_back(exp_arg);
             }
 
-            expand_value(&arg, &arg, arg.getType(), expanded);
+            expand_value(nullptr, &arg, &arg, arg.getType(), expanded);
         }
     }
 }
 
-void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llvm::Value *prev, llvm::Type *ty,
-                                                           std::vector<llvm::Value *> &expanded) {
-    use->dump();
+void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Use *use, llvm::Value *use_val, llvm::Value *prev,
+                                                           llvm::Type *ty, std::vector<llvm::Value *> &expanded) {
+    use_val->dump();
 
-    if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use)) {
+    if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(use_val)) {
 
-        for (auto user_it = arg->user_begin(); user_it != arg->user_end(); user_it++) {
-            llvm::User *user = *user_it;
+        for (llvm::Use &u : arg->uses()) {
 
-            expand_value(user, arg, nullptr, expanded);
+            expand_value(&u, u.getUser(), arg, nullptr, expanded);
         }
 
-    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use)) {
+    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(use_val)) {
 
         expanded.clear();
 
@@ -319,17 +318,16 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
             }
         }
 
-        for (auto user_it = alloca_inst->user_begin(); user_it != alloca_inst->user_end(); user_it++) {
-            llvm::User *user = *user_it;
+        for (llvm::Use &u : alloca_inst->uses()) {
 
             std::vector<llvm::Value *> expanded_val = expanded;
 
-            expand_value(user, alloca_inst, nullptr, expanded_val);
+            expand_value(&u, u.getUser(), alloca_inst, nullptr, expanded_val);
         }
 
         inst_to_remove.insert(alloca_inst);
 
-    } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use)) {
+    } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use_val)) {
 
         llvm::Value *gep_ptr_op = gep_inst->getPointerOperand();
 
@@ -351,7 +349,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
 
                             if (llvm::GetElementPtrInst *u_gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(
                                     u.getUser())) {
-                                // In case the use is a gepi
+                                // In case the use_val is a gepi
 
                                 // Set the pointer to the corresponding expanded element
                                 llvm::Value *ptr = expanded.at(cint1->getValue().getSExtValue());
@@ -392,7 +390,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
                                     for (auto &exp_arg : exp_args_map[llvm::cast<llvm::Argument>(ptr)]) {
                                         expanded_vec.push_back(exp_arg);
                                     }
-                                    expand_value(u_gep_inst, gep_inst, u_gep_inst->getType(), expanded_vec);
+                                    expand_value(&u, u_gep_inst, gep_inst, u_gep_inst->getType(), expanded_vec);
                                 }
 
                                 inst_to_remove.insert(u_gep_inst);
@@ -400,7 +398,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
                             } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(u.getUser())) {
                                 // TODO handle function calls as first instance
                             } else {
-                                llvm::errs() << gep_inst->getName() << " addresses an array but non gepi or call use\n";
+                                llvm::errs() << gep_inst->getName()
+                                             << " addresses an array but non gepi or call use_val\n";
                                 gep_inst->dump();
                                 u.getUser()->dump();
                                 exit(-1);
@@ -431,7 +430,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
                             llvm::TerminatorInst *else_term;
                             llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
 
-                            // Copy all the uses recursively (assuming always one use)
+                            // Copy all the uses recursively (assuming always one use_val)
                             llvm::Instruction *i_to_add = gep_inst;
                             llvm::Value *next_u = expanded.at(e);
                             bool well_formed = true;
@@ -634,11 +633,11 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
                 }
             }
         } else {
-            llvm::errs() << "Wrong use in gepi\n";
+            llvm::errs() << "Wrong use_val in gepi\n";
             gep_inst->dump();
             exit(-1);
         }
-    } else if (llvm::BitCastInst *bitcast_inst = llvm::dyn_cast<llvm::BitCastInst>(use)) {
+    } else if (llvm::BitCastInst *bitcast_inst = llvm::dyn_cast<llvm::BitCastInst>(use_val)) {
         llvm::errs() << "ERR\n";
         exit(-1);
         std::vector<llvm::Value *> expanded_val = expanded;
@@ -657,15 +656,14 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Value *use, llv
             expanded.insert(expanded.begin() + idx, new_bitcast_inst);
         }
 
-        for (auto user_it = bitcast_inst->user_begin(); user_it != bitcast_inst->user_end(); user_it++) {
-            llvm::User *user = *user_it;
+        for (llvm::Use &u : bitcast_inst->uses()) {
 
-            expand_value(user, bitcast_inst, nullptr, expanded);
+            expand_value(&u, u.getUser(), bitcast_inst, nullptr, expanded);
         }
 
         inst_to_remove.insert(bitcast_inst);
 
-    } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use)) {
+    } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use_val)) {
 
         llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(prev);
         llvm::Function *called_function = call_inst->getCalledFunction();
