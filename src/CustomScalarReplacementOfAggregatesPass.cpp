@@ -45,6 +45,7 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
 
 #define DEBUG_TYPE "csroa"
 
@@ -61,7 +62,11 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
     std::vector<llvm::Function *> inner_functions;
 
-    // Compute the inner functions, replicating those on call sites
+    if (!check_assumptions(kernel_function)) {
+        return false;
+    }
+
+    // Compute the inner functions, replicating those on call sites and check assumptions
     replicate_calls(kernel_function, inner_functions);
 
     // Get the size of the arrays called by the inner functions
@@ -77,6 +82,18 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
     expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, kernel_function);
+
+    for (auto f : inner_functions) {
+        for (auto &bb : *f) {
+            for (auto &i : bb) {
+                if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(&i)) {
+                    LowerGetElementPtr(gep_inst->getType(), gep_inst, f);
+                }
+            }
+        }
+    }
+
+    return true;
 
     for (auto a : arg_size_map) {
         llvm::Argument *arg = a.first;
@@ -148,6 +165,221 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 */
 }
 
+const llvm::Value *CustomScalarReplacementOfAggregatesPass::LowerGetElementPtrOffset(llvm::GetElementPtrInst *gep_inst,
+                                                                                     llvm::Function *currentFunction,
+                                                                                     llvm::Value *base_node,
+                                                                                     bool &isZero) {
+
+    const llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(gep_inst);
+    assert(gep_op);
+
+    const llvm::DataLayout *DL = &currentFunction->getParent()->getDataLayout();
+    if (gep_op->hasAllConstantIndices()) {
+        llvm::APInt OffsetAI(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
+        assert(gep_op->accumulateConstantOffset(*DL, OffsetAI));
+        isZero = !OffsetAI;
+        return llvm::ConstantInt::get(gep_op->getContext(), OffsetAI);
+    } else {
+
+        llvm::APInt ConstantIndexOffset(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
+        for (llvm::gep_type_iterator GTI = llvm::gep_type_begin(gep_op), GTE = llvm::gep_type_end(gep_op);
+             GTI != GTE; ++GTI) {
+
+            llvm::ConstantInt *OpC = llvm::dyn_cast<llvm::ConstantInt>(GTI.getOperand());
+            if (!OpC) {
+                if (GTI.getStructTypeOrNull()) {
+                    llvm_unreachable("unexpected condition: struct LowerGetElementPtrOffset");
+                    // continue;
+                }
+
+                // For array or vector indices, scale the index by the size of the type.
+                //auto index = getOperand(GTI.getOperand(), currentFunction);
+                llvm::Value *index = GTI.getOperand();
+                //auto index_type = TREE_TYPE(index);
+                //bool isSignedIndexType = CheckSignedTag(index_type);
+                auto array_elmt_size = llvm::APInt(ConstantIndexOffset.getBitWidth(),
+                                                   DL->getTypeAllocSize(GTI.getIndexedType()));
+                auto array_elmt_sizeCI = llvm::ConstantInt::get(gep_op->getContext(), array_elmt_size);
+                auto array_elmt_sizeCI_type = array_elmt_sizeCI->getType();
+                //auto array_elmt_size_node = assignCodeAuto(array_elmt_sizeCI);
+                if (GTI.getOperand()->getType()->isSingleValueType()) {
+                    // TODO add cast
+                    /*
+                    if(index2integer_cst_signed.find(array_elmt_size_node) == index2integer_cst_signed.end()) {
+                        auto& ics_obj = index2integer_cst_signed[array_elmt_size_node];
+                        auto type_operand = TREE_TYPE(array_elmt_size_node);
+                        ics_obj.ic = array_elmt_size_node;
+                        ics_obj.type = AddSignedTag(type_operand);
+                        array_elmt_size_node = assignCode(&ics_obj, GT(INTEGER_CST_SIGNED));
+                    }
+                    else
+                        array_elmt_size_node = &index2integer_cst_signed.find(array_elmt_size_node)->second;
+                    */
+                }
+                //auto index_times_size = build2(GT(MULT_EXPR), isSignedIndexType ? AddSignedTag(array_elmt_sizeCI_type) : array_elmt_sizeCI_type, index, array_elmt_size_node);
+                std::string mul_name = "lowered.mul." + gep_op->getName().str() + ".";
+                llvm::Instruction *index_times_size = llvm::BinaryOperator::Create(llvm::Instruction::Mul, index,
+                                                                                   array_elmt_sizeCI, mul_name,
+                                                                                   gep_inst);
+
+                if (GTI.getOperand()->getType()->isSingleValueType()) {
+                    // TODO add cast
+                    //index_times_size = build1(GT(NOP_EXPR), array_elmt_sizeCI_type, index_times_size);
+                }
+
+                //auto accu = build2(GT(POINTER_PLUS_EXPR), TREE_TYPE(base_node), base_node, index_times_size);
+                std::string add_name = "lowered.add." + gep_op->getName().str() + ".";
+                llvm::Instruction *accu = llvm::BinaryOperator::Create(llvm::Instruction::Add, base_node,
+                                                                       index_times_size, add_name, gep_inst);
+                base_node = accu;
+                continue;
+            }
+            //if(OpC->isZero())
+            //    continue;
+
+            // Handle a struct index, which adds its field offset to the pointer.
+            if (llvm::StructType *STy = GTI.getStructTypeOrNull()) {
+                unsigned ElementIdx = OpC->getZExtValue();
+                const llvm::StructLayout *SL = DL->getStructLayout(STy);
+                ConstantIndexOffset += llvm::APInt(ConstantIndexOffset.getBitWidth(), SL->getElementOffset(ElementIdx));
+                continue;
+            }
+
+            // For array or vector indices, scale the index by the size of the type.
+            llvm::APInt Index = OpC->getValue().sextOrTrunc(ConstantIndexOffset.getBitWidth());
+            ConstantIndexOffset +=
+                    Index * llvm::APInt(ConstantIndexOffset.getBitWidth(), DL->getTypeAllocSize(GTI.getIndexedType()));
+        }
+        isZero = !ConstantIndexOffset;
+        return llvm::ConstantInt::get(gep_op->getContext(), ConstantIndexOffset);
+    }
+}
+
+const llvm::Value *
+CustomScalarReplacementOfAggregatesPass::LowerGetElementPtr(void *type, llvm::GetElementPtrInst *gep_inst,
+                                                            llvm::Function *currentFunction) {
+    //assert(TREE_CODE(type) == GT(POINTER_TYPE));
+    // auto mem_ref_type = TREE_TYPE(type);
+    //auto base_node = getOperand(gep->getOperand(0), currentFunction);
+    llvm::Value *base_node = llvm::ConstantInt::get(gep_inst->getContext(),
+                                                    llvm::APInt(32, 0));//gep_inst->getOperand(0);
+
+    bool isZero = false;
+    auto offset_node = LowerGetElementPtrOffset(gep_inst, currentFunction, base_node, isZero);
+    //      if(gep_op->isInBounds())
+    //      {
+    //         auto mem_ref_node = build2(GT(MEM_REF), mem_ref_type, base_node, offset_node);
+    //         return build1(GT(ADDR_EXPR), type, mem_ref_node);
+    //      }
+    //      else
+
+    gep_inst->dump();
+    offset_node->dump();
+    if (isZero)
+        return base_node;
+    else
+        return offset_node;//build2(GT(POINTER_PLUS_EXPR), type, base_node, offset_node);
+}
+
+
+bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *kernel_function) {
+
+    class InstChecker {
+
+        static bool check_ptr(llvm::Value *ptr) {
+
+            llvm::Value *ptr_rec = ptr;
+
+            do {
+                if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr_rec)) {
+                    ptr_rec = gep_inst->getPointerOperand();
+                } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr_rec)) {
+                    return true;
+                } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(ptr_rec)) {
+                    return true;
+                } else {
+                    return false;
+                }
+            } while (true);
+        }
+
+    public:
+        static bool check_inst(llvm::Instruction *inst) {
+            if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(inst)) {
+                return check_ptr(load_inst->getPointerOperand());
+            } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(inst)) {
+                return check_ptr(store_inst->getPointerOperand());
+            } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(inst)) {
+                llvm::Function *called_function = call_inst->getCalledFunction();
+
+                for (llvm::Value *op : call_inst->operands()) {
+
+                    if (check_ptr(op)) {
+
+                        // TODO improve this (if an expandeable arg goes in a "unsupported" function kill anything
+
+                        if (called_function->isIntrinsic()) {
+                            return false;
+                        } else {
+                            return true;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            } else {
+                return true;
+            }
+        }
+    };
+
+    // TODO: how about circular call graphs
+    // TODO: how about memOps/intrinsic/extern functions
+    std::vector<llvm::CallInst *> call_inst_vec;
+
+    // Initialize the vector containing the calls
+    for (llvm::BasicBlock &bb : *kernel_function) {
+        for (llvm::Instruction &i : bb) {
+
+            if (!InstChecker::check_inst(&i)) {
+                return false;
+            }
+
+            if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
+                call_inst_vec.push_back(call_inst);
+            }
+        }
+    }
+
+    // Go through the vector (which may grow at any iteration)
+    for (unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx) {
+        llvm::CallInst *call_inst = call_inst_vec.at(idx);
+        llvm::Function *called_function = call_inst->getCalledFunction();
+
+        // TODO improve it
+        if (called_function->isIntrinsic()) {
+            continue;
+        }
+
+        // add to the vector function calls inside the cloned function
+        for (llvm::BasicBlock &bb : *called_function) {
+            for (llvm::Instruction &i : bb) {
+
+                if (!InstChecker::check_inst(&i)) {
+                    return false;
+                }
+
+                if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
+                    call_inst_vec.push_back(call_inst);
+                }
+            }
+        }
+    }
+
+    return true;
+
+} // end check_assumptions(...)
+
 void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function *kernel_function,
                                                               std::vector<llvm::Function *> &inner_functions) {
 
@@ -168,6 +400,11 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function *ke
     for (unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx) {
         llvm::CallInst *call_inst = call_inst_vec.at(idx);
         llvm::Function *called_function = call_inst->getCalledFunction();
+
+        // TODO improve it
+        if (called_function->isIntrinsic()) {
+            continue;
+        }
 
         // Clone the function
         llvm::ValueToValueMapTy VMap;
@@ -328,6 +565,18 @@ void CustomScalarReplacementOfAggregatesPass::expand_value(llvm::Use *use, llvm:
         inst_to_remove.insert(alloca_inst);
 
     } else if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(use_val)) {
+
+        for (llvm::Use &u : gep_inst->uses()) {
+
+            if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(u.getUser())) {
+
+            }
+        }
+
+
+        return;
+
+
 
         llvm::Value *gep_ptr_op = gep_inst->getPointerOperand();
 

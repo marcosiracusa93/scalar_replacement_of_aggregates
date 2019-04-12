@@ -103,6 +103,8 @@ public:
 
 private:
 
+    bool check_assumptions(llvm::Function *kernel_function);
+
     void replicate_calls(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
     void populate_inner_functions(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
@@ -127,6 +129,13 @@ private:
                  std::map<llvm::Function *, llvm::Function *> &exp_fun_map);
 
     void get_array_size_of_arguments(std::vector<llvm::Function *> inner_functions);
+
+    const llvm::Value *
+    LowerGetElementPtr(void *type, llvm::GetElementPtrInst *gep_inst, llvm::Function *currentFunction);
+
+    const llvm::Value *
+    LowerGetElementPtrOffset(llvm::GetElementPtrInst *gep_inst, llvm::Function *currentFunction, llvm::Value *base_node,
+                             bool &isZero);
 };
 
 CustomScalarReplacementOfAggregatesPass *createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);
