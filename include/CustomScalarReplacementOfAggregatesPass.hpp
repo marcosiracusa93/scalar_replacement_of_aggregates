@@ -107,6 +107,15 @@ private:
 
     void replicate_calls(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
+    void expand_ptrs(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
+
+    void process_pointer(llvm::Value *ptr);
+
+    void
+    compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);
+
+    llvm::Value *get_expanded_value(llvm::Value *ptr, llvm::Value *base_address, signed long long offset);
+
     void populate_inner_functions(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
     void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
@@ -130,12 +139,6 @@ private:
 
     void get_array_size_of_arguments(std::vector<llvm::Function *> inner_functions);
 
-    const llvm::Value *
-    LowerGetElementPtr(void *type, llvm::GetElementPtrInst *gep_inst, llvm::Function *currentFunction);
-
-    const llvm::Value *
-    LowerGetElementPtrOffset(llvm::GetElementPtrInst *gep_inst, llvm::Function *currentFunction, llvm::Value *base_node,
-                             bool &isZero);
 };
 
 CustomScalarReplacementOfAggregatesPass *createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);

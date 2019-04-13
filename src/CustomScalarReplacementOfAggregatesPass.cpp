@@ -54,8 +54,6 @@
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) {
 
-    module.dump();
-
     llvm::Function *kernel_function = module.getFunction(kernel_name);
 
     assert(kernel_function != nullptr && "Unknown kernel function!");
@@ -83,15 +81,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
     expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, kernel_function);
 
-    for (auto f : inner_functions) {
-        for (auto &bb : *f) {
-            for (auto &i : bb) {
-                if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(&i)) {
-                    LowerGetElementPtr(gep_inst->getType(), gep_inst, f);
-                }
-            }
-        }
-    }
+    module.dump();
+
+    expand_ptrs(kernel_function, inner_functions);
 
     return true;
 
@@ -165,122 +157,260 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 */
 }
 
-const llvm::Value *CustomScalarReplacementOfAggregatesPass::LowerGetElementPtrOffset(llvm::GetElementPtrInst *gep_inst,
-                                                                                     llvm::Function *currentFunction,
-                                                                                     llvm::Value *base_node,
-                                                                                     bool &isZero) {
+void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address,
+                                                                      std::vector<llvm::Value *> &offset_chain) {
 
-    const llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(gep_inst);
-    assert(gep_op);
+    if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
 
-    const llvm::DataLayout *DL = &currentFunction->getParent()->getDataLayout();
-    if (gep_op->hasAllConstantIndices()) {
-        llvm::APInt OffsetAI(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
-        assert(gep_op->accumulateConstantOffset(*DL, OffsetAI));
-        isZero = !OffsetAI;
-        return llvm::ConstantInt::get(gep_op->getContext(), OffsetAI);
-    } else {
+        compute_base_and_offset(gep_inst->getPointerOperand(), base_address, offset_chain);
 
-        llvm::APInt ConstantIndexOffset(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
-        for (llvm::gep_type_iterator GTI = llvm::gep_type_begin(gep_op), GTE = llvm::gep_type_end(gep_op);
-             GTI != GTE; ++GTI) {
+        const llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(gep_inst);
+        assert(gep_op);
 
-            llvm::ConstantInt *OpC = llvm::dyn_cast<llvm::ConstantInt>(GTI.getOperand());
-            if (!OpC) {
-                if (GTI.getStructTypeOrNull()) {
+        const llvm::DataLayout *DL = &gep_inst->getModule()->getDataLayout();
+        if (gep_op->hasAllConstantIndices()) {
+            llvm::APInt offset_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
+            assert(gep_op->accumulateConstantOffset(*DL, offset_ai));
+
+            if (offset_ai.getSExtValue() != 0) {
+
+                if (llvm::ConstantInt *c_last = llvm::dyn_cast<llvm::ConstantInt>(offset_chain.back())) {
+                    signed long long offset_sum = c_last->getSExtValue() + offset_ai.getSExtValue();
+                    llvm::APInt offset_sum_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), offset_sum);
+                    offset_chain.back() = llvm::ConstantInt::get(gep_inst->getContext(), offset_sum_ai);
+                } else {
+                    offset_chain.push_back(llvm::ConstantInt::get(gep_op->getContext(), offset_ai));
+                }
+            }
+        } else {
+            llvm::APInt ConstantIndexOffset(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
+
+            for (llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op), GTE = llvm::gep_type_end(gep_op);
+                 gt_it != GTE; ++gt_it) {
+
+                if (gt_it.getStructTypeOrNull()) {
                     llvm_unreachable("unexpected condition: struct LowerGetElementPtrOffset");
                     // continue;
                 }
 
                 // For array or vector indices, scale the index by the size of the type.
-                //auto index = getOperand(GTI.getOperand(), currentFunction);
-                llvm::Value *index = GTI.getOperand();
-                //auto index_type = TREE_TYPE(index);
-                //bool isSignedIndexType = CheckSignedTag(index_type);
-                auto array_elmt_size = llvm::APInt(ConstantIndexOffset.getBitWidth(),
-                                                   DL->getTypeAllocSize(GTI.getIndexedType()));
-                auto array_elmt_sizeCI = llvm::ConstantInt::get(gep_op->getContext(), array_elmt_size);
-                auto array_elmt_sizeCI_type = array_elmt_sizeCI->getType();
-                //auto array_elmt_size_node = assignCodeAuto(array_elmt_sizeCI);
-                if (GTI.getOperand()->getType()->isSingleValueType()) {
-                    // TODO add cast
-                    /*
-                    if(index2integer_cst_signed.find(array_elmt_size_node) == index2integer_cst_signed.end()) {
-                        auto& ics_obj = index2integer_cst_signed[array_elmt_size_node];
-                        auto type_operand = TREE_TYPE(array_elmt_size_node);
-                        ics_obj.ic = array_elmt_size_node;
-                        ics_obj.type = AddSignedTag(type_operand);
-                        array_elmt_size_node = assignCode(&ics_obj, GT(INTEGER_CST_SIGNED));
+                llvm::Value *index = gt_it.getOperand();
+
+                llvm::APInt array_elmt_size = llvm::APInt(ConstantIndexOffset.getBitWidth(),
+                                                          DL->getTypeAllocSize(gt_it.getIndexedType()));
+
+                if (llvm::ConstantInt *c_index = llvm::dyn_cast<llvm::ConstantInt>(index)) {
+                    signed long long offset = c_index->getSExtValue() * array_elmt_size.getSExtValue();
+                    llvm::APInt offset_ai(c_index->getBitWidth(), offset);
+
+                    if (llvm::ConstantInt *c_last = llvm::dyn_cast<llvm::ConstantInt>(offset_chain.back())) {
+                        signed long long offset_sum = c_last->getSExtValue() + offset_ai.getSExtValue();
+                        llvm::APInt offset_sum_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), offset_sum);
+                        offset_chain.back() = llvm::ConstantInt::get(gep_inst->getContext(), offset_sum_ai);
+                    } else {
+                        offset_chain.push_back(llvm::ConstantInt::get(gep_op->getContext(), offset_ai));
                     }
-                    else
-                        array_elmt_size_node = &index2integer_cst_signed.find(array_elmt_size_node)->second;
-                    */
+                } else {
+                    llvm::ConstantInt *c_array_elmt_size = llvm::ConstantInt::get(gep_op->getContext(),
+                                                                                  array_elmt_size);
+
+                    std::string mul_name = "lowered.mul." + gep_op->getName().str();
+                    llvm::Instruction *index_times_size = llvm::BinaryOperator::Create(llvm::Instruction::Mul, index,
+                                                                                       c_array_elmt_size, mul_name,
+                                                                                       gep_inst);
+
+                    offset_chain.push_back(index_times_size);
                 }
-                //auto index_times_size = build2(GT(MULT_EXPR), isSignedIndexType ? AddSignedTag(array_elmt_sizeCI_type) : array_elmt_sizeCI_type, index, array_elmt_size_node);
-                std::string mul_name = "lowered.mul." + gep_op->getName().str() + ".";
-                llvm::Instruction *index_times_size = llvm::BinaryOperator::Create(llvm::Instruction::Mul, index,
-                                                                                   array_elmt_sizeCI, mul_name,
-                                                                                   gep_inst);
-
-                if (GTI.getOperand()->getType()->isSingleValueType()) {
-                    // TODO add cast
-                    //index_times_size = build1(GT(NOP_EXPR), array_elmt_sizeCI_type, index_times_size);
-                }
-
-                //auto accu = build2(GT(POINTER_PLUS_EXPR), TREE_TYPE(base_node), base_node, index_times_size);
-                std::string add_name = "lowered.add." + gep_op->getName().str() + ".";
-                llvm::Instruction *accu = llvm::BinaryOperator::Create(llvm::Instruction::Add, base_node,
-                                                                       index_times_size, add_name, gep_inst);
-                base_node = accu;
-                continue;
             }
-            //if(OpC->isZero())
-            //    continue;
-
-            // Handle a struct index, which adds its field offset to the pointer.
-            if (llvm::StructType *STy = GTI.getStructTypeOrNull()) {
-                unsigned ElementIdx = OpC->getZExtValue();
-                const llvm::StructLayout *SL = DL->getStructLayout(STy);
-                ConstantIndexOffset += llvm::APInt(ConstantIndexOffset.getBitWidth(), SL->getElementOffset(ElementIdx));
-                continue;
-            }
-
-            // For array or vector indices, scale the index by the size of the type.
-            llvm::APInt Index = OpC->getValue().sextOrTrunc(ConstantIndexOffset.getBitWidth());
-            ConstantIndexOffset +=
-                    Index * llvm::APInt(ConstantIndexOffset.getBitWidth(), DL->getTypeAllocSize(GTI.getIndexedType()));
         }
-        isZero = !ConstantIndexOffset;
-        return llvm::ConstantInt::get(gep_op->getContext(), ConstantIndexOffset);
+
+        return;
+    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
+        base_address = alloca_inst;
+        offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+        return;
+    } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(ptr)) {
+        base_address = arg;
+        offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+        return;
+    } else {
+        llvm::errs() << "ERR: Only gepi chains supported\n";
+        ptr->dump();
+        exit(-1);
     }
 }
 
-const llvm::Value *
-CustomScalarReplacementOfAggregatesPass::LowerGetElementPtr(void *type, llvm::GetElementPtrInst *gep_inst,
-                                                            llvm::Function *currentFunction) {
-    //assert(TREE_CODE(type) == GT(POINTER_TYPE));
-    // auto mem_ref_type = TREE_TYPE(type);
-    //auto base_node = getOperand(gep->getOperand(0), currentFunction);
-    llvm::Value *base_node = llvm::ConstantInt::get(gep_inst->getContext(),
-                                                    llvm::APInt(32, 0));//gep_inst->getOperand(0);
+void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Value *ptr) {
+    llvm::Value *base_address = nullptr;
+    std::vector<llvm::Value *> offset_chain;
 
-    bool isZero = false;
-    auto offset_node = LowerGetElementPtrOffset(gep_inst, currentFunction, base_node, isZero);
-    //      if(gep_op->isInBounds())
-    //      {
-    //         auto mem_ref_node = build2(GT(MEM_REF), mem_ref_type, base_node, offset_node);
-    //         return build1(GT(ADDR_EXPR), type, mem_ref_node);
-    //      }
-    //      else
+    if (llvm::isa<llvm::ConstantPointerNull>(ptr)) {
+        // TODO fix it
+        return;
+    }
 
-    gep_inst->dump();
-    offset_node->dump();
-    if (isZero)
-        return base_node;
-    else
-        return offset_node;//build2(GT(POINTER_PLUS_EXPR), type, base_node, offset_node);
+    compute_base_and_offset(ptr, base_address, offset_chain);
+
+    signed long long constant_sum = 0;
+
+    std::vector<llvm::Value *> non_const_offsets;
+
+    for (llvm::Value *offset : offset_chain) {
+        if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
+            constant_sum += c_offset->getSExtValue();
+        } else {
+            non_const_offsets.push_back(offset);
+        }
+
+        if (non_const_offsets.empty()) {
+            llvm::errs() << "Ptr: ";
+            ptr->dump();
+            llvm::Value *exp_val = get_expanded_value(ptr, base_address, constant_sum);
+            llvm::errs() << "Exp: ";
+            exp_val->dump();
+        }
+    }
 }
 
+template<class I>
+static llvm::Value *
+get_element_at_offset(llvm::Value *ptr, I *inst, std::map<I *, std::vector<I *>> &map, signed long long offset,
+                      const llvm::DataLayout *DL) {
+
+    I *el_to_exp = inst;
+    signed long long offset_to_exp = offset;
+
+    while (offset_to_exp > 0) {
+        llvm::errs() << "Offs: " << offset_to_exp << "\n";
+        llvm::errs() << "ElTo: ";
+        el_to_exp->dump();
+        auto exp_it = map.find(el_to_exp);
+
+        if (exp_it != map.end()) {
+            std::vector<I *> &subelements = exp_it->second;
+
+            bool take_next = false;
+
+            for (I *el : subelements) {
+                unsigned long long allocated_size = DL->getTypeAllocSize(el->getType()->getPointerElementType());
+
+                if (offset_to_exp == 0) {
+
+                    if (take_next) {
+                        el_to_exp = el;
+                    }
+
+                    break;
+                }
+
+                if (offset_to_exp - (signed long long) allocated_size > 0) {
+                    offset_to_exp -= allocated_size;
+                } else if (offset_to_exp - (signed long long) allocated_size == 0) {
+                    offset_to_exp -= allocated_size;
+                    take_next = true;
+                } else {
+                    el_to_exp = el;
+                    break;
+                }
+            }
+
+        } else {
+            llvm::errs() << "ERR: no expansion found!\n";
+            inst->dump();
+            el_to_exp->dump();
+            exit(-1);
+        }
+    }
+
+    do {
+
+        unsigned long long accessed_size = DL->getTypeAllocSize(ptr->getType()->getPointerElementType());
+        unsigned long long expanded_size = DL->getTypeAllocSize(el_to_exp->getType()->getPointerElementType());
+
+        if (accessed_size < expanded_size) {
+            auto exp_it = map.find(el_to_exp);
+
+            if (exp_it != map.end()) {
+                std::vector<I *> &subelements = exp_it->second;
+
+                el_to_exp = subelements.front();
+            } else {
+                llvm::errs() << "ERR: El not found in map\n";
+                el_to_exp->dump();
+                exit(-1);
+            }
+        } else if (accessed_size == expanded_size) {
+            break;
+        } else {
+            llvm::errs() << "ERR: bad access size\n";
+            ptr->dump();
+            exit(-1);
+        }
+    } while (true);
+
+    return el_to_exp;
+}
+
+llvm::Value *CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::Value *ptr, llvm::Value *base_address,
+                                                                         signed long long offset) {
+
+    if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+        return get_element_at_offset(ptr, alloca_inst, exp_allocas_map, offset,
+                                     &alloca_inst->getModule()->getDataLayout());
+    } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
+        /*
+        for (auto m1 : exp_args_map) {
+            llvm::errs() << "A: " << m1.first->getParent()->getName(); m1.first->dump();
+
+            for (auto m2 : m1.second) {
+                llvm::errs() << "E: "; m2->dump();
+            }
+        }*/
+        return get_element_at_offset(ptr, arg, exp_args_map, offset, &arg->getParent()->getParent()->getDataLayout());
+    } else {
+        llvm::errs() << "ERR: Neither alloca nor argument as base address\n";
+        ptr->dump();
+        base_address->dump();
+        exit(-1);
+    }
+}
+
+void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function *kernel_function,
+                                                          std::vector<llvm::Function *> &inner_functions) {
+
+    inner_functions.insert(inner_functions.begin(), kernel_function);
+
+    for (auto f : inner_functions) {
+
+        for (auto &bb : *f) {
+            for (auto &i : bb) {
+                llvm::errs() << "I: ";
+                i.dump();
+                if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(&i)) {
+                    process_pointer(load_inst->getPointerOperand());
+                } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(&i)) {
+                    process_pointer(store_inst->getPointerOperand());
+                } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
+                    llvm::Function *called_function = call_inst->getCalledFunction();
+
+                    // TODO improve this
+                    if (called_function->isIntrinsic()) {
+                        continue;
+                    }
+
+                    for (llvm::Value *op : call_inst->arg_operands()) {
+
+                        if (op->getType()->isPointerTy()) {
+                            process_pointer(op);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    inner_functions.erase(inner_functions.begin());
+}
 
 bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *kernel_function) {
 
@@ -312,21 +442,24 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *
             } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(inst)) {
                 llvm::Function *called_function = call_inst->getCalledFunction();
 
-                for (llvm::Value *op : call_inst->operands()) {
+                for (llvm::Value *op : call_inst->arg_operands()) {
 
-                    if (check_ptr(op)) {
+                    if (op->getType()->isPointerTy()) {
 
-                        // TODO improve this (if an expandeable arg goes in a "unsupported" function kill anything
+                        if (check_ptr(op)) {
 
-                        if (called_function->isIntrinsic()) {
-                            return false;
+                            // TODO improve this (if an expandeable arg goes in a "unsupported" function kill anything
+
+                            if (called_function->isIntrinsic()) {
+                                return false;
+                            }
                         } else {
-                            return true;
+                            return false;
                         }
-                    } else {
-                        return false;
                     }
                 }
+
+                return true;
             } else {
                 return true;
             }
@@ -1518,6 +1651,19 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                 }
             }
         }
+    }
+
+    // Update inner functions with the expanded ones
+    unsigned long long inner_size = inner_functions.size();
+    for (auto f : inner_functions) {
+        inner_functions.push_back(exp_fun_map[f]);
+    }
+    inner_functions.erase(inner_functions.begin(), inner_functions.begin() + inner_size);
+
+    // Expand allocas in kernel and inner functions
+    expand_allocas(kernel_function);
+    for (llvm::Function *function : inner_functions) {
+        expand_allocas(function);
     }
 
 } // end expand_signatures_and_call_sites
