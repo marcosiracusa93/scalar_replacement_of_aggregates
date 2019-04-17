@@ -109,7 +109,7 @@ private:
 
     void expand_ptrs(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
-    void process_pointer(llvm::Value *ptr);
+    void process_pointer(llvm::Use *ptr_u);
 
     void
     compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);

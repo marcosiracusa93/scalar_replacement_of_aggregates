@@ -70,6 +70,15 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Get the size of the arrays called by the inner functions
     get_array_size_of_arguments(inner_functions);
 
+for (auto &a : arg_size_map) {
+    llvm::errs() << "Arg: "; a.first->dump();
+
+    for (auto &s : a.second) {
+        llvm::errs() << "  " << s;
+    }
+
+    llvm::errs() << "\n";
+}
     // Get the size of the arrays called by the kernel function
     //get_array_size_of_arguments(std::vector<llvm::Function*>(1, kernel_function));
 
@@ -240,34 +249,98 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
     }
 }
 
-void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Value *ptr) {
+void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u) {
     llvm::Value *base_address = nullptr;
     std::vector<llvm::Value *> offset_chain;
 
-    if (llvm::isa<llvm::ConstantPointerNull>(ptr)) {
+    if (llvm::isa<llvm::ConstantPointerNull>(ptr_u->get())) {
         // TODO fix it
         return;
     }
 
-    compute_base_and_offset(ptr, base_address, offset_chain);
+    compute_base_and_offset(ptr_u->get(), base_address, offset_chain);
 
     signed long long constant_sum = 0;
-
-    std::vector<llvm::Value *> non_const_offsets;
+    bool is_constant = true;
 
     for (llvm::Value *offset : offset_chain) {
         if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
             constant_sum += c_offset->getSExtValue();
         } else {
-            non_const_offsets.push_back(offset);
+            is_constant = false;
+            break;
         }
+    }
 
-        if (non_const_offsets.empty()) {
+    if (llvm::isa<llvm::LoadInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
+
+        if (is_constant) {
             llvm::errs() << "Ptr: ";
-            ptr->dump();
-            llvm::Value *exp_val = get_expanded_value(ptr, base_address, constant_sum);
+            ptr_u->get()->dump();
+            llvm::Value *exp_val = get_expanded_value(ptr_u->get(), base_address, constant_sum);
             llvm::errs() << "Exp: ";
             exp_val->dump();
+
+            ptr_u->set(exp_val);
+        } else {
+            llvm::errs() << "ERR: Non constant access\n";
+            exit(-1);
+        }
+    } else if (llvm::CallInst *call_isnt = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
+
+        if (is_constant) {
+            llvm::Argument *arg_u = nullptr;
+            {
+                llvm::Function::arg_iterator arg_u_it = call_isnt->getCalledFunction()->arg_begin();
+
+                for (unsigned long long i = 0; i < ptr_u->getOperandNo(); i++) { arg_u_it++; }
+                arg_u = &*arg_u_it;
+            }
+
+            auto exp_arg_it = exp_args_map.find(arg_u);
+
+            unsigned long long arg_offset = 0;
+            if (exp_arg_it != exp_args_map.end()) {
+
+                unsigned long long exp_arg_u_idx = 0;
+                for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
+llvm::errs() << "----------------\n";
+                    llvm::Value *exp_val = get_expanded_value(ptr_u->get(), base_address, arg_offset);
+
+                    llvm::Value *exp_base = nullptr;
+                    if (llvm::AllocaInst *base_alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(exp_val)) {
+                        auto base_alloca_it = exp_allocas_map.find(base_alloca_inst);
+
+                        if (base_alloca_it != exp_allocas_map.end()) {
+                            exp_base = base_alloca_it->second.at(exp_arg_u_idx);
+                        } else {
+                            llvm::errs() << "ERR: exp not found\n";
+                            base_alloca_inst->dump();
+                            exit(-1);
+                        }
+                    } else if (llvm::Argument *base_arg = llvm::dyn_cast<llvm::Argument>(exp_val)) {
+                        auto base_arg_it = exp_args_map.find(base_arg);
+
+                        if (base_arg_it != exp_args_map.end()) {
+                            exp_base = base_arg_it->second.at(exp_arg_u_idx);
+                        } else {
+                            llvm::errs() << "ERR: exp not found\n";
+                            base_arg->dump();
+                            exit(-1);
+                        }
+                    }
+
+                    call_isnt->setOperand(exp_arg_u->getArgNo(), exp_base);
+
+                    arg_offset += call_isnt->getModule()->getDataLayout().getTypeAllocSize(
+                            exp_arg_u->getType()->getPointerElementType());
+                    exp_arg_u_idx++;
+                }
+            }
+        } else {
+            llvm::errs() << "ERR: Non constant access in function call operand\n";
+            call_isnt->dump();
+            exit(-1);
         }
     }
 }
@@ -279,11 +352,10 @@ get_element_at_offset(llvm::Value *ptr, I *inst, std::map<I *, std::vector<I *>>
 
     I *el_to_exp = inst;
     signed long long offset_to_exp = offset;
-
+llvm::errs() << "+++++++++++\n";
     while (offset_to_exp > 0) {
         llvm::errs() << "Offs: " << offset_to_exp << "\n";
-        llvm::errs() << "ElTo: ";
-        el_to_exp->dump();
+        llvm::errs() << "ElTo: "; el_to_exp->dump();
         auto exp_it = map.find(el_to_exp);
 
         if (exp_it != map.end()) {
@@ -322,10 +394,13 @@ get_element_at_offset(llvm::Value *ptr, I *inst, std::map<I *, std::vector<I *>>
         }
     }
 
+llvm::errs() << "***********\n";
     do {
-
         unsigned long long accessed_size = DL->getTypeAllocSize(ptr->getType()->getPointerElementType());
         unsigned long long expanded_size = DL->getTypeAllocSize(el_to_exp->getType()->getPointerElementType());
+
+llvm::errs() << "A: " << accessed_size << " E: " << expanded_size << "\n";
+llvm::errs() << "El2Exp: "; el_to_exp->dump();
 
         if (accessed_size < expanded_size) {
             auto exp_it = map.find(el_to_exp);
@@ -343,7 +418,9 @@ get_element_at_offset(llvm::Value *ptr, I *inst, std::map<I *, std::vector<I *>>
             break;
         } else {
             llvm::errs() << "ERR: bad access size\n";
+            llvm::errs() << "A: " << accessed_size << " E: " << expanded_size << "\n";
             ptr->dump();
+            el_to_exp->dump();
             exit(-1);
         }
     } while (true);
@@ -387,9 +464,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function *kernel
                 llvm::errs() << "I: ";
                 i.dump();
                 if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(&i)) {
-                    process_pointer(load_inst->getPointerOperand());
+                    process_pointer(&load_inst->getOperandUse(0));
                 } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(&i)) {
-                    process_pointer(store_inst->getPointerOperand());
+                    process_pointer(&store_inst->getOperandUse(1));
                 } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
                     llvm::Function *called_function = call_inst->getCalledFunction();
 
@@ -398,10 +475,12 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function *kernel
                         continue;
                     }
 
-                    for (llvm::Value *op : call_inst->arg_operands()) {
+                    for (unsigned long long op_i = 0; op_i < call_inst->getNumArgOperands(); op_i++) {
 
-                        if (op->getType()->isPointerTy()) {
-                            process_pointer(op);
+                        llvm::Use *op_u = &call_inst->getOperandUse(op_i);
+
+                        if (op_u->get()->getType()->isPointerTy()) {
+                            process_pointer(op_u);
                         }
                     }
                 }
