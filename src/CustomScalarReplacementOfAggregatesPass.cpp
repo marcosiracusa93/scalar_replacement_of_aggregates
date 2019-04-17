@@ -249,6 +249,22 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
     }
 }
 
+template<class T>
+void expand_types(T *ptr, std::map<T *, std::vector<T *>> &exp_map_ref, std::vector<llvm::Type *> &exp_types_ref) {
+
+    auto exp_it = exp_map_ref.find(ptr);
+
+    if (exp_it != exp_map_ref.end() and exp_it->second.size() > 0) {
+        std::vector<T *> &exp_vec_ref = exp_it->second;
+
+        for (T *exp_el : exp_vec_ref) {
+            expand_types(exp_el, exp_map_ref, exp_types_ref);
+        }
+    } else {
+        exp_types_ref.push_back(ptr->getType()->getPointerElementType());
+    }
+}
+
 void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u) {
     llvm::Value *base_address = nullptr;
     std::vector<llvm::Value *> offset_chain;
@@ -274,19 +290,14 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u) 
 
     if (llvm::isa<llvm::StoreInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
 
-        llvm::Value *ptr_op = nullptr;
         if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
-            ptr_op = load_inst->getPointerOperand();
-
-            if (ptr_op != ptr_u->get()) {
+            if (load_inst->getPointerOperand() != ptr_u->get()) {
                 llvm::errs() << "ERR: Bad load inst usage\n";
                 load_inst->dump();
                 exit(-1);
             }
         } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_u->getUser())) {
-            ptr_op = store_inst->getPointerOperand();
-
-            if (ptr_op != ptr_u->get()) {
+            if (store_inst->getPointerOperand() != ptr_u->get()) {
                 llvm::errs() << "ERR: Bad store inst usage\n";
                 store_inst->dump();
                 exit(-1);
@@ -295,12 +306,73 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u) 
 
         if (is_constant) {
             const llvm::DataLayout *DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
-            unsigned long long accessed_size = DL->getTypeAllocSize(ptr_op->getType()->getPointerElementType());
+            unsigned long long accessed_size = DL->getTypeAllocSize(ptr_u->get()->getType()->getPointerElementType());
             llvm::Value *exp_val = get_expanded_value(base_address, constant_sum, accessed_size);
 
             ptr_u->set(exp_val);
         } else {
-            llvm::errs() << "ERR: Non constant access\n";
+
+            std::vector<llvm::Type *> expanded_types;
+
+            if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+                expand_types(alloca_inst, exp_allocas_map, expanded_types);
+            } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
+                expand_types(arg, exp_args_map, expanded_types);
+            }
+
+            llvm::APInt zero_ai = llvm::APInt((unsigned int) 32, 0, false);
+            llvm::ConstantInt *zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
+
+            llvm::Value *bytes_sum = zero_c;
+
+            for (llvm::Value *offset : offset_chain) {
+                std::string name = ptr_u->getUser()->getName().str() + ".add";
+                bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add,
+                                                         bytes_sum,
+                                                         offset,
+                                                         name,
+                                                         llvm::cast<llvm::Instruction>(ptr_u->getUser()));
+            }
+
+            // Keep track on where to split
+            llvm::Instruction *split_before = llvm::cast<llvm::Instruction>(ptr_u->getUser());
+
+            unsigned long long bytes_acc = 0;
+
+            // Create the if-then-else chain
+            for (llvm::Type *exp_ty : expanded_types) {
+
+                unsigned long long type_size = llvm::cast<llvm::Instruction>(
+                        ptr_u->getUser())->getModule()->getDataLayout().getTypeAllocSize(exp_ty);
+                llvm::APInt bytes_ai = llvm::APInt((unsigned int) 32, bytes_acc, false);
+
+                bytes_acc += type_size;
+
+                if (exp_ty != ptr_u->get()->getType()->getPointerElementType()) {
+                    continue;
+                }
+
+                llvm::ConstantInt *bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
+                std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
+                llvm::CmpInst *cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp,
+                                                            llvm::CmpInst::Predicate::ICMP_EQ,
+                                                            bytes_sum, bytes_c, cmp_name, split_before);
+
+                llvm::TerminatorInst *then_term;
+                llvm::TerminatorInst *else_term;
+                llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
+
+                llvm::Instruction *new_inst = llvm::cast<llvm::Instruction>(ptr_u->getUser())->clone();
+                new_inst->insertBefore(then_term);
+
+                llvm::Value *exp_val = get_expanded_value(base_address, bytes_acc - type_size, type_size);
+
+                new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
+
+                split_before = else_term;
+            }
+
+            llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->dump();
             exit(-1);
         }
     } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
@@ -2082,7 +2154,6 @@ CustomScalarReplacementOfAggregatesPass::get_array_size_of_arguments(std::vector
                                     // It might be that it is a decay
                                     // We need to check whether it is actually an array
                                     // Going through the argument uses
-
 
                                     std::vector<llvm::Use *> uses_vec;
 
