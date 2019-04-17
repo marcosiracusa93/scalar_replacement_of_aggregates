@@ -272,26 +272,43 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u) 
         }
     }
 
-    if (llvm::isa<llvm::LoadInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
+    if (llvm::isa<llvm::StoreInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
+
+        llvm::Value *ptr_op = nullptr;
+        if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
+            ptr_op = load_inst->getPointerOperand();
+
+            if (ptr_op != ptr_u->get()) {
+                llvm::errs() << "ERR: Bad load inst usage\n";
+                load_inst->dump();
+                exit(-1);
+            }
+        } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_u->getUser())) {
+            ptr_op = store_inst->getPointerOperand();
+
+            if (ptr_op != ptr_u->get()) {
+                llvm::errs() << "ERR: Bad store inst usage\n";
+                store_inst->dump();
+                exit(-1);
+            }
+        }
 
         if (is_constant) {
-            llvm::errs() << "Ptr: ";
-            ptr_u->get()->dump();
-            llvm::Value *exp_val = get_expanded_value(ptr_u->get(), base_address, constant_sum);
-            llvm::errs() << "Exp: ";
-            exp_val->dump();
+            const llvm::DataLayout *DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
+            unsigned long long accessed_size = DL->getTypeAllocSize(ptr_op->getType()->getPointerElementType());
+            llvm::Value *exp_val = get_expanded_value(base_address, constant_sum, accessed_size);
 
             ptr_u->set(exp_val);
         } else {
             llvm::errs() << "ERR: Non constant access\n";
             exit(-1);
         }
-    } else if (llvm::CallInst *call_isnt = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
+    } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
 
         if (is_constant) {
             llvm::Argument *arg_u = nullptr;
             {
-                llvm::Function::arg_iterator arg_u_it = call_isnt->getCalledFunction()->arg_begin();
+                llvm::Function::arg_iterator arg_u_it = call_inst->getCalledFunction()->arg_begin();
 
                 for (unsigned long long i = 0; i < ptr_u->getOperandNo(); i++) { arg_u_it++; }
                 arg_u = &*arg_u_it;
@@ -299,14 +316,35 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u) 
 
             auto exp_arg_it = exp_args_map.find(arg_u);
 
-            unsigned long long arg_offset = 0;
+            unsigned long long arg_offset = constant_sum;
             if (exp_arg_it != exp_args_map.end()) {
-
+                llvm::errs() << "Arg: ";
+                arg_u->dump();
                 unsigned long long exp_arg_u_idx = 0;
                 for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
-llvm::errs() << "----------------\n";
-                    llvm::Value *exp_val = get_expanded_value(ptr_u->get(), base_address, arg_offset);
+                    llvm::errs() << "Exp_arg: ";
+                    exp_arg_u->dump();
 
+                    const llvm::DataLayout *DL = &call_inst->getModule()->getDataLayout();
+                    unsigned long long accessed_size = DL->getTypeAllocSize(
+                            exp_arg_u->getType()->getPointerElementType());;
+
+                    auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
+                    if (exp_arg_size_it != arg_size_map.end() and exp_arg_size_it->second.size() > 0) {
+                        accessed_size *= exp_arg_size_it->second.front();
+                    }
+
+                    llvm::errs() << "B_addr: ";
+                    base_address->dump();
+                    llvm::errs() << "Offs: " << arg_offset << "\n";
+                    llvm::errs() << "Acc_s: " << accessed_size << "\n";
+
+                    llvm::Value *exp_val = get_expanded_value(base_address, arg_offset, accessed_size);
+
+                    llvm::errs() << "Exp_val: ";
+                    exp_val->dump();
+
+/*
                     llvm::Value *exp_base = nullptr;
                     if (llvm::AllocaInst *base_alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(exp_val)) {
                         auto base_alloca_it = exp_allocas_map.find(base_alloca_inst);
@@ -329,33 +367,69 @@ llvm::errs() << "----------------\n";
                             exit(-1);
                         }
                     }
+llvm::errs() << "Exp_bas: "; exp_base->dump();
+*/
+                    if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
+                        if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
+                            exp_arg_u->getType()->getPointerElementType()) {
 
-                    call_isnt->setOperand(exp_arg_u->getArgNo(), exp_base);
+                            if (!llvm::isa<llvm::Argument>(exp_val)) {
+                                std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+                                llvm::Type *op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                                gepi_ops.push_back(op1);
+                                llvm::Type *op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
+                                gepi_ops.push_back(op2);
 
-                    arg_offset += call_isnt->getModule()->getDataLayout().getTypeAllocSize(
-                            exp_arg_u->getType()->getPointerElementType());
+                                std::string gepi_name = exp_val->getName().str() + ".decay";
+                                llvm::Type *gepi_type = exp_val->getType()->getPointerElementType();
+
+                                llvm::GetElementPtrInst *decay_gep_inst = llvm::GetElementPtrInst::Create(gepi_type,
+                                                                                                          exp_val,
+                                                                                                          gepi_ops,
+                                                                                                          gepi_name,
+                                                                                                          call_inst);
+                                llvm::errs() << "Decay: ";
+                                decay_gep_inst->dump();
+
+                                exp_val = decay_gep_inst;
+                            }
+                        } else {
+                            llvm::errs() << "ERR: Malformed decay!\n";
+                            call_inst->dump();
+                            exp_arg_u->dump();
+                            exit(-1);
+                        }
+                    }
+
+                    call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
+
+                    llvm::errs() << "Call: ";
+                    call_inst->dump();
+                    arg_offset += accessed_size;
                     exp_arg_u_idx++;
                 }
             }
         } else {
             llvm::errs() << "ERR: Non constant access in function call operand\n";
-            call_isnt->dump();
+            call_inst->dump();
             exit(-1);
         }
     }
 }
 
 template<class I>
-static llvm::Value *
-get_element_at_offset(llvm::Value *ptr, I *inst, std::map<I *, std::vector<I *>> &map, signed long long offset,
-                      const llvm::DataLayout *DL) {
+llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *base_address,
+                                                                            std::map<I *, std::vector<I *>> &map,
+                                                                            signed long long offset,
+                                                                            unsigned long long accessed_size,
+                                                                            const llvm::DataLayout *DL) {
 
-    I *el_to_exp = inst;
+    I *el_to_exp = base_address;
     signed long long offset_to_exp = offset;
-llvm::errs() << "+++++++++++\n";
+
     while (offset_to_exp > 0) {
-        llvm::errs() << "Offs: " << offset_to_exp << "\n";
-        llvm::errs() << "ElTo: "; el_to_exp->dump();
         auto exp_it = map.find(el_to_exp);
 
         if (exp_it != map.end()) {
@@ -365,6 +439,11 @@ llvm::errs() << "+++++++++++\n";
 
             for (I *el : subelements) {
                 unsigned long long allocated_size = DL->getTypeAllocSize(el->getType()->getPointerElementType());
+
+                auto arg_size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(el));
+                if (arg_size_it != arg_size_map.end() and arg_size_it->second.size() > 0) {
+                    allocated_size *= arg_size_it->second.front();
+                }
 
                 if (offset_to_exp == 0) {
 
@@ -388,19 +467,19 @@ llvm::errs() << "+++++++++++\n";
 
         } else {
             llvm::errs() << "ERR: no expansion found!\n";
-            inst->dump();
+            base_address->dump();
             el_to_exp->dump();
             exit(-1);
         }
     }
 
-llvm::errs() << "***********\n";
     do {
-        unsigned long long accessed_size = DL->getTypeAllocSize(ptr->getType()->getPointerElementType());
         unsigned long long expanded_size = DL->getTypeAllocSize(el_to_exp->getType()->getPointerElementType());
 
-llvm::errs() << "A: " << accessed_size << " E: " << expanded_size << "\n";
-llvm::errs() << "El2Exp: "; el_to_exp->dump();
+        auto arg_size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(el_to_exp));
+        if (arg_size_it != arg_size_map.end() and arg_size_it->second.size() > 0) {
+            expanded_size *= arg_size_it->second.front();
+        }
 
         if (accessed_size < expanded_size) {
             auto exp_it = map.find(el_to_exp);
@@ -418,8 +497,8 @@ llvm::errs() << "El2Exp: "; el_to_exp->dump();
             break;
         } else {
             llvm::errs() << "ERR: bad access size\n";
-            llvm::errs() << "A: " << accessed_size << " E: " << expanded_size << "\n";
-            ptr->dump();
+            llvm::errs() << "Offset: " << offset << "\nAcc size: " << accessed_size << "\nExp_size: " << expanded_size
+                         << "\n";
             el_to_exp->dump();
             exit(-1);
         }
@@ -428,25 +507,18 @@ llvm::errs() << "El2Exp: "; el_to_exp->dump();
     return el_to_exp;
 }
 
-llvm::Value *CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::Value *ptr, llvm::Value *base_address,
-                                                                         signed long long offset) {
+llvm::Value *CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::Value *base_address,
+                                                                         signed long long offset,
+                                                                         unsigned long long accessed_size) {
 
     if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
-        return get_element_at_offset(ptr, alloca_inst, exp_allocas_map, offset,
-                                     &alloca_inst->getModule()->getDataLayout());
+        const llvm::DataLayout *DL = &alloca_inst->getModule()->getDataLayout();
+        return get_element_at_offset(alloca_inst, exp_allocas_map, offset, accessed_size, DL);
     } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
-        /*
-        for (auto m1 : exp_args_map) {
-            llvm::errs() << "A: " << m1.first->getParent()->getName(); m1.first->dump();
-
-            for (auto m2 : m1.second) {
-                llvm::errs() << "E: "; m2->dump();
-            }
-        }*/
-        return get_element_at_offset(ptr, arg, exp_args_map, offset, &arg->getParent()->getParent()->getDataLayout());
+        const llvm::DataLayout *DL = &arg->getParent()->getParent()->getDataLayout();
+        return get_element_at_offset(arg, exp_args_map, offset, accessed_size, DL);
     } else {
         llvm::errs() << "ERR: Neither alloca nor argument as base address\n";
-        ptr->dump();
         base_address->dump();
         exit(-1);
     }
@@ -2061,8 +2133,9 @@ CustomScalarReplacementOfAggregatesPass::get_array_size_of_arguments(std::vector
                                     }
 
                                 } else {
-                                    llvm::errs() << "Neither struct nor pointer allocated in ";
-                                    op_gep_inst->dump();
+                                    //llvm::errs() << "Neither struct nor pointer allocated in ";
+                                    //op_gep_inst->dump();
+                                    //exit(-1);
                                 }
                             } else if (llvm::Argument *op_arg = llvm::dyn_cast<llvm::Argument>(op.get())) {
 

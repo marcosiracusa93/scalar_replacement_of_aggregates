@@ -114,7 +114,15 @@ private:
     void
     compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);
 
-    llvm::Value *get_expanded_value(llvm::Value *ptr, llvm::Value *base_address, signed long long offset);
+    template<class I>
+    llvm::Value *get_element_at_offset(I *base_address,
+                                       std::map<I *, std::vector<I *>> &map,
+                                       signed long long offset,
+                                       unsigned long long accessed_size,
+                                       const llvm::DataLayout *DL);
+
+    llvm::Value *
+    get_expanded_value(llvm::Value *base_address, signed long long offset, unsigned long long accessed_size);
 
     void populate_inner_functions(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
