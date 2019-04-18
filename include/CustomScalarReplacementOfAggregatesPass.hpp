@@ -132,7 +132,8 @@ private:
     void expand_allocas(llvm::Function *function);
 
     void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
-                 std::map<llvm::Function *, llvm::Function *> &exp_fun_map);
+                 std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
+                 std::vector<llvm::Function *> &inner_functions);
 
     void get_array_size_of_arguments(std::vector<llvm::Function *> inner_functions);
 

@@ -78,11 +78,11 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
     expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, kernel_function);
 
-    module.dump();
-
+    // Expand all the loads/stores/calls
     expand_ptrs(kernel_function, inner_functions);
 
-    cleanup(exp_idx_args_map, exp_fun_map);
+    // Cleanup the remaining code
+    cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
 
     return true;
 
@@ -93,6 +93,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
 
     if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
 
+        // Recursively go through the gepi chain up to the base address
         compute_base_and_offset(gep_inst->getPointerOperand(), base_address, offset_chain);
 
         const llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(gep_inst);
@@ -103,8 +104,10 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
             llvm::APInt offset_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
             assert(gep_op->accumulateConstantOffset(*DL, offset_ai));
 
+            // If the gepi has all constant indexes different from zero fold those
             if (offset_ai.getSExtValue() != 0) {
 
+                // Fold with the last element of the chain if also constant
                 if (llvm::ConstantInt *c_last = llvm::dyn_cast<llvm::ConstantInt>(offset_chain.back())) {
                     signed long long offset_sum = c_last->getSExtValue() + offset_ai.getSExtValue();
                     llvm::APInt offset_sum_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), offset_sum);
@@ -116,6 +119,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
         } else {
             llvm::APInt ConstantIndexOffset(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
 
+            // If some index non constant go through those and add those in the chain
             for (llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op), GTE = llvm::gep_type_end(gep_op);
                  gt_it != GTE; ++gt_it) {
 
@@ -124,16 +128,17 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
                     // continue;
                 }
 
-                // For array or vector indices, scale the index by the size of the type.
                 llvm::Value *index = gt_it.getOperand();
 
                 llvm::APInt array_elmt_size = llvm::APInt(ConstantIndexOffset.getBitWidth(),
                                                           DL->getTypeAllocSize(gt_it.getIndexedType()));
 
+                // Discriminate whether constant index or not
                 if (llvm::ConstantInt *c_index = llvm::dyn_cast<llvm::ConstantInt>(index)) {
                     signed long long offset = c_index->getSExtValue() * array_elmt_size.getSExtValue();
                     llvm::APInt offset_ai(c_index->getBitWidth(), offset);
 
+                    // Fold with the last element of the chain if constant as well
                     if (llvm::ConstantInt *c_last = llvm::dyn_cast<llvm::ConstantInt>(offset_chain.back())) {
                         signed long long offset_sum = c_last->getSExtValue() + offset_ai.getSExtValue();
                         llvm::APInt offset_sum_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), offset_sum);
@@ -142,6 +147,8 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
                         offset_chain.push_back(llvm::ConstantInt::get(gep_op->getContext(), offset_ai));
                     }
                 } else {
+
+                    // Push the indexed size * offset mul operator for non constant indexes
                     llvm::ConstantInt *c_array_elmt_size = llvm::ConstantInt::get(gep_op->getContext(),
                                                                                   array_elmt_size);
 
@@ -155,15 +162,27 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
             }
         }
 
+        // Remove the gepi
         inst_to_remove.insert(gep_inst);
+
         return;
     } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
+
+        // The alloca becomes the base address
         base_address = alloca_inst;
+
+        // Initialize the offset chain with zero (which may be folded subsequently)
         offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+
         return;
     } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(ptr)) {
+
+        // The argument becomes the base address
         base_address = arg;
+
+        // Initialize the offset chain with zero (which may be folded subsequently)
         offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+
         return;
     } else {
         llvm::errs() << "ERR: Only gepi chains supported\n";
@@ -177,6 +196,7 @@ void expand_types(T *ptr, std::map<T *, std::vector<T *>> &exp_map_ref, std::vec
 
     auto exp_it = exp_map_ref.find(ptr);
 
+    // Recursively iterate if the element has been expanded, push the type otherwise
     if (exp_it != exp_map_ref.end() and exp_it->second.size() > 0) {
         std::vector<T *> &exp_vec_ref = exp_it->second;
 
@@ -204,6 +224,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
         signed long long constant_sum = 0;
         bool is_constant = true;
 
+        // Chech whether the offset is constant
         for (llvm::Value *offset : offset_chain) {
             if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
                 constant_sum += c_offset->getSExtValue();
@@ -237,7 +258,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                 llvm::Value *exp_val = get_expanded_value(base_address, constant_sum, accessed_size);
 
                 ptr_u->set(exp_val);
-            } else {
+            } else { // Non constant offset
 
                 std::vector<llvm::Type *> expanded_types;
 
@@ -252,6 +273,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
                 llvm::Value *bytes_sum = zero_c;
 
+                // Build the chain of adders for computing the offset
                 for (llvm::Value *offset : offset_chain) {
                     std::string name = ptr_u->getUser()->getName().str() + ".add";
                     bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add,
@@ -350,12 +372,9 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
                 unsigned long long arg_offset = constant_sum;
                 if (exp_arg_it != exp_args_map.end()) {
-                    llvm::errs() << "Arg: ";
-                    arg_u->dump();
+
                     unsigned long long exp_arg_u_idx = 0;
                     for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
-                        llvm::errs() << "Exp_arg: ";
-                        exp_arg_u->dump();
 
                         const llvm::DataLayout *DL = &call_inst->getModule()->getDataLayout();
                         unsigned long long accessed_size = DL->getTypeAllocSize(
@@ -366,16 +385,9 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                             accessed_size *= exp_arg_size_it->second.front();
                         }
 
-                        llvm::errs() << "B_addr: ";
-                        base_address->dump();
-                        llvm::errs() << "Offs: " << arg_offset << "\n";
-                        llvm::errs() << "Acc_s: " << accessed_size << "\n";
-
                         llvm::Value *exp_val = get_expanded_value(base_address, arg_offset, accessed_size);
 
-                        llvm::errs() << "Exp_val: ";
-                        exp_val->dump();
-
+                        // Take care of array decay now
                         if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
                             if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
                                 exp_arg_u->getType()->getPointerElementType()) {
@@ -397,8 +409,6 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                                                                                                               gepi_ops,
                                                                                                               gepi_name,
                                                                                                               call_inst);
-                                    llvm::errs() << "Decay: ";
-                                    decay_gep_inst->dump();
 
                                     exp_val = decay_gep_inst;
                                 }
@@ -412,8 +422,6 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
                         call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
 
-                        llvm::errs() << "Call: ";
-                        call_inst->dump();
                         arg_offset += accessed_size;
                         exp_arg_u_idx++;
                     }
@@ -999,21 +1007,6 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
             if (a_it != arg_size_map.end()) {
                 arg_size_map[nf_arg] = a_it->second;
             }
-/*
-            if (mf_arg->hasAttribute(llvm::Attribute::Dereferenceable)) {
-
-                bool canBeNull;
-                unsigned long long dBytes = mf_arg->getPointerDereferenceableBytes(
-                        mf_arg->getParent()->getParent()->getDataLayout(), canBeNull);
-
-                llvm::AttrBuilder attr_builder = llvm::AttrBuilder();
-                llvm::Attribute attr = llvm::Attribute::getWithDereferenceableBytes(nf_arg->getContext(), dBytes);
-                attr_builder.addAttribute(attr);
-
-                auto attr_set = llvm::AttributeSet::get(nf_arg->getContext(), 0, attr_builder);
-                nf_arg->addAttr(attr_set);
-            }
-*/
         }
 
         for (auto &ma1 : mock_exp_args_map) {
@@ -1142,7 +1135,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
 void
 CustomScalarReplacementOfAggregatesPass::cleanup(
         std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
-        std::map<llvm::Function *, llvm::Function *> &exp_fun_map) {
+        std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
+        std::vector<llvm::Function *> &inner_functions) {
 
     for (auto &i : inst_to_remove) {
         i->replaceAllUsesWith(llvm::UndefValue::get(i->getType()));
@@ -1151,6 +1145,8 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
 
     class CheckArg {
     private:
+
+        // Recursively check whether the argument is recursively used by calls only
         static bool usedByArgsOnly(llvm::Argument *arg, std::set<llvm::Argument *> inspected_args) {
 
             if (inspected_args.count(arg) == 0) {
@@ -1176,6 +1172,7 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
             return true;
         }
 
+        // Recursively check whether the argument is recursively loaded only
         static bool loadedOnly(llvm::Argument *arg, std::set<llvm::Argument *> inspected_args) {
 
             if (inspected_args.count(arg) == 0) {
@@ -1236,17 +1233,19 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
             }
         }
     };
-    std::map<std::pair<llvm::CallInst *, unsigned long long>, llvm::Argument *, sate_cmp> scalar_args_to_expand;
+    std::map<std::pair<llvm::CallInst *, unsigned long long>, llvm::Argument *, sate_cmp> arg_to_arg;
 
-    for (auto &f : exp_fun_map) {
-        llvm::Function *function = f.second;
+    for (llvm::Function *function : inner_functions) {
 
         // Create the new function type based on the recomputed parameters.
         std::vector<llvm::Type *> arg_tys;
         for (auto &a : function->args()) {
 
+            // If it is not an expanded argument
             if (exp_idx_args_map[function].count(a.getArgNo()) == 0) {
+                // If it is not only uesd as argument recursively
                 if (!CheckArg::usedByArgsOnly_wrapper(&a)) {
+                    // Check whether recursively loaded only
                     if (CheckArg::loadedOnly_wrapper(&a)) {
                         arg_tys.push_back(a.getType()->getPointerElementType());
                     } else {
@@ -1274,28 +1273,27 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
         for (llvm::Function::arg_iterator fun_arg_it = function->arg_begin(), new_fun_arg_it = new_function->arg_begin();
              fun_arg_it != function->arg_end(); ++fun_arg_it, ++i) {
 
+            // If it is not an expanded argument
             if (exp_idx_args_map[function].count(fun_arg_it->getArgNo()) == 0) {
+                // If it is not only uesd as argument recursively
                 if (!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it)) {
+                    // Check whether recursively loaded only
                     if (CheckArg::loadedOnly_wrapper(&*fun_arg_it)) {
-                        llvm::LoadInst *li = nullptr;
+
                         for (auto &use : fun_arg_it->uses()) {
                             if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser())) {
                                 load_inst->replaceAllUsesWith(&*new_fun_arg_it);
-                                li = load_inst;
+                                load_inst->eraseFromParent();
 
                             } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
-                                scalar_args_to_expand.insert(
+                                arg_to_arg.insert(
                                         std::make_pair(std::make_pair(call_inst, use.getOperandNo()),
                                                        &*new_fun_arg_it));
-                                break;
+
                             } else {
                                 llvm::errs() << "ERR\n";
                                 exit(-1);
                             }
-                        }
-
-                        if (li != nullptr) {
-                            li->eraseFromParent();
                         }
 
                         scalar_args.insert(&*fun_arg_it);
@@ -1333,10 +1331,10 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
                                 call_ops.push_back(operand);
                             } else {
 
-                                auto to_exp_it = scalar_args_to_expand.find(
+                                auto to_exp_it = arg_to_arg.find(
                                         std::make_pair(call_inst, arg_it->getArgNo()));
 
-                                if (to_exp_it == scalar_args_to_expand.end()) {
+                                if (to_exp_it == arg_to_arg.end()) {
                                     std::string new_load_name =
                                             call_inst->getName().str() + ".load." + std::to_string(i);
                                     llvm::LoadInst *load_inst = new llvm::LoadInst(operand, new_load_name, call_inst);
@@ -1370,7 +1368,7 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
 void
 CustomScalarReplacementOfAggregatesPass::get_array_size_of_arguments(std::vector<llvm::Function *> inner_functions) {
 
-    // Go through the functions in reverse topological order
+    // Go through the functions in topological order
     for (auto function : inner_functions) {
 
         // TODO change it when caching is added
