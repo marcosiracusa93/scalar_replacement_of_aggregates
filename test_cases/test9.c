@@ -8,7 +8,7 @@ struct s1 {
 };
 
 
-int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[static 3], int k) {
+int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[3], int k) {
 
     int val = a11[k].i1;
 
@@ -27,7 +27,7 @@ int main(void) {
 
     struct s1 a1[3][3];
     struct s1 a11[3];
-    int k;
+    int k = 0;
 
     return kernel1(a11, k);
 }

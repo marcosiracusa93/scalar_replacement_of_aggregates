@@ -124,23 +124,12 @@ private:
     llvm::Value *
     get_expanded_value(llvm::Value *base_address, signed long long offset, unsigned long long accessed_size);
 
-    void populate_inner_functions(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
-
     void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
                                           std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
                                           std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
-            //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
                                           llvm::Function *kernel_function);
 
     void expand_allocas(llvm::Function *function);
-
-    void expand_arguments(//llvm::Function *called_function,
-            llvm::Function *new_function);//,
-    //std::set<unsigned long long> arg_map,
-    //std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map);
-
-    void expand_value(llvm::Use *use, llvm::Value *use_val, llvm::Value *prev,
-                      llvm::Type *ty, std::vector<llvm::Value *> &expanded);
 
     void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
                  std::map<llvm::Function *, llvm::Function *> &exp_fun_map);
