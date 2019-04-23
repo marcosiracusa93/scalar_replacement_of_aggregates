@@ -105,11 +105,16 @@ private:
 
     bool check_assumptions(llvm::Function *kernel_function);
 
+    void spot_accessed_globals(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions,
+                               std::set<llvm::GlobalVariable *> &accessed_globals);
+
     void replicate_calls(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
     void expand_ptrs(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions);
 
     void process_pointer(llvm::Use *ptr_u, llvm::BasicBlock *&new_bb);
+
+    std::vector<unsigned long long> get_array_dimensions(llvm::Value *ptr);
 
     void
     compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);
