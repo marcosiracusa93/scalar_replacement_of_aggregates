@@ -72,12 +72,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     // Spot the accessed global variables
     spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
 
-    for (auto a = accessed_globals.begin(); a != accessed_globals.end(); a++) {
-        llvm::GlobalVariable *g_var = *a;
-        llvm::errs() << "A: ";
-        g_var->dump();
-    }
-
     // Map specifying the expanded arguments for each function
     std::map<llvm::Function *, std::set<unsigned long long>> exp_idx_args_map;
     // Map linking any function with its modified version
@@ -178,6 +172,15 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
 
         // The alloca becomes the base address
         base_address = alloca_inst;
+
+        // Initialize the offset chain with zero (which may be folded subsequently)
+        offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+
+        return;
+    } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(ptr)) {
+
+        // The global variable becomes the base address
+        base_address = g_var;
 
         // Initialize the offset chain with zero (which may be folded subsequently)
         offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
@@ -386,7 +389,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
                         const llvm::DataLayout *DL = &call_inst->getModule()->getDataLayout();
                         unsigned long long accessed_size = DL->getTypeAllocSize(
-                                exp_arg_u->getType()->getPointerElementType());;
+                                exp_arg_u->getType()->getPointerElementType());
 
                         auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
                         if (exp_arg_size_it != arg_size_map.end() and exp_arg_size_it->second.size() > 0) {
@@ -421,10 +424,12 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                                     exp_val = decay_gep_inst;
                                 }
                             } else {
-                                llvm::errs() << "ERR: Malformed decay!\n";
-                                call_inst->dump();
-                                exp_arg_u->dump();
-                                exit(-1);
+                                //llvm::errs() << "ERR: Malformed decay!\n";
+                                //call_inst->dump();
+                                //exp_arg_u->dump();
+                                //exp_val->dump();
+                                //exit(-1);
+                                // TODO Review this
                             }
                         }
 
@@ -517,6 +522,7 @@ llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *b
                 el_to_exp = subelements.front();
             } else {
                 llvm::errs() << "ERR: El not found in map\n";
+                base_address->dump();
                 el_to_exp->dump();
                 exit(-1);
             }
@@ -636,12 +642,15 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *
             } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(inst)) {
                 llvm::Function *called_function = call_inst->getCalledFunction();
 
+                // TODO expand it
+                if (called_function->getIntrinsicID() == llvm::Intrinsic::lifetime_start) { return true; }
+                if (called_function->getIntrinsicID() == llvm::Intrinsic::lifetime_end) { return true; }
+
                 for (llvm::Value *op : call_inst->arg_operands()) {
 
                     if (op->getType()->isPointerTy()) {
 
                         if (check_ptr(op)) {
-
                             // TODO improve this (if an expandeable arg goes in a "unsupported" function kill anything
 
                             if (called_function->isIntrinsic()) {
@@ -906,15 +915,6 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function *ke
         llvm::ClonedCodeInfo *code_info = new llvm::ClonedCodeInfo();
         llvm::Function *cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
 
-        llvm::errs() << "\nF: " << cloned_function->getName();
-        for (auto d1 : dimensions) {
-            llvm::errs() << "\nA: ";
-
-            for (auto d2 : d1) {
-                llvm::errs() << " " << d2;
-            }
-        }
-
         for (auto &arg : cloned_function->args()) {
             arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
         }
@@ -1038,7 +1038,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                 if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
 
                     auto a_it = arg_size_map_ref.find(arg);
-                    if (a_it != arg_size_map_ref.end() and a_it->second.size() > 0) {
+                    if (a_it != arg_size_map_ref.end() and !a_it->second.empty()) {
 
                         unsigned long long elements = a_it->second.at(0);
 
@@ -1055,6 +1055,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                                 if (a_it->second.size() > 1) {
                                     arg_size_map_ref[new_arg] = std::vector<unsigned long long>(
                                             a_it->second.begin() + 1, a_it->second.end());
+                                } else {
+                                    arg_size_map_ref[new_arg] = std::vector<unsigned long long>(1, 1);
                                 }
 
                                 exp_args_map_ref[arg].push_back(new_arg);
@@ -1074,9 +1076,34 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                     } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType())) {
 
                         for (unsigned long long e_idx = 0; e_idx != str_ty->getNumContainedTypes(); ++e_idx) {
-                            llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(str_ty->getContainedType(e_idx));
+
+                            llvm::Type *new_arg_ty = nullptr;
+                            if (str_ty->getContainedType(e_idx)->isArrayTy()) {
+                                new_arg_ty = llvm::PointerType::getUnqual(
+                                        str_ty->getContainedType(e_idx)->getArrayElementType());
+                            } else {
+                                new_arg_ty = llvm::PointerType::getUnqual(str_ty->getContainedType(e_idx));
+                            }
+
                             std::string new_arg_name = arg->getName().str() + "." + std::to_string(e_idx);
                             llvm::Argument *new_arg = new llvm::Argument(new_arg_ty, new_arg_name, arg->getParent());
+
+                            if (str_ty->getContainedType(e_idx)->isArrayTy()) {
+
+                                llvm::Type *rec_ty = str_ty->getContainedType(e_idx);
+
+                                std::vector<unsigned long long> tmp_sizes;
+                                do {
+                                    if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty)) {
+                                        tmp_sizes.push_back(arr_ty->getArrayNumElements());
+                                        rec_ty = arr_ty->getArrayElementType();
+                                    } else {
+                                        break;
+                                    }
+                                } while (true);
+
+                                arg_size_map_ref[new_arg] = tmp_sizes;
+                            }
 
                             exp_args_map_ref[arg].push_back(new_arg);
 
@@ -1199,7 +1226,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
             // Assign the size to the new argument if the mock argument had it
             auto a_it = arg_size_map.find(mf_arg);
             if (a_it != arg_size_map.end()) {
-                arg_size_map[nf_arg] = a_it->second;
+                arg_size_map.insert(std::make_pair(nf_arg, a_it->second));
             }
         }
 

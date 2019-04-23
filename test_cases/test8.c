@@ -5,20 +5,28 @@
 struct s1 {
     double d1;
     int i1;
-    int a1[2];
+    int a1[2][2];
 };
 
 int kernel2(struct s1 a1[2][2], struct s1 a11[2], struct s1 *a111) {
 
-    return a1[1][1].i1 + a11[1].i1 + a111->i1 + a1[1][1].a1[1];
+    return a1[1][1].i1 + a11[1].i1 + a111->i1 + a1[1][1].a1[1][1];
 }
 
 int kernel1(struct s1 a1[2][2], struct s1 a11[2], struct s1 *a111) {
 
     int k = 0;
-    k += kernel2(a1, a1[1], &a11[1]);
+    //k += kernel2(a1, a1[1], &a11[1]);
     k += kernel2(a1, a11, a111);
     return a1[1][1].i1 + a11[1].i1 + a111->i1 + k;
+}
+
+int k1(struct s1 *s11) {
+    return s11->a1[1][1];
+}
+
+int k2(struct s1 a1[2]) {
+    return k1(&a1[1]);
 }
 
 int main(void) {
@@ -27,5 +35,5 @@ int main(void) {
     struct s1 a11[2];
     struct s1 a12[4];
 
-    return kernel1(a1, a11, &a1[1][1]) + kernel2(a1, a1[1], &a1[1][1]);
+    return k2(a11);//kernel1(a1, a11, &a1[1][1]); /*+ kernel2(a1, a1[1], &a1[1][1]);*/
 }
