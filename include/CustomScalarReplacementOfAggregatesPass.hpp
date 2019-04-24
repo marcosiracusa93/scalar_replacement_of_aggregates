@@ -87,7 +87,8 @@ private:
     std::map<llvm::Argument *, std::vector<llvm::Argument *>> exp_args_map;
     // Map specifying how allocas have been expanded
     std::map<llvm::AllocaInst *, std::vector<llvm::AllocaInst *>> exp_allocas_map;
-
+    // Map specifying how global variables have been expanded
+    std::map<llvm::GlobalVariable *, std::vector<llvm::GlobalVariable *>> exp_globals_map;
     // Map specifying array argument sizes
     std::map<llvm::Argument *, std::vector<unsigned long long>> arg_size_map;
 
@@ -136,11 +137,11 @@ private:
 
     void expand_allocas(llvm::Function *function);
 
+    void expand_globals(std::set<llvm::GlobalVariable *> accessed_variables);
+
     void cleanup(std::map<llvm::Function *, std::set<unsigned long long>> &exp_idx_args_map,
                  std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
                  std::vector<llvm::Function *> &inner_functions);
-
-    void get_array_size_of_arguments(std::vector<llvm::Function *> inner_functions);
 
 };
 
