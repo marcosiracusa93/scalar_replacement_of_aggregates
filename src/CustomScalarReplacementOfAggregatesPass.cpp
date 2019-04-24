@@ -95,35 +95,33 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address,
+void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use *ptr_use, llvm::Value *&base_address,
                                                                       std::vector<llvm::Value *> &offset_chain) {
 
-    if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(ptr)) {
+    if (llvm::BitCastOperator *bitcast_op = llvm::dyn_cast<llvm::BitCastOperator>(ptr_use->get())) {
+        // Recursively go through the gepi chain up to the base address
+        compute_base_and_offset(&bitcast_op->getOperandUse(0), base_address, offset_chain);
+
+    } else if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(ptr_use->get())) {
 
         llvm::Instruction *containing_inst = nullptr;
 
-        if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
+        if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr_use->get())) {
             containing_inst = gep_inst;
             inst_to_remove.insert(containing_inst);
         } else {
-            if (ptr->hasOneUse()) {
-                if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(ptr->use_begin()->getUser())) {
-                    containing_inst = inst;
-                } else {
-                    llvm::errs() << "ERR: No containing instruction found for gep op\n";
-                    ptr->dump();
-                    exit(-1);
-                }
+            if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(ptr_use->getUser())) {
+                containing_inst = inst;
             } else {
-                llvm::errs() << "ERR: Gep op too many uses\n";
-                ptr->dump();
-                exit(-1);
+                llvm::errs() << "ERR: User not an inst\n";
+                ptr_use->get()->dump();
+                ptr_use->getUser()->dump();
             }
         }
         const llvm::DataLayout *DL = &containing_inst->getModule()->getDataLayout();
 
         // Recursively go through the gepi chain up to the base address
-        compute_base_and_offset(gep_op->getPointerOperand(), base_address, offset_chain);
+        compute_base_and_offset(&gep_op->getOperandUse(gep_op->getPointerOperandIndex()), base_address, offset_chain);
 
         if (gep_op->hasAllConstantIndices()) {
             llvm::APInt offset_ai(DL->getPointerTypeSizeInBits(gep_op->getType()), 0);
@@ -187,37 +185,34 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Valu
             }
         }
 
-        return;
-    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
+    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr_use->get())) {
 
         // The alloca becomes the base address
         base_address = alloca_inst;
 
         // Initialize the offset chain with zero (which may be folded subsequently)
-        offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+        offset_chain.push_back(llvm::ConstantInt::get(ptr_use->get()->getContext(), llvm::APInt(32, 0)));
 
-        return;
-    } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(ptr)) {
+    } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(ptr_use->get())) {
 
         // The global variable becomes the base address
         base_address = g_var;
 
         // Initialize the offset chain with zero (which may be folded subsequently)
-        offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+        offset_chain.push_back(llvm::ConstantInt::get(ptr_use->get()->getContext(), llvm::APInt(32, 0)));
 
-        return;
-    } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(ptr)) {
+    } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(ptr_use->get())) {
 
         // The argument becomes the base address
         base_address = arg;
 
         // Initialize the offset chain with zero (which may be folded subsequently)
-        offset_chain.push_back(llvm::ConstantInt::get(ptr->getContext(), llvm::APInt(32, 0)));
+        offset_chain.push_back(llvm::ConstantInt::get(ptr_use->get()->getContext(), llvm::APInt(32, 0)));
 
-        return;
     } else {
         llvm::errs() << "ERR: Only gepi chains supported\n";
-        ptr->dump();
+        ptr_use->get()->dump();
+        ptr_use->getUser()->dump();
         exit(-1);
     }
 }
@@ -250,7 +245,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
     if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser())) {
 
-        compute_base_and_offset(ptr_u->get(), base_address, offset_chain);
+        compute_base_and_offset(ptr_u, base_address, offset_chain);
 
         signed long long constant_sum = 0;
         bool is_constant = true;
@@ -297,6 +292,12 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                     expand_types(alloca_inst, exp_allocas_map, expanded_types);
                 } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
                     expand_types(arg, exp_args_map, expanded_types);
+                } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
+                    expand_types(g_var, exp_globals_map, expanded_types);
+                } else {
+                    llvm::errs() << "ERR: Unknown base\n";
+                    base_address->dump();
+                    exit(-1);
                 }
 
                 llvm::APInt zero_ai = llvm::APInt((unsigned int) 32, 0, false);
@@ -383,6 +384,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                     split_before = else_term;
                 }
 
+                // TODO Fix it
+                user_inst->replaceAllUsesWith(llvm::UndefValue::get(user_inst->getType()));
                 user_inst->eraseFromParent();
             }
         } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
@@ -644,6 +647,8 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *
             do {
                 if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(ptr_rec)) {
                     ptr_rec = gep_op->getPointerOperand();
+                } else if (llvm::BitCastOperator *bitcast_op = llvm::dyn_cast<llvm::BitCastOperator>(ptr_rec)) {
+                    ptr_rec = bitcast_op->getOperand(0);
                 } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr_rec)) {
                     return true;
                 } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(ptr_rec)) {
@@ -1429,7 +1434,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(
                     // Build the new call site
                     std::string new_call_name = call_inst->getName().str() + ".csroa";
                     llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, new_call_ops,
-                                                                           new_call_name,
+                                                                           (call_inst->hasName() ? new_call_name : ""),
                                                                            call_inst);
 
                     // Replace the old one
@@ -1673,7 +1678,8 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
                 }
 
                 std::string new_call_name = call_inst->getName().str() + ".clean";
-                llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, call_ops, new_call_name,
+                llvm::CallInst *new_call_inst = llvm::CallInst::Create(new_function, call_ops,
+                                                                       (call_inst->hasName() ? new_call_name : ""),
                                                                        call_inst);
 
                 call_inst->replaceAllUsesWith(new_call_inst);
@@ -1719,6 +1725,8 @@ void CustomScalarReplacementOfAggregatesPass::spot_accessed_globals(llvm::Functi
                     do {
                         if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(ptr_rec)) {
                             ptr_rec = gep_op->getPointerOperand();
+                        } else if (llvm::BitCastOperator *bitcast_op = llvm::dyn_cast<llvm::BitCastOperator>(ptr_rec)) {
+                            ptr_rec = bitcast_op->getOperand(0);
                         } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(ptr_rec)) {
                             accessed_globals.insert(g_var);
                             break;

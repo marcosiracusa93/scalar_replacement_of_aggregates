@@ -116,7 +116,7 @@ private:
     void process_pointer(llvm::Use *ptr_u, llvm::BasicBlock *&new_bb);
 
     void
-    compute_base_and_offset(llvm::Value *ptr, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);
+    compute_base_and_offset(llvm::Use *ptr_use, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);
 
     template<class I>
     llvm::Value *get_element_at_offset(I *base_address,

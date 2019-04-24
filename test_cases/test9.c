@@ -13,9 +13,11 @@ struct s1 s11[3];
 
 int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[3], int k) {
 
-    int val = a11[k].i1;
+    for (int i = 0; i < 3; i++) {
+        a11[k].a1[i] = s11[k].a1[i];
+    }
 
-    return val;
+    return a11[k].a1[k];
 }
 
 
