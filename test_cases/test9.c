@@ -6,36 +6,24 @@ struct s1 {
     double d1;
     int i1;
     int i2;
-    int a1[2];
+    int a1[3];
 };
 
-struct s1 s11;
+struct s1 s11[3];
 
 int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[3], int k) {
 
     int val = a11[k].i1;
 
-    if (k == 0) {
-        val = a11[0].i1;
-    } else if (k == 1) {
-        val = a11[1].i1;
-    } else if (k == 2) {
-        val = a11[2].i1;
-    }
-
     return val;
 }
 
-/*
+
 int main(void) {
 
     struct s1 a1[3][3];
     struct s1 a11[3];
     int k = 0;
 
-    return i1kernel1(a11, k);
-}*/
-
-int main(void) {
-    return s11.a1[1];
+    return kernel1(a11, k);
 }
