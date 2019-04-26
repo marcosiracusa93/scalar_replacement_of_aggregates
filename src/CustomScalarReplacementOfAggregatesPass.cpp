@@ -89,7 +89,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     expand_ptrs(kernel_function, inner_functions);
 
     // Cleanup the remaining code
-    cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
+    //cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
 
     return true;
 
@@ -1067,28 +1067,20 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
 
                 std::string new_global_name = g_var->getName().str() + "." + std::to_string(e_idx);
 
+                llvm::Constant *initializer = nullptr;
                 if (llvm::Constant *c_el = llvm::dyn_cast<llvm::Constant>(
                         g_var->getInitializer()->getAggregateElement(e_idx))) {
-                    llvm::GlobalVariable *new_g_var = new llvm::GlobalVariable(*g_var->getParent(),
-                                                                               element,
-                                                                               true,
-                                                                               g_var->getLinkage(),
-                                                                               c_el,
-                                                                               new_global_name,
-                                                                               g_var);
-                    exp_globals_map[g_var].push_back(new_g_var);
-                    globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
-                } else {
-                    llvm::GlobalVariable *new_g_var = new llvm::GlobalVariable(*g_var->getParent(),
-                                                                               element,
-                                                                               false,
-                                                                               g_var->getLinkage(),
-                                                                               nullptr,
-                                                                               new_global_name,
-                                                                               g_var);
-                    exp_globals_map[g_var].push_back(new_g_var);
-                    globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
+                    initializer = c_el;
                 }
+                llvm::GlobalVariable *new_g_var = new llvm::GlobalVariable(*g_var->getParent(),
+                                                                           element,
+                                                                           false,
+                                                                           g_var->getLinkage(),
+                                                                           initializer,
+                                                                           new_global_name,
+                                                                           g_var);
+                exp_globals_map[g_var].push_back(new_g_var);
+                globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
         } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
                 g_var->getType()->getPointerElementType())) {
@@ -1097,28 +1089,20 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
 
                 std::string new_global_name = g_var->getName().str() + "." + std::to_string(e_idx);
 
+                llvm::Constant *initializer = nullptr;
                 if (llvm::Constant *c_el = llvm::dyn_cast<llvm::Constant>(
                         g_var->getInitializer()->getAggregateElement(e_idx))) {
-                    llvm::GlobalVariable *new_g_var = new llvm::GlobalVariable(*g_var->getParent(),
-                                                                               element,
-                                                                               true,
-                                                                               g_var->getLinkage(),
-                                                                               c_el,
-                                                                               new_global_name,
-                                                                               g_var);
-                    exp_globals_map[g_var].push_back(new_g_var);
-                    globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
-                } else {
-                    llvm::GlobalVariable *new_g_var = new llvm::GlobalVariable(*g_var->getParent(),
-                                                                               element,
-                                                                               false,
-                                                                               g_var->getLinkage(),
-                                                                               nullptr,
-                                                                               new_global_name,
-                                                                               g_var);
-                    exp_globals_map[g_var].push_back(new_g_var);
-                    globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
+                    initializer = c_el;
                 }
+                llvm::GlobalVariable *new_g_var = new llvm::GlobalVariable(*g_var->getParent(),
+                                                                           element,
+                                                                           false,
+                                                                           g_var->getLinkage(),
+                                                                           initializer,
+                                                                           new_global_name,
+                                                                           g_var);
+                exp_globals_map[g_var].push_back(new_g_var);
+                globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
         }
     }
