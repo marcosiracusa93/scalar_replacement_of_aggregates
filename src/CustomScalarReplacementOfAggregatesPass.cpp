@@ -333,7 +333,14 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
                     bytes_acc += type_size;
 
-                    if (exp_ty != ptr_u->get()->getType()->getPointerElementType()) {
+                    //llvm::Type *bitcast_type = nullptr;
+                    llvm::Type *ty1 = exp_ty;
+                    llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
+                    if (ty1->getTypeID() == ty2->getTypeID() and
+                        DL->getTypeAllocSize(ty1) > DL->getTypeAllocSize(ty2)) {
+                        //bitcast_type = ty2;
+                        llvm::errs() << "ERR: bitcast brokes anything";
+                    } else if (ty1 != ty2) {
                         continue;
                     }
 
@@ -379,6 +386,11 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
                     llvm::Value *exp_val = get_expanded_value(base_address, bytes_acc - type_size, type_size);
 
+                    /*if (bitcast_type != nullptr) {
+                        std::string bitcast_name = user_inst->getName().str() + ".bitcast";
+                        llvm::BitCastInst *bitcast_inst = new llvm::BitCastInst(exp_val, bitcast_type, bitcast_name, new_inst);
+                        exp_val = bitcast_inst;
+                    }*/
                     new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
 
                     split_before = else_term;
@@ -773,6 +785,62 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function *ke
         }
     }
 
+    class FunctionDimKey {
+    public:
+        llvm::Function *const function_ptr = nullptr;
+        std::vector<std::vector<unsigned long long>> arg_dims = std::vector<std::vector<unsigned long long>>();
+
+        FunctionDimKey(llvm::Function *const function_ptr,
+                       const std::vector<std::vector<unsigned long long>> &arg_dims) :
+                function_ptr(function_ptr),
+                arg_dims(arg_dims) {
+
+        }
+
+        bool operator<(const FunctionDimKey &oth) const {
+            if (function_ptr != oth.function_ptr) {
+                return function_ptr < oth.function_ptr;
+            } else {
+
+                if (arg_dims.size() != oth.arg_dims.size()) {
+                    llvm::errs() << "ERR: different number of arguments for function implementation\n";
+                    exit(-1);
+                }
+
+                auto this_a_it = arg_dims.begin();
+                auto oth_a_it = oth.arg_dims.begin();
+
+                for (; this_a_it != arg_dims.end() or oth_a_it != oth.arg_dims.end(); ++this_a_it, ++oth_a_it) {
+
+                    if (this_a_it->size() != oth_a_it->size()) {
+                        llvm::errs() << "ERR: different number of dims for function implementation\n";
+                        exit(-1);
+                    }
+
+                    auto this_d_it = this_a_it->begin();
+                    auto oth_d_it = oth_a_it->begin();
+
+                    for (; this_d_it != this_a_it->end() or oth_d_it != oth_a_it->end(); ++this_d_it, ++oth_d_it) {
+                        if (*this_d_it != *oth_d_it) {
+                            return *this_d_it < *oth_d_it;
+                        }
+                    }
+                }
+
+                return false;
+            }
+        }
+    };
+
+    struct CmpFunDim {
+        bool operator()(const FunctionDimKey &lhs, const FunctionDimKey &rhs) const {
+            return lhs < rhs;
+        }
+    };
+
+    std::map<FunctionDimKey, llvm::Function *, CmpFunDim> function_dim_map;
+
+
     // Go through the vector (which may grow at any iteration)
     for (unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx) {
         llvm::CallInst *call_inst = call_inst_vec.at(idx);
@@ -785,7 +853,7 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function *ke
 
         std::vector<std::vector<unsigned long long>> dimensions;
 
-        // Get argument's dimensions
+        // Get arguments' dimensions
         for (llvm::Value *op : call_inst->arg_operands()) {
             if (op->getType()->isPointerTy()) {
                 if (llvm::GEPOperator *gep_op_op = llvm::dyn_cast<llvm::GEPOperator>(op)) {
@@ -941,22 +1009,43 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function *ke
             }
         }
 
-        // Clone the function
-        llvm::ValueToValueMapTy VMap;
-        llvm::ClonedCodeInfo *code_info = new llvm::ClonedCodeInfo();
-        llvm::Function *cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
+        llvm::Function *synthesized_function = nullptr;
 
-        for (auto &arg : cloned_function->args()) {
-            arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
+        FunctionDimKey search_key = FunctionDimKey(called_function, dimensions);
+        auto fd_it = function_dim_map.find(search_key);
+        if (fd_it != function_dim_map.end()) {
+            synthesized_function = fd_it->second;
+        } else {
+            // Clone the function
+            llvm::ValueToValueMapTy VMap;
+            llvm::ClonedCodeInfo *code_info = new llvm::ClonedCodeInfo();
+            llvm::Function *cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
+            std::string new_name = called_function->getName().str() + "_";
+            for (auto d1: dimensions) {
+                for (auto d2 : d1) {
+                    new_name.append(std::to_string(d2) + ".");
+                }
+                new_name.append(".");
+            }
+
+            cloned_function->setName(new_name);
+
+            synthesized_function = cloned_function;
+
+            for (auto &arg : synthesized_function->args()) {
+                arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
+            }
+
+            function_dim_map.insert(std::make_pair(FunctionDimKey(called_function, dimensions), synthesized_function));
+
+            inner_functions.push_back(synthesized_function);
         }
 
         // Replace the call site
-        call_inst->setCalledFunction(cloned_function);
-
-        inner_functions.push_back(cloned_function);
+        call_inst->setCalledFunction(synthesized_function);
 
         // add to the vector function calls inside the cloned function
-        for (llvm::BasicBlock &bb : *cloned_function) {
+        for (llvm::BasicBlock &bb : *synthesized_function) {
             for (llvm::Instruction &i : bb) {
                 if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
                     call_inst_vec.push_back(call_inst);
@@ -1079,6 +1168,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                                                                            initializer,
                                                                            new_global_name,
                                                                            g_var);
+
+                new_g_var->copyAttributesFrom(g_var);
+
                 exp_globals_map[g_var].push_back(new_g_var);
                 globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
