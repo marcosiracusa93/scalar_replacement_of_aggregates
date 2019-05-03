@@ -710,7 +710,7 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *
                 }
 
                 return true;
-            } else if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(phi_node)) {
+            } else if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(inst)) {
                 return !phi_node->getType()->isPointerTy();
             } else {
                 return true;
