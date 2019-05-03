@@ -710,6 +710,8 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function *
                 }
 
                 return true;
+            } else if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(phi_node)) {
+                return !phi_node->getType()->isPointerTy();
             } else {
                 return true;
             }
@@ -1775,6 +1777,47 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
 
         if (function->getNumUses() == 0) {
             function->eraseFromParent();
+        }
+    }
+
+    for (auto glob_it = exp_globals_map.begin(); glob_it != exp_globals_map.end(); ++glob_it) {
+        std::vector<llvm::GlobalVariable *> exp_g_var_vec = glob_it->second;
+
+        for (llvm::GlobalVariable *exp_g_var : exp_g_var_vec) {
+            if (!exp_g_var->getType()->isAggregateType()) {
+
+                bool only_load_inst_users = true;
+
+                for (auto &u : exp_g_var->uses()) {
+                    if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
+                        if (load_isnt->getPointerOperandIndex() != u.getOperandNo()) {
+                            only_load_inst_users = false;
+                            break;
+                        }
+                    } else {
+                        only_load_inst_users = false;
+                        break;
+                    }
+                }
+
+                if (only_load_inst_users) {
+                    for (auto &u : exp_g_var->uses()) {
+                        for (auto &u : exp_g_var->uses()) {
+                            if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
+                                load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
+                                load_isnt->eraseFromParent();
+                            } else {
+                                llvm::errs() << "ERR: Non load use\n";
+                                exit(-1);
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (exp_g_var->getNumUses() == 0) {
+                    exp_g_var->eraseFromParent();
+                }
+            }
         }
     }
 
