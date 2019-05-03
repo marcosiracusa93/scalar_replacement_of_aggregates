@@ -89,7 +89,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     expand_ptrs(kernel_function, inner_functions);
 
     // Cleanup the remaining code
-    //cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
+    cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
 
     return true;
 
@@ -1767,6 +1767,15 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
         }
 
         function->eraseFromParent();
+    }
+
+    // Delete all the functions which has been expanded in something else and have no uses
+    for (auto exp_it = exp_fun_map.begin(); exp_it != exp_fun_map.end(); ++exp_it) {
+        llvm::Function *function = exp_it->first;
+
+        if (function->getNumUses() == 0) {
+            function->eraseFromParent();
+        }
     }
 
 } // end cleanup
