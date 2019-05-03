@@ -1785,30 +1785,32 @@ CustomScalarReplacementOfAggregatesPass::cleanup(
 
         for (llvm::GlobalVariable *exp_g_var : exp_g_var_vec) {
             if (!exp_g_var->getType()->isAggregateType()) {
+                if (exp_g_var->getInitializer() != nullptr) {
 
-                bool only_load_inst_users = true;
+                    bool only_load_inst_users = true;
 
-                for (auto &u : exp_g_var->uses()) {
-                    if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
-                        if (load_isnt->getPointerOperandIndex() != u.getOperandNo()) {
+                    for (auto &u : exp_g_var->uses()) {
+                        if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
+                            if (load_isnt->getPointerOperandIndex() != u.getOperandNo()) {
+                                only_load_inst_users = false;
+                                break;
+                            }
+                        } else {
                             only_load_inst_users = false;
                             break;
                         }
-                    } else {
-                        only_load_inst_users = false;
-                        break;
                     }
-                }
 
-                if (only_load_inst_users) {
-                    for (auto &u : exp_g_var->uses()) {
+                    if (only_load_inst_users) {
                         for (auto &u : exp_g_var->uses()) {
-                            if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
-                                load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
-                                load_isnt->eraseFromParent();
-                            } else {
-                                llvm::errs() << "ERR: Non load use\n";
-                                exit(-1);
+                            for (auto &u : exp_g_var->uses()) {
+                                if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
+                                    load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
+                                    load_isnt->eraseFromParent();
+                                } else {
+                                    llvm::errs() << "ERR: Non load use\n";
+                                    exit(-1);
+                                }
                             }
                         }
                     }
