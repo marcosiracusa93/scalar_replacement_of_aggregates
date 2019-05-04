@@ -1195,6 +1195,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                                                                            initializer,
                                                                            new_global_name,
                                                                            g_var);
+                new_g_var->copyAttributesFrom(g_var);
+
                 exp_globals_map[g_var].push_back(new_g_var);
                 globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
