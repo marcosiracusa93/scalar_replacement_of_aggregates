@@ -47,27 +47,7 @@
 
 #include <set>
 
-typedef std::pair<llvm::Function *, unsigned long long> fun_arg_key_ty;
-
-struct Compare_fun_arg_key {
-    bool operator()(const fun_arg_key_ty &lhs, const fun_arg_key_ty &rhs) {
-        if (lhs.first < rhs.first) {
-            return true;
-        } else if (lhs.first == rhs.first) {
-            return lhs.second < rhs.second;
-        } else {
-            return false;
-        }
-    }
-};
-
-typedef std::map<fun_arg_key_ty, std::vector<unsigned long long>, Compare_fun_arg_key> expanded_elements_in_args_ty;
-typedef std::map<llvm::Function *, llvm::Function *> fun_fun_map_ty;
-typedef std::map<llvm::Function *, llvm::Function *> fun_to_fun_map_ty;
-typedef std::map<llvm::CallInst *, llvm::CallInst *> call_to_call_map_ty;
-typedef std::set<llvm::CallInst *> call_set_ty;
 typedef std::set<llvm::Instruction *> inst_set_ty;
-typedef std::map<llvm::Function *, std::set<llvm::Argument *>> fun_to_args_map_ty;
 typedef std::map<llvm::Function *, std::set<llvm::AllocaInst *>> fun_to_alloca_map_ty;
 
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass {
@@ -78,9 +58,7 @@ public:
 private:
     const std::string kernel_name;
 
-    call_set_ty visited_memcpy;
     inst_set_ty inst_to_remove;
-    fun_to_args_map_ty args_to_remove;
     fun_to_alloca_map_ty alloca_to_remove;
 
     // Map specifying how arguments have been expanded
