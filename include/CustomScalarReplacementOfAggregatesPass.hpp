@@ -84,6 +84,8 @@ private:
 
     bool check_assumptions(llvm::Function *kernel_function);
 
+    bool expansion_allowed(llvm::Value *aggregate);
+
     void spot_accessed_globals(llvm::Function *kernel_function, std::vector<llvm::Function *> &inner_functions,
                                std::set<llvm::GlobalVariable *> &accessed_globals);
 
@@ -94,7 +96,8 @@ private:
     void process_pointer(llvm::Use *ptr_u, llvm::BasicBlock *&new_bb);
 
     void
-    compute_base_and_offset(llvm::Use *ptr_use, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain);
+    compute_base_and_offset(llvm::Use *ptr_use, llvm::Value *&base_address, std::vector<llvm::Value *> &offset_chain,
+                            std::vector<llvm::Instruction *> &inst_chain);
 
     template<class I>
     llvm::Value *get_element_at_offset(I *base_address,

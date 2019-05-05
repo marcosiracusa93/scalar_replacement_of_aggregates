@@ -9,12 +9,13 @@ struct s1 {
 };
 
 struct s1 s11[3];
+struct s1 s111;
 
-int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[3], int k) {
+int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[3], struct s1 *a111, int k) {
 
-    k = s11[1].a1[1];
+    k = s11[1].a1[1] + s111.a1[1];
 
-    return a11[1].a1[1] + k;
+    return a11[1].a1[1] + a111->a1[1] + k;
 }
 
 
@@ -22,7 +23,11 @@ int main(void) {
 
     struct s1 a1[3][3];
     struct s1 a11[3];
+    struct s1 a111;
+    a111.i1 = 1;
+    a111.d1 = 1.0;
+
     int k = 0;
 
-    return kernel1(a11, k);
+    return kernel1(a11, &a111, k);
 }
