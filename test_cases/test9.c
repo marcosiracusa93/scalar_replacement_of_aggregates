@@ -5,15 +5,19 @@
 struct s1 {
     double d1;
     int i1;
-    int a1[3];
+    int a1[9];
 };
 
 struct s1 s11[3];
 struct s1 s111;
 
+int kernel2(int a1[9]) {
+    return a1[1];
+}
+
 int kernel1(/*struct s1 a1[static 3][3], */struct s1 a11[3], struct s1 *a111, int k) {
 
-    k = s11[1].a1[1] + s111.a1[1];
+    k = s11[1].a1[1] + s111.a1[1] + kernel2(a111->a1);
 
     return a11[1].a1[1] + a111->a1[1] + k;
 }

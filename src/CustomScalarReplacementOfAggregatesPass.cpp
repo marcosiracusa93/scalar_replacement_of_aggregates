@@ -1913,12 +1913,20 @@ void CustomScalarReplacementOfAggregatesPass::spot_accessed_globals(llvm::Functi
 bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value *aggregate) {
 
     if (aggregate->getType()->isPointerTy()) {
-        if (aggregate->getType()->getPointerElementType()->isAggregateType()) {
+        auto arg_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
+        if (aggregate->getType()->getPointerElementType()->isAggregateType() or arg_it != arg_size_map.end() and
+            !arg_it->second.empty() and arg_it->second.front() > 1) {
 
             std::vector<llvm::Type *> contained_types;
 
             llvm::Type *ptr_ty = aggregate->getType()->getPointerElementType();
-            contained_types.push_back(ptr_ty);
+            if (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1) {
+                for (unsigned long long e_idx = 0; e_idx < arg_it->second.front(); e_idx++) {
+                    contained_types.push_back(ptr_ty);
+                }
+            } else {
+                contained_types.push_back(ptr_ty);
+            }
 
             unsigned long long non_aggregates_types = 0;
 
@@ -1949,11 +1957,11 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value *agg
                 DL = &alloca_inst->getModule()->getDataLayout();
             }
 
-            unsigned long long allocated_size = DL->getTypeAllocSize(ptr_ty);
+            unsigned long long allocated_size = 0;//DL->getTypeAllocSize(ptr_ty);
 
             auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
             if (size_it != arg_size_map.end() and !size_it->second.empty()) {
-                non_aggregates_types *= size_it->second.front();
+                //non_aggregates_types *= size_it->second.front();
                 allocated_size *= size_it->second.front();
             }
 
