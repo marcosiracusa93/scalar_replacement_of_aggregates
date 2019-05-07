@@ -89,7 +89,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
     expand_ptrs(kernel_function, inner_functions);
 
     // Cleanup the remaining code
-    cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
+    //cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
 
     return true;
 
@@ -122,6 +122,8 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use 
                 ptr_use->getUser()->dump();
             }
         }
+        ptr_use->get()->dump();
+        containing_inst->dump();
         const llvm::DataLayout *DL = &containing_inst->getModule()->getDataLayout();
 
         // Recursively go through the gepi chain up to the base address
@@ -254,9 +256,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
         compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain);
 
-        if (!expansion_allowed(base_address)) {
-            return;
-        } else {
+        bool is_expansion_allowed = expansion_allowed(base_address);
+        if (is_expansion_allowed) {
             for (llvm::Instruction *i : inst_chain) {
                 inst_to_remove.insert(i);
             }
@@ -277,6 +278,10 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
 
         if (llvm::isa<llvm::StoreInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
 
+            if (!is_expansion_allowed) {
+                return;
+            }
+
             if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
                 if (load_inst->getPointerOperand() != ptr_u->get()) {
                     llvm::errs() << "ERR: Bad load inst usage\n";
@@ -296,7 +301,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                         ptr_u->getUser())->getModule()->getDataLayout();
                 unsigned long long accessed_size = DL->getTypeAllocSize(
                         ptr_u->get()->getType()->getPointerElementType());
-                llvm::Value *exp_val = get_expanded_value(base_address, constant_sum, accessed_size);
+                llvm::Value *exp_val = get_expanded_value(base_address, constant_sum, accessed_size, nullptr, ptr_u);
 
                 ptr_u->set(exp_val);
             } else { // Non constant offset
@@ -399,7 +404,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                         last_phi_set = phi_node;
                     }
 
-                    llvm::Value *exp_val = get_expanded_value(base_address, bytes_acc - type_size, type_size);
+                    llvm::Value *exp_val = get_expanded_value(base_address, bytes_acc - type_size, type_size, nullptr,
+                                                              ptr_u);
 
                     /*if (bitcast_type != nullptr) {
                         std::string bitcast_name = user_inst->getName().str() + ".bitcast";
@@ -443,7 +449,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use *ptr_u, 
                             accessed_size *= exp_arg_size_it->second.front();
                         }
 
-                        llvm::Value *exp_val = get_expanded_value(base_address, arg_offset, accessed_size);
+                        llvm::Value *exp_val = get_expanded_value(base_address, arg_offset, accessed_size, arg_u,
+                                                                  ptr_u);
 
                         // Take care of array decay now
                         if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
@@ -507,7 +514,8 @@ llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *b
 
     I *el_to_exp = base_address;
     signed long long offset_to_exp = offset;
-
+//llvm::errs() << "Offset: " << offset << "\n";
+//llvm::errs() << "Wanna access: " << accessed_size << "\n";
     while (offset_to_exp > 0) {
         auto exp_it = map.find(el_to_exp);
 
@@ -517,13 +525,63 @@ llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *b
             bool take_next = false;
 
             for (I *el : subelements) {
+//llvm::errs() << "El: "; el->dump();
                 unsigned long long allocated_size = DL->getTypeAllocSize(el->getType()->getPointerElementType());
+//llvm::errs() << "Allocated: " << allocated_size << "\n";
+                if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(el)) {
+                    allocated_size = DL->getTypeAllocSize(gep_op->getResultElementType());
+                    /*
+                    llvm::Type *pointer_type = nullptr;
+
+                    for (llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op), GTE = llvm::gep_type_end(gep_op); gt_it != GTE; ++gt_it) {
+                        pointer_type = gt_it.getIndexedType();
+                    }
+
+                    llvm::Value *last_op = nullptr;
+                    for (llvm::Value *op : gep_op->operands()) {
+                        last_op = op;
+                    }
+
+                    if(llvm::ConstantInt *c_op = llvm::dyn_cast<llvm::ConstantInt>(last_op)) {
+                        unsigned long long idx = c_op->getSExtValue();
+                        llvm::Type *pointee_type = nullptr;
+
+                        auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(base_address));
+                        if (gep_op->getNumOperands() == 2 and size_it != arg_size_map.end() and !size_it->second.empty() and size_it->second.front() > 1) {
+                            pointee_type = pointer_type;
+                        } else {
+                            if (pointer_type->isAggregateType()) {
+                                if (pointer_type->isArrayTy()) {
+                                    pointee_type = pointer_type->getArrayElementType();
+                                } else if (pointer_type->isStructTy()) {
+                                    pointee_type = pointer_type->getContainedType(idx);
+                                } else if (pointer_type->isVectorTy()) {
+                                    pointee_type = pointer_type->getVectorElementType();
+                                } else {
+                                    llvm::errs() << "ERR: Unknown aggregate\n";
+                                    pointer_type->dump();
+                                    exit(-1);
+                                }
+                            } else {
+                                pointee_type = pointer_type;
+                            }
+                        }
+llvm::errs() << "Pointee: "; pointee_type->dump();
+llvm::errs() << "Pointee: "; gep_op->getResultElementType()->dump();
+                        allocated_size = DL->getTypeAllocSize(pointee_type);
+                    } else {
+                        llvm::errs() << "ERR: non const op\n";
+                        gep_op->dump();
+                        exit(-1);
+                    }
+                     */
+                }
 
                 auto arg_size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(el));
                 if (arg_size_it != arg_size_map.end() and !arg_size_it->second.empty()) {
                     allocated_size *= arg_size_it->second.front();
                 }
-
+//llvm::errs() << "a: " << allocated_size << " e:" << offset_to_exp << " el_to_exp "; el->dump();
                 if (offset_to_exp == 0) {
 
                     if (take_next) {
@@ -551,9 +609,41 @@ llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *b
             exit(-1);
         }
     }
-
+//llvm::errs() << "*************************\n";
+//llvm::errs() << "el_to_exp: "; el_to_exp->dump();
+//llvm::errs() << "*************************\n";
     do {
         unsigned long long expanded_size = DL->getTypeAllocSize(el_to_exp->getType()->getPointerElementType());
+
+//llvm::errs() << "a: " << accessed_size << " e:" << expanded_size << " el_to_exp "; el_to_exp->dump();
+
+        if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(el_to_exp)) {
+            expanded_size = DL->getTypeAllocSize(gep_op->getResultElementType());
+/*
+            llvm::Type *last_idx_type = nullptr;
+
+            for (llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op), GTE = llvm::gep_type_end(gep_op); gt_it != GTE; ++gt_it) {
+                last_idx_type = gt_it.getIndexedType();
+            }
+
+            llvm::Value *last_op = nullptr;
+            for (llvm::Value *op : gep_op->operands()) {
+                last_op = op;
+            }
+
+            if(llvm::ConstantInt *c_op = llvm::dyn_cast<llvm::ConstantInt>(last_op)) {
+                unsigned long long idx = c_op->getSExtValue();
+                llvm::Type *last_type = nullptr;
+
+                last_type = last_idx_type->getContainedType(idx);
+                expanded_size = DL->getTypeAllocSize(last_type);
+            } else {
+                llvm::errs() << "ERR: non const op\n";
+                gep_op->dump();
+                exit(-1);
+            }
+*/
+        }
 
         auto arg_size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(el_to_exp));
         llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(el_to_exp);
@@ -572,7 +662,9 @@ llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *b
                 llvm::errs() << "ERR: El not found in map\n";
                 llvm::errs() << "Offset: " << offset << "\nAcc size: " << accessed_size << "\nExp_size: "
                              << expanded_size << "\n";
+                llvm::errs() << "B: ";
                 base_address->dump();
+                llvm::errs() << "E: ";
                 el_to_exp->dump();
                 exit(-1);
             }
@@ -592,9 +684,206 @@ llvm::Value *CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I *b
 
 llvm::Value *CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::Value *base_address,
                                                                          signed long long offset,
-                                                                         unsigned long long accessed_size) {
+                                                                         unsigned long long accessed_size,
+                                                                         llvm::Argument *arg_if_any,
+                                                                         llvm::Use *use) {
+    if (!expansion_allowed(base_address)) {
+        std::map<llvm::Value *, std::vector<llvm::Value *>> gepi_map;
+        std::map<llvm::Value *, llvm::Value *> backtrack_gepi;
 
-    if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+        class GenGepiMap {
+        public:
+            static void gen_gepi_map(llvm::Value *gepi_base, llvm::Argument *arg,
+                                     std::map<llvm::Value *, std::vector<llvm::Value *>> &gepi_map,
+                                     const std::map<llvm::Argument *, std::vector<llvm::Argument *>> &arg_map,
+                                     std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_size_map,
+                                     std::string gepi_name) {
+
+                auto arg_it = arg_map.find(arg);
+
+                if (arg_it != arg_map.end()) {
+
+                    std::vector<llvm::Type *> type_vec;
+
+                    auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(gepi_base));
+                    bool is_array = false;
+                    if (size_it != arg_size_map.end()) {
+                        if (!size_it->second.empty()) {
+                            if (size_it->second.front() > 1) {
+                                for (unsigned long long idx = 0; idx < size_it->second.front(); idx++) {
+                                    is_array = true;
+                                    type_vec.push_back(gepi_base->getType()->getPointerElementType());
+                                }
+                            }
+                        }
+                    }
+
+                    if (!is_array) {
+                        llvm::Type *ptd_ty;
+                        if (gepi_base->getType()->isPointerTy()) {
+                            ptd_ty = gepi_base->getType()->getPointerElementType();
+                        } else {
+                            ptd_ty = gepi_base->getType();
+                        }
+
+                        if (ptd_ty->isAggregateType()) {
+                            if (ptd_ty->isArrayTy()) {
+                                for (unsigned long long idx = 0; idx < ptd_ty->getArrayNumElements(); idx++) {
+                                    type_vec.push_back(ptd_ty->getArrayElementType());
+                                }
+                            } else if (ptd_ty->isStructTy()) {
+                                for (unsigned long long idx = 0; idx < ptd_ty->getStructNumElements(); idx++) {
+                                    type_vec.push_back(ptd_ty->getContainedType(idx));
+                                }
+                            } else if (ptd_ty->isVectorTy()) {
+                                for (unsigned long long idx = 0; idx < ptd_ty->getVectorNumElements(); idx++) {
+                                    type_vec.push_back(ptd_ty->getVectorElementType());
+                                }
+                            } else {
+                                llvm::errs() << "ERR: Unknown aggregate\n";
+                                exit(-1);
+                            }
+                        }
+                    }
+
+                    unsigned long long idx = 0;
+                    for (llvm::Type *ty : type_vec) {
+
+                        std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+
+                        llvm::Type *gepi_type = llvm::cast<llvm::PointerType>(
+                                gepi_base->getType()->getScalarType())->getElementType();
+
+                        if (!is_array) {
+                            llvm::Type *op1_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
+                            llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                            gepi_ops.push_back(op1);
+                        }
+
+                        llvm::Type *op2_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
+                        llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, idx, false);
+                        gepi_ops.push_back(op2);
+
+                        std::string new_gepi_name = gepi_name + "." + std::to_string(idx);
+
+                        llvm::GetElementPtrInst *new_gepi = llvm::GetElementPtrInst::Create(
+                                gepi_type,//->getContainedType(idx),
+                                gepi_base,
+                                gepi_ops,
+                                new_gepi_name);
+//llvm::errs() << "G: "; new_gepi->dump();
+//llvm::errs() << "T: "; new_gepi->getType();
+                        gepi_map[gepi_base].push_back(new_gepi);
+                        gen_gepi_map(new_gepi, arg, gepi_map, arg_map, arg_size_map, new_gepi_name);
+
+                        ++idx;
+                    }
+
+/*
+                    const std::vector<llvm::Argument*> &arg_vec = arg_it->second;
+
+                    unsigned long long idx = 0;
+                    for (llvm::Argument *a : arg_vec) {
+
+                        std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+
+                        llvm::Type *gepi_type = gepi_base->getType();//->getPointerElementType();
+
+                        if (!is_array) {
+                            llvm::Type *op1_ty = llvm::IntegerType::get(gepi_base->getContext(), 64);
+                            llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                            gepi_ops.push_back(op1);
+                        }
+
+                        llvm::Type *op2_ty = llvm::IntegerType::get(gepi_base->getContext(), 64);
+                        llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, idx, false);
+                        gepi_ops.push_back(op2);
+
+                        std::string new_gepi_name = gepi_name + "." + std::to_string(idx);
+
+                        llvm::GetElementPtrInst *new_gepi = llvm::GetElementPtrInst::Create(gepi_type,//->getContainedType(idx),
+                                                                                                  gepi_base,
+                                                                                                  gepi_ops,
+                                                                                                  new_gepi_name);
+new_gepi->dump();
+                        gepi_map[gepi_base].push_back(new_gepi);
+                        gen_gepi_map(new_gepi, a, gepi_map, arg_map, arg_size_map, gepi_name);
+
+                        ++idx;
+
+                    }
+*/
+                } else {
+                    //llvm::errs() << "ERR: arg not found\n";
+                    //arg->dump();
+                    //exit(-1);
+                }
+
+            }
+        };
+        std::string gepi_name = arg_if_any->getName().str() + ".gepi";
+
+        GenGepiMap::gen_gepi_map(base_address, arg_if_any, gepi_map, exp_args_map, arg_size_map, gepi_name);
+
+        const llvm::DataLayout *DL = nullptr;
+        if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+            DL = &alloca_inst->getModule()->getDataLayout();
+        } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
+            DL = &arg->getParent()->getParent()->getDataLayout();
+        } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
+            DL = &g_var->getParent()->getDataLayout();
+        } else {
+            llvm::errs() << "ERR: Neither alloca, argument, nor global as base address\n";
+            base_address->dump();
+            exit(-1);
+        }
+        llvm::errs() << "base_address: ";
+        base_address->dump();
+        llvm::errs() << "offset: " << offset << "\n";
+        llvm::errs() << "accessed_size: " << accessed_size << "\n";
+        llvm::Value *exp_el = get_element_at_offset(base_address, gepi_map, offset, accessed_size, DL);
+
+        llvm::errs() << "exp_el: ";
+        exp_el->dump();
+
+        llvm::Value *gepi_rec = exp_el;
+        std::vector<llvm::GetElementPtrInst *> gep_vec;
+        do {
+            if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(gepi_rec)) {
+                gep_vec.push_back(gep_inst);
+                gepi_rec = gep_inst->getPointerOperand();
+            } else {
+                break;
+            }
+        } while (true);
+
+        for (auto r_it = gep_vec.rbegin(); r_it != gep_vec.rend(); ++r_it) {
+            llvm::GetElementPtrInst *gepi = llvm::cast<llvm::GetElementPtrInst>(*r_it);
+            gepi->insertBefore(llvm::dyn_cast<llvm::Instruction>(use->getUser()));
+            llvm::errs() << "GEPI: ";
+            gepi->dump();
+        }
+
+        std::set<llvm::Value *> gepi_map_as_set;
+        for (auto g : gepi_map) {
+            for (llvm::Value *v : g.second) {
+                //llvm::dyn_cast<llvm::GetElementPtrInst>(v)->insertBefore(llvm::dyn_cast<llvm::Instruction>(use->getUser()));
+                gepi_map_as_set.insert(v);
+            }
+        }
+
+        for (llvm::GetElementPtrInst *gepi : gep_vec) {
+            gepi_map_as_set.erase(gepi);
+        }
+
+        for (auto s_it = gepi_map_as_set.begin(); s_it != gepi_map_as_set.end(); ++s_it) {
+            llvm::Value *gepi = llvm::dyn_cast<llvm::Value>(*s_it);
+            gepi = nullptr;
+            //std::free((void*)gepi);
+        }
+
+        return exp_el;
+    } else if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
         const llvm::DataLayout *DL = &alloca_inst->getModule()->getDataLayout();
         return get_element_at_offset(alloca_inst, exp_allocas_map, offset, accessed_size, DL);
     } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {

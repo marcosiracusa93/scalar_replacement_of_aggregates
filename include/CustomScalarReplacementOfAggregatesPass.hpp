@@ -107,7 +107,8 @@ private:
                                        const llvm::DataLayout *DL);
 
     llvm::Value *
-    get_expanded_value(llvm::Value *base_address, signed long long offset, unsigned long long accessed_size);
+    get_expanded_value(llvm::Value *base_address, signed long long offset, unsigned long long accessed_size,
+                       llvm::Argument *arg_if_any = nullptr, llvm::Use *use = nullptr);
 
     void expand_signatures_and_call_sites(std::vector<llvm::Function *> &inner_functions,
                                           std::map<llvm::Function *, llvm::Function *> &exp_fun_map,
