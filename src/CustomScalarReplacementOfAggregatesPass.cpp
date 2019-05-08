@@ -1525,9 +1525,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      llvm::Type* new_alloca_type = llvm::PointerType::getUnqual(element);
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element,
-//#if __clang_major__ > 4
-//                                                                           DL->getAllocaAddrSpace(),
-//#endif
+#if __clang_major__ > 4 && !defined(__APPLE__)
+                             DL->getAllocaAddrSpace(),
+#endif
                                                                            new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
@@ -1542,9 +1542,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      llvm::Type* new_alloca_type = llvm::PointerType::getUnqual(element_ty);
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
-//#if __clang_major__ > 4
-//                                                                           DL->getAllocaAddrSpace(),
-//#endif
+#if __clang_major__ > 4 && !defined(__APPLE__)
+                             DL->getAllocaAddrSpace(),
+#endif
                                                                            new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
@@ -1572,7 +1572,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
 
       if(expansion_allowed(g_var))
       {
-         if(llvm::StructType* str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()->getPointerElementType()))
+          if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()))
          {
             for(unsigned e_idx = 0; e_idx < str_ty->getStructNumElements(); ++e_idx)
             {
@@ -1592,8 +1592,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                exp_globals_map[g_var].push_back(new_g_var);
                globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
-         }
-         else if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(g_var->getType()->getPointerElementType()))
+         } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(g_var->getType()))
          {
             for(unsigned e_idx = 0; e_idx < arr_ty->getArrayNumElements(); ++e_idx)
             {
@@ -1791,7 +1790,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
                arg_size_map[new_arg] = a_it->second;
             }
 
-#if __clang_major__ == 4
+#if __clang_major__ == 4 && !defined(__APPLE__)
             llvm::Argument* lastArg = &new_mock_function->getArgumentList().back();
 #else
             llvm::Argument* lastArg=nullptr;
@@ -2086,6 +2085,32 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
       }
 
     public:
+
+       // Check whether the argument is used by one store only (and no calls)
+       static bool storedOnce(llvm::Argument *arg) {
+           if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
+               if (!ptr_ty->getElementType()->isAggregateType()) {
+                   if (arg->getNumUses() == 1) {
+                       llvm::Use &first_use = *arg->use_begin();
+
+                       if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(first_use.getUser())) {
+                           return store_inst->getPointerOperand() == arg;
+                       } else {
+                           return false;
+                       }
+                   } else {
+                       return false;
+                   }
+               } else {
+                   return false;
+               }
+           } else {
+               return false;
+           }
+
+           return true;
+       }
+
       static bool usedByArgsOnly_wrapper(llvm::Argument* arg)
       {
          return usedByArgsOnly(arg, std::set<llvm::Argument*>());
@@ -2121,6 +2146,31 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
    {
       // Create the new function type based on the recomputed parameters.
       std::vector<llvm::Type*> arg_tys;
+
+       llvm::Argument *arg_stored_once = nullptr;
+       if (function->getReturnType()->isVoidTy()) {
+           unsigned long long num_args_stored_once = 0;
+
+           for (auto check_stored_it = function->arg_begin();
+                check_stored_it != function->arg_end(); ++check_stored_it) {
+
+               llvm::Argument *arg = &*check_stored_it;
+
+               if (exp_idx_args_map[function].count(arg->getArgNo()) == 0) {
+                   if (exp_args_map.count(arg) == 0) {
+                       if (CheckArg::storedOnce(arg)) {
+                           ++num_args_stored_once;
+                           arg_stored_once = arg;
+                       }
+                   }
+               }
+           }
+
+           if (num_args_stored_once > 1) {
+               arg_stored_once = nullptr;
+           }
+       }
+
       for(auto& a : function->args())
       {
          // If it is not an expanded argument
@@ -2128,24 +2178,48 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          {
             if(exp_args_map.count(&a) == 0)
             {
-               // If it is not only uesd as argument recursively
-               if(!CheckArg::usedByArgsOnly_wrapper(&a))
-               {
-                  // Check whether recursively loaded only
-                  if(CheckArg::loadedOnly_wrapper(&a))
-                  {
-                     arg_tys.push_back(a.getType()->getPointerElementType());
-                  }
-                  else
-                  {
-                     arg_tys.push_back(a.getType());
-                  }
-               }
+                // If the argument is stored once
+                if (arg_stored_once == &a) {
+                    // Do not insert anything
+                } else {
+                    // If it is not only uesd as argument recursively
+                    if (!CheckArg::usedByArgsOnly_wrapper(&a)) {
+                        // Check whether recursively loaded only
+                        if (CheckArg::loadedOnly_wrapper(&a)) {
+                            arg_tys.push_back(a.getType()->getPointerElementType());
+                        } else {
+                            arg_tys.push_back(a.getType());
+                        }
+                    }
+                }
             }
          }
       }
 
-      llvm::FunctionType* new_fun_ty = llvm::FunctionType::get(function->getReturnType(), arg_tys, function->isVarArg());
+
+       if (arg_stored_once != nullptr) {
+           // Get the store instruction
+           llvm::StoreInst *single_store_inst = llvm::dyn_cast<llvm::StoreInst>(
+                   arg_stored_once->use_begin()->getUser());
+
+           for (llvm::BasicBlock &bb : *function) {
+               if (llvm::ReturnInst *ret_inst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
+                   llvm::ReturnInst *new_ret_inst = llvm::ReturnInst::Create(ret_inst->getContext(),
+                                                                             single_store_inst->getValueOperand(), &bb);
+                   ret_inst->eraseFromParent();
+               }
+           }
+
+           single_store_inst->eraseFromParent();
+       }
+
+       llvm::Type *return_type = nullptr;
+       if (arg_stored_once == nullptr) {
+           return_type = function->getReturnType();
+       } else {
+           return_type = arg_stored_once->getType()->getPointerElementType();
+       }
+       llvm::FunctionType *new_fun_ty = llvm::FunctionType::get(return_type, arg_tys, function->isVarArg());
 
       std::string new_fun_name = function->getName().str() + ".clean";
       llvm::Function* new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name, function->getParent());
@@ -2165,45 +2239,39 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          {
             if(exp_args_map.count(&*fun_arg_it) == 0)
             {
-               // If it is not only uesd as argument recursively
-               if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it))
-               {
-                  // Check whether recursively loaded only
-                  if(CheckArg::loadedOnly_wrapper(&*fun_arg_it))
-                  {
-                     for(auto& use : fun_arg_it->uses())
-                     {
-                        if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser()))
-                        {
-                           load_inst->replaceAllUsesWith(&*new_fun_arg_it);
-                           load_inst->eraseFromParent();
-                        }
-                        else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser()))
-                        {
-                           arg_to_arg.insert(std::make_pair(std::make_pair(call_inst, use.getOperandNo()), &*new_fun_arg_it));
-                        }
-                        else
-                        {
-                           llvm::errs() << "ERR\n";
-                           exit(-1);
-                        }
-                     }
+                // If the argument is stored once
+                if (&*fun_arg_it == arg_stored_once) {
+                    unused_args.insert(&*fun_arg_it);
+                } else {
+                    // If it is not only uesd as argument recursively
+                    if (!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it)) {
+                        // Check whether recursively loaded only
+                        if (CheckArg::loadedOnly_wrapper(&*fun_arg_it)) {
+                            for (auto &use : fun_arg_it->uses()) {
+                                if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser())) {
+                                    load_inst->replaceAllUsesWith(&*new_fun_arg_it);
+                                    load_inst->eraseFromParent();
+                                } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
+                                    arg_to_arg.insert(std::make_pair(std::make_pair(call_inst, use.getOperandNo()),
+                                                                     &*new_fun_arg_it));
+                                } else {
+                                    llvm::errs() << "ERR\n";
+                                    exit(-1);
+                                }
+                            }
 
-                     scalar_args.insert(&*fun_arg_it);
-                     fun_arg_it->replaceAllUsesWith(llvm::UndefValue::get(fun_arg_it->getType()));
-                  }
-                  else
-                  {
-                     fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
-                  }
-                  new_fun_arg_it->takeName(&*fun_arg_it);
-                  ++new_fun_arg_it;
-               }
-               else
-               {
-                  unused_args.insert(&*fun_arg_it);
-                  fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
-               }
+                            scalar_args.insert(&*fun_arg_it);
+                            fun_arg_it->replaceAllUsesWith(llvm::UndefValue::get(fun_arg_it->getType()));
+                        } else {
+                            fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+                        }
+                        new_fun_arg_it->takeName(&*fun_arg_it);
+                        ++new_fun_arg_it;
+                    } else {
+                        unused_args.insert(&*fun_arg_it);
+                        fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
+                    }
+                }
             }
             else
             {
@@ -2269,7 +2337,15 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
             std::string new_call_name = call_inst->getName().str() + ".clean";
             llvm::CallInst* new_call_inst = llvm::CallInst::Create(new_function, call_ops, (call_inst->hasName() ? new_call_name : ""), call_inst);
 
-            call_inst->replaceAllUsesWith(new_call_inst);
+             if (arg_stored_once != nullptr) {
+                 llvm::Value *arg_op = call_inst->getOperand(arg_stored_once->getArgNo());
+
+                 llvm::StoreInst *new_store = new llvm::StoreInst(new_call_inst, arg_op);
+                 new_store->insertAfter(new_call_inst);
+             } else {
+                 call_inst->replaceAllUsesWith(new_call_inst);
+             }
+
             call_inst->eraseFromParent();
          }
          else
