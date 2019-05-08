@@ -53,13 +53,13 @@
 
 static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold",
                                                  llvm::cl::Hidden,
-                                                 llvm::cl::init(10),
+                                                 llvm::cl::init(64),
                                                  llvm::cl::desc(
                                                          "Max amount of scalar types contained in a type for allowing disaggregation"));
 
 static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size",
                                                llvm::cl::Hidden,
-                                               llvm::cl::init(80),
+                                               llvm::cl::init(32*8),
                                                llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
@@ -1525,9 +1525,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      llvm::Type* new_alloca_type = llvm::PointerType::getUnqual(element);
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element,
-//#if __clang_major__ > 4
-//                                                                           DL->getAllocaAddrSpace(),
-//#endif
+#if __clang_major__ > 4 && !defined(__APPLE__)
+                                                                           DL->getAllocaAddrSpace(),
+#endif
                                                                            new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
@@ -1542,9 +1542,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      llvm::Type* new_alloca_type = llvm::PointerType::getUnqual(element_ty);
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
-//#if __clang_major__ > 4
-//                                                                           DL->getAllocaAddrSpace(),
-//#endif
+#if __clang_major__ > 4 && !defined(__APPLE__)
+                                                                           DL->getAllocaAddrSpace(),
+#endif
                                                                            new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
@@ -2423,12 +2423,11 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
    if(aggregate->getType()->isPointerTy())
    {
       auto arg_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
-       if (aggregate->getType()->getPointerElementType()->isAggregateType() or
-           (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
+      if(aggregate->getType()->getPointerElementType()->isAggregateType() or (llvm::isa<llvm::GlobalValue>(aggregate) && llvm::dyn_cast<llvm::GlobalValue>(aggregate)->getValueType()->isAggregateType()) or (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
       {
          std::vector<llvm::Type*> contained_types;
 
-         llvm::Type* ptr_ty = aggregate->getType()->getPointerElementType();
+         llvm::Type* ptr_ty = llvm::isa<llvm::GlobalValue>(aggregate) ? llvm::dyn_cast<llvm::GlobalValue>(aggregate)->getValueType() : aggregate->getType()->getPointerElementType();
          if(arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1)
          {
             for(unsigned long long e_idx = 0; e_idx < arg_it->second.front(); e_idx++)
@@ -2443,7 +2442,7 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
 
          unsigned long long non_aggregates_types = 0;
 
-         for(auto c_idx = 0; c_idx < contained_types.size(); c_idx++)
+         for(auto c_idx = 0u; c_idx < contained_types.size(); c_idx++)
          {
             llvm::Type* el_ty = contained_types.at(c_idx);
 
@@ -2451,7 +2450,7 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
             {
                if(el_ty->isStructTy())
                {
-                  for(unsigned long long e_idx = 0; e_idx < el_ty->getStructNumElements(); ++e_idx)
+                  for(unsigned int e_idx = 0; e_idx < el_ty->getStructNumElements(); ++e_idx)
                   {
                      contained_types.push_back(el_ty->getStructElementType(e_idx));
                   }
