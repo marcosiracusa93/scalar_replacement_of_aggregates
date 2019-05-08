@@ -675,6 +675,16 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* b
       }
    } while(true);
 
+    while (true) {
+        auto exp_it = map.find(el_to_exp);
+
+        if (exp_it != map.end() and exp_it->second.size() == 1) {
+            el_to_exp = exp_it->second.front();
+        } else {
+            break;
+        }
+    }
+
    return el_to_exp;
 }
 
