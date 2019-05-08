@@ -39,14 +39,10 @@
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/PassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
-#include <llvm/IR/IntrinsicInst.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
@@ -54,6 +50,17 @@
 #define DEBUG_TYPE "csroa"
 
 #include "CustomScalarReplacementOfAggregatesPass.hpp"
+
+static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold",
+                                                 llvm::cl::Hidden,
+                                                 llvm::cl::init(10),
+                                                 llvm::cl::desc(
+                                                         "Max amount of scalar types contained in a type for allowing disaggregation"));
+
+static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size",
+                                               llvm::cl::Hidden,
+                                               llvm::cl::init(80),
+                                               llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 {
@@ -1518,9 +1525,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      llvm::Type* new_alloca_type = llvm::PointerType::getUnqual(element);
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element,
-#if __clang_major__ > 4
-                                                                           DL->getAllocaAddrSpace(),
-#endif
+//#if __clang_major__ > 4
+//                                                                           DL->getAllocaAddrSpace(),
+//#endif
                                                                            new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
@@ -1535,9 +1542,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      llvm::Type* new_alloca_type = llvm::PointerType::getUnqual(element_ty);
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
-#if __clang_major__ > 4
-                                                                           DL->getAllocaAddrSpace(),
-#endif
+//#if __clang_major__ > 4
+//                                                                           DL->getAllocaAddrSpace(),
+//#endif
                                                                            new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
@@ -2416,7 +2423,8 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
    if(aggregate->getType()->isPointerTy())
    {
       auto arg_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
-      if(aggregate->getType()->getPointerElementType()->isAggregateType() or arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1)
+       if (aggregate->getType()->getPointerElementType()->isAggregateType() or
+           (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
       {
          std::vector<llvm::Type*> contained_types;
 
@@ -2476,7 +2484,7 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
             DL = &alloca_inst->getModule()->getDataLayout();
          }
 
-         unsigned long long allocated_size = 0; // DL->getTypeAllocSize(ptr_ty);
+          unsigned long long allocated_size = DL->getTypeAllocSize(ptr_ty);
 
          auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
          if(size_it != arg_size_map.end() and !size_it->second.empty())
@@ -2485,7 +2493,7 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
             allocated_size *= size_it->second.front();
          }
 
-         return non_aggregates_types <= 10 and allocated_size <= 30;
+          return non_aggregates_types <= MaxNumScalarTypes and allocated_size <= MaxTypeByteSize;
       }
       else
       {
