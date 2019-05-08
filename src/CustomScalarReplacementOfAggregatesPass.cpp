@@ -1572,7 +1572,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
 
       if(expansion_allowed(g_var))
       {
-          if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()))
+          if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()->getPointerElementType()))
          {
             for(unsigned e_idx = 0; e_idx < str_ty->getStructNumElements(); ++e_idx)
             {
@@ -1592,7 +1592,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                exp_globals_map[g_var].push_back(new_g_var);
                globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
-         } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(g_var->getType()))
+         } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                  g_var->getType()->getPointerElementType()))
          {
             for(unsigned e_idx = 0; e_idx < arr_ty->getArrayNumElements(); ++e_idx)
             {

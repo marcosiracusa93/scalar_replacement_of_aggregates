@@ -17,7 +17,7 @@ int kernel2(int a1[9]) {
 
 void kernel3(int *k, int *j) {
 
-    *k += 3;
+    *k = 3;
     return;
 }
 
