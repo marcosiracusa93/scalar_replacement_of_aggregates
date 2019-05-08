@@ -2403,8 +2403,6 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                {
                   for(auto& u : exp_g_var->uses())
                   {
-                     for(auto& u : exp_g_var->uses())
-                     {
                         if(llvm::LoadInst* load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser()))
                         {
                            load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
@@ -2415,7 +2413,6 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                            llvm::errs() << "ERR: Non load use\n";
                            exit(-1);
                         }
-                     }
                   }
                }
             }
