@@ -904,6 +904,11 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
 
          for(llvm::Instruction& i : *bb)
          {
+
+             if (inst_to_remove.count(&i) != 0) {
+                 continue;
+             }
+
             llvm::BasicBlock* new_bb = nullptr;
             if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(&i))
             {
@@ -1977,7 +1982,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
                // Replace the old one
                new_call_inst->takeName(call_inst);
                call_inst->replaceAllUsesWith(new_call_inst);
-               call_inst->eraseFromParent();
+                inst_to_remove.insert(call_inst);
             }
          }
       }
