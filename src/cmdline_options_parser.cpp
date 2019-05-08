@@ -1,17 +1,13 @@
 #include "cmdline_options_parser.hpp"
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <string>
 
-
-const char *cmdline_help[] = {
-        "  -h, --help                 Print help and exit",
-        "  -l, --ll-filename=FILENAME The name of the llvm .ll file containing the function to analyze.",
-        "  -p, --ll-path=PATH         The path to the folder containing the ll file name.",
-        "  -f, --function=STRING      The name of the target function to process",
-        0
-};
+const char *cmdline_help[] = {"  -h, --help                 Print help and exit",
+                              "  -l, --ll-filename=FILENAME The name of the llvm .ll file containing the function to analyze.",
+                              "  -p, --ll-path=PATH         The path to the folder containing the ll file name.",
+                              "  -f, --function=STRING      The name of the target function to process", 0};
 
 void cmdline_print_usage() {
     int i = 0;
@@ -22,25 +18,21 @@ void cmdline_print_usage() {
 }
 
 char cmdline_get_opt(int argc, char *argv[], int *option_index) {
-
     int index = *option_index;
     int i;
 
-    static struct options options_list[] = {
-            {"-h", "--help",        0, 'h'},
-            {"-l", "--ll-filename", 1, 'l'},
-            {"-p", "--ll-path",     1, 'p'},
-            {"-f", "--function",    1, 'f'},
-            {NULL, NULL,            0, '?'}
-    };
+    static struct options options_list[] = {{"-h", "--help",        0, 'h'},
+                                            {"-l", "--ll-filename", 1, 'l'},
+                                            {"-p", "--ll-path",     1, 'p'},
+                                            {"-f", "--function",    1, 'f'},
+                                            {NULL, NULL,            0, '?'}};
 
     if (index >= argc) {
         return -1;
     }
 
     for (i = 0; options_list[i].param_short; i++) {
-        if (!strcmp(options_list[i].param_long, argv[index]) ||
-            !strcmp(options_list[i].param_short, argv[index])) {
+        if (!strcmp(options_list[i].param_long, argv[index]) || !strcmp(options_list[i].param_short, argv[index])) {
             *option_index = index + options_list[i].step;
             return options_list[i].param_val;
         }
@@ -49,9 +41,8 @@ char cmdline_get_opt(int argc, char *argv[], int *option_index) {
     return options_list[i].param_val;
 }
 
-
 void cmdline_parse_arguments(int argc, char *argv[], cmdline_options_t *args_info) {
-    int c;    /* Character of the parsed option.  */
+    int c; /* Character of the parsed option.  */
     int option_index = 1;
     int int_value;
 
@@ -65,13 +56,13 @@ void cmdline_parse_arguments(int argc, char *argv[], cmdline_options_t *args_inf
     }
 
     while (1) {
-
         c = cmdline_get_opt(argc, argv, &option_index);
 
-        if (c == -1) break;    /* Exit from `while (1)' loop.  */
+        if (c == -1)
+            break; /* Exit from `while (1)' loop.  */
 
         switch (c) {
-            case 'h':    /* Print help and exit.  */
+            case 'h': /* Print help and exit.  */
 
                 cmdline_print_usage();
                 exit(0);
@@ -88,7 +79,7 @@ void cmdline_parse_arguments(int argc, char *argv[], cmdline_options_t *args_inf
                 args_info->ll_filename = argv[option_index];
                 break;
 
-            default:    /* bug: option not considered.  */
+            default: /* bug: option not considered.  */
                 fprintf(stderr, "%s: option unknown\n", argv[option_index]);
                 cmdline_print_usage();
                 exit(1);

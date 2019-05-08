@@ -51,15 +51,11 @@
 
 #include "CustomScalarReplacementOfAggregatesPass.hpp"
 
-static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold",
-                                                 llvm::cl::Hidden,
-                                                 llvm::cl::init(64),
-                                                 llvm::cl::desc(
-                                                         "Max amount of scalar types contained in a type for allowing disaggregation"));
+static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold", llvm::cl::Hidden,
+                                                 llvm::cl::init(64), llvm::cl::desc(
+                "Max amount of scalar types contained in a type for allowing disaggregation"));
 
-static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size",
-                                               llvm::cl::Hidden,
-                                               llvm::cl::init(32*8),
+static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(32 * 8),
                                                llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
@@ -904,7 +900,6 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
 
          for(llvm::Instruction& i : *bb)
          {
-
              if (inst_to_remove.count(&i) != 0) {
                  continue;
              }
@@ -1541,9 +1536,10 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element,
 #if __clang_major__ > 4 && !defined(__APPLE__)
-                                                                           DL->getAllocaAddrSpace(),
+                             DL->getAllocaAddrSpace(),
 #endif
-                                                                           new_alloca_name, alloca_inst);
+                                                                                                  new_alloca_name,
+                                                                                                  alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
                   }
@@ -1558,9 +1554,10 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
 #if __clang_major__ > 4 && !defined(__APPLE__)
-                                                                           DL->getAllocaAddrSpace(),
+                             DL->getAllocaAddrSpace(),
 #endif
-                                                                           new_alloca_name, alloca_inst);
+                                                                                                  new_alloca_name,
+                                                                                                  alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
                   }
@@ -1809,8 +1806,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
 #if __clang_major__ == 4 && !defined(__APPLE__)
             llvm::Argument* lastArg = &new_mock_function->getArgumentList().back();
 #else
-            llvm::Argument* lastArg=nullptr;
-            for (auto& arg : new_mock_function->args())
+             llvm::Argument *lastArg = nullptr;
+             for (auto &arg : new_mock_function->args())
             {
                lastArg = &arg;
             }
@@ -2101,7 +2098,6 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
       }
 
     public:
-
        // Check whether the argument is used by one store only (and no calls)
        static bool storedOnce(llvm::Argument *arg) {
            if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
@@ -2169,7 +2165,6 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
 
            for (auto check_stored_it = function->arg_begin();
                 check_stored_it != function->arg_end(); ++check_stored_it) {
-
                llvm::Argument *arg = &*check_stored_it;
 
                if (exp_idx_args_map[function].count(arg->getArgNo()) == 0) {
@@ -2211,7 +2206,6 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
             }
          }
       }
-
 
        if (arg_stored_once != nullptr) {
            // Get the store instruction
@@ -2418,16 +2412,13 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                {
                   for(auto& u : exp_g_var->uses())
                   {
-                        if(llvm::LoadInst* load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser()))
-                        {
-                           load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
-                           load_isnt->eraseFromParent();
-                        }
-                        else
-                        {
-                           llvm::errs() << "ERR: Non load use\n";
-                           exit(-1);
-                        }
+                      if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
+                          load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
+                          load_isnt->eraseFromParent();
+                      } else {
+                          llvm::errs() << "ERR: Non load use\n";
+                          exit(-1);
+                      }
                   }
                }
             }
@@ -2512,7 +2503,10 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
    if(aggregate->getType()->isPointerTy())
    {
       auto arg_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
-      if(aggregate->getType()->getPointerElementType()->isAggregateType() or (llvm::isa<llvm::GlobalValue>(aggregate) && llvm::dyn_cast<llvm::GlobalValue>(aggregate)->getValueType()->isAggregateType()) or (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
+       if (aggregate->getType()->getPointerElementType()->isAggregateType() or
+           (llvm::isa<llvm::GlobalValue>(aggregate) &&
+            llvm::dyn_cast<llvm::GlobalValue>(aggregate)->getValueType()->isAggregateType()) or
+           (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
       {
          std::vector<llvm::Type*> contained_types;
 
@@ -2598,4 +2592,3 @@ CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregat
 {
    return new CustomScalarReplacementOfAggregatesPass(kernel_name);
 }
-

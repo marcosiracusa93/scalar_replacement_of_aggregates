@@ -18,5 +18,4 @@ void print_usage();
 
 void cmdline_parse_arguments(int argc, char *argv[], cmdline_options_t *args_info);
 
-
-#endif //CMDLINE_OPTIONS_PARSER_H
+#endif // CMDLINE_OPTIONS_PARSER_H
