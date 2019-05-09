@@ -89,7 +89,7 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
    void spot_accessed_globals(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, std::set<llvm::GlobalVariable*>& accessed_globals);
 
-   void replicate_calls(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
+   void perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
 
    void expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
 
@@ -98,7 +98,7 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    void compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain);
 
    template <class I>
-   llvm::Value* get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size, const llvm::DataLayout* DL);
+   llvm::Value* get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size); //, const llvm::DataLayout* DL);
 
    llvm::Value* get_expanded_value(llvm::Value* base_address, signed long long offset, unsigned long long accessed_size, llvm::Argument* arg_if_any = nullptr, llvm::Use* use = nullptr);
 
@@ -109,6 +109,8 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    void expand_globals(std::set<llvm::GlobalVariable*> accessed_variables);
 
    void cleanup(std::map<llvm::Function*, std::set<unsigned long long>>& exp_idx_args_map, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::vector<llvm::Function*>& inner_functions);
+
+   std::vector<unsigned long long> get_op_arg_dims(llvm::Use* op_arg);
 };
 
 CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);

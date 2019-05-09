@@ -51,12 +51,9 @@
 
 #include "CustomScalarReplacementOfAggregatesPass.hpp"
 
-static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold", llvm::cl::Hidden,
-                                                 llvm::cl::init(64), llvm::cl::desc(
-                "Max amount of scalar types contained in a type for allowing disaggregation"));
+static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold", llvm::cl::Hidden, llvm::cl::init(64), llvm::cl::desc("Max amount of scalar types contained in a type for allowing disaggregation"));
 
-static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(32 * 8),
-                                               llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
+static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(32 * 8), llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 {
@@ -77,7 +74,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
    }
 
    // Compute the inner functions, replicating those on call sites and check assumptions
-   replicate_calls(kernel_function, inner_functions);
+   perform_function_versioning(kernel_function, inner_functions);
 
    // Spot the accessed global variables
    spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
@@ -137,7 +134,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use*
          }
       }
 
-      const llvm::DataLayout* DL = &containing_inst->getModule()->getDataLayout();
+      // const llvm::DataLayout* DL = &containing_inst->getModule()->getDataLayout();
 
       // Recursively go through the gepi chain up to the base address
       compute_base_and_offset(&gep_op->getOperandUse(gep_op->getPointerOperandIndex()), base_address, offset_chain, inst_chain);
@@ -336,7 +333,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 
          if(is_constant)
          {
-            const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
+            // const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
             unsigned long long accessed_size = DL->getTypeAllocSize(ptr_u->get()->getType()->getPointerElementType());
             llvm::Value* exp_val = get_expanded_value(base_address, constant_sum, accessed_size, nullptr, ptr_u);
 
@@ -386,7 +383,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
             llvm::Value* right_phi_operand = llvm::UndefValue::get(ptr_u->getUser()->getType());
             llvm::PHINode* last_phi_set = nullptr;
 
-            const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
+            // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
 
             // Create the if-then-else chain
             for(llvm::Type* exp_ty : expanded_types)
@@ -487,7 +484,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                unsigned long long exp_arg_u_idx = 0;
                for(llvm::Argument* exp_arg_u : exp_arg_it->second)
                {
-                  const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
+                  // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
                   unsigned long long accessed_size = DL->getTypeAllocSize(exp_arg_u->getType()->getPointerElementType());
 
                   auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
@@ -555,7 +552,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 }
 
 template <class I>
-llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size, const llvm::DataLayout* DL)
+llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size) //, const llvm::DataLayout* DL)
 {
    I* el_to_exp = base_address;
    signed long long offset_to_exp = offset;
@@ -671,15 +668,19 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* b
       }
    } while(true);
 
-    while (true) {
-        auto exp_it = map.find(el_to_exp);
+   while(true)
+   {
+      auto exp_it = map.find(el_to_exp);
 
-        if (exp_it != map.end() and exp_it->second.size() == 1) {
-            el_to_exp = exp_it->second.front();
-        } else {
-            break;
-        }
-    }
+      if(exp_it != map.end() and exp_it->second.size() == 1)
+      {
+         el_to_exp = exp_it->second.front();
+      }
+      else
+      {
+         break;
+      }
+   }
 
    return el_to_exp;
 }
@@ -801,7 +802,7 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::V
 
       GenGepiMap::gen_gepi_map(base_address, arg_if_any, use, gepi_map, exp_args_map, arg_size_map, gepi_name);
 
-      const llvm::DataLayout* DL = nullptr;
+      // const llvm::DataLayout* DL = nullptr;
       if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
       {
          DL = &alloca_inst->getModule()->getDataLayout();
@@ -821,7 +822,7 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::V
          exit(-1);
       }
 
-      llvm::Value* exp_el = get_element_at_offset(base_address, gepi_map, offset, accessed_size, DL);
+      llvm::Value* exp_el = get_element_at_offset(base_address, gepi_map, offset, accessed_size); //, DL);
 
       bool some_deletion = false;
       do
@@ -859,18 +860,18 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::V
    }
    else if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
    {
-      const llvm::DataLayout* DL = &alloca_inst->getModule()->getDataLayout();
-      return get_element_at_offset(alloca_inst, exp_allocas_map, offset, accessed_size, DL);
+      // const llvm::DataLayout* DL = &alloca_inst->getModule()->getDataLayout();
+      return get_element_at_offset(alloca_inst, exp_allocas_map, offset, accessed_size); //, DL);
    }
    else if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(base_address))
    {
-      const llvm::DataLayout* DL = &arg->getParent()->getParent()->getDataLayout();
-      return get_element_at_offset(arg, exp_args_map, offset, accessed_size, DL);
+      // const llvm::DataLayout* DL = &arg->getParent()->getParent()->getDataLayout();
+      return get_element_at_offset(arg, exp_args_map, offset, accessed_size); //, DL);
    }
    else if(llvm::GlobalVariable* g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address))
    {
-      const llvm::DataLayout* DL = &g_var->getParent()->getDataLayout();
-      return get_element_at_offset(g_var, exp_globals_map, offset, accessed_size, DL);
+      // const llvm::DataLayout* DL = &g_var->getParent()->getDataLayout();
+      return get_element_at_offset(g_var, exp_globals_map, offset, accessed_size); //, DL);
    }
    else
    {
@@ -900,9 +901,10 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
 
          for(llvm::Instruction& i : *bb)
          {
-             if (inst_to_remove.count(&i) != 0) {
-                 continue;
-             }
+            if(inst_to_remove.count(&i) != 0)
+            {
+               continue;
+            }
 
             llvm::BasicBlock* new_bb = nullptr;
             if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(&i))
@@ -1109,7 +1111,7 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* 
 
 } // end check_assumptions(...)
 
-void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions)
+void CustomScalarReplacementOfAggregatesPass::perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions)
 {
    // TODO: how about circular call graphs
    // TODO: how about memOps/intrinsic/extern functions
@@ -1204,211 +1206,9 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function* ke
       std::vector<std::vector<unsigned long long>> dimensions;
 
       // Get argument's dimensions
-      for(llvm::Value* op : call_inst->arg_operands())
+      for(unsigned long long op_idx = 0; op_idx < call_inst->getNumArgOperands(); ++op_idx)
       {
-         if(op->getType()->isPointerTy())
-         {
-            if(llvm::GEPOperator* gep_op_op = llvm::dyn_cast<llvm::GEPOperator>(op))
-            {
-               if(gep_op_op->getNumIndices() == 1)
-               {
-                  llvm::Value* ptr_op = gep_op_op->getPointerOperand();
-
-                  if(llvm::Argument* arg_ptr_op = llvm::dyn_cast<llvm::Argument>(ptr_op))
-                  {
-                     auto arg_size_it = arg_size_map.find(arg_ptr_op);
-
-                     if(arg_size_it != arg_size_map.end())
-                     {
-                        std::vector<unsigned long long> arg_dims = arg_size_it->second;
-
-                        unsigned long long idx = 0;
-                        if(llvm::ConstantInt* c_idx = llvm::dyn_cast<llvm::ConstantInt>(gep_op_op->getOperand(1)))
-                        {
-                           idx = (unsigned long long)c_idx->getSExtValue();
-                        }
-
-                        if(!arg_dims.empty())
-                        {
-                           unsigned long long new_arg_dims_front = arg_dims.front() - idx;
-                           if(new_arg_dims_front > 0)
-                           {
-                              arg_dims.front() = new_arg_dims_front;
-                           }
-                           else
-                           {
-                              llvm::errs() << "ERR: Dim out of range\n";
-                              gep_op_op->dump();
-                              gep_op_op->getOperand(1);
-                              exit(-1);
-                           }
-                        }
-                        else
-                        {
-                           llvm::errs() << "ERR: empty dims\n";
-                           gep_op_op->dump();
-                           gep_op_op->getOperand(1);
-                           exit(-1);
-                        }
-
-                        dimensions.push_back(arg_dims);
-                     }
-                     else
-                     {
-                        llvm::errs() << "ERR: Argument dimension not found\n";
-                        arg_ptr_op->dump();
-                        call_inst->dump();
-                        exit(-1);
-                     }
-                  }
-                  else
-                  {
-                     llvm::errs() << "ERR: Ptr op can be argument only for this gepi\n";
-                     gep_op_op->dump();
-                     gep_op_op->getOperand(1);
-                     exit(-1);
-                  }
-               }
-               else if(gep_op_op->hasIndices())
-               {
-                  llvm::Value* last_idx = gep_op_op->getOperand(gep_op_op->getNumOperands() - 1);
-                  llvm::Value* last_but_one_idx = gep_op_op->getOperand(gep_op_op->getNumOperands() - 2);
-
-                  llvm::Type* last_idx_type = nullptr;
-                  llvm::Type* last_but_one_idx_type = nullptr;
-                  unsigned long long op_idx = 0;
-                  for(llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op_op), GTE = llvm::gep_type_end(gep_op_op); gt_it != GTE; ++gt_it)
-                  {
-                     if(op_idx == gep_op_op->getNumIndices() - 1)
-                     {
-                        last_idx_type = gt_it.getIndexedType();
-                     }
-                     else if(op_idx == gep_op_op->getNumIndices() - 2)
-                     {
-                        last_but_one_idx_type = gt_it.getIndexedType();
-                     }
-
-                     ++op_idx;
-                  }
-
-                  llvm::Type* rec_ty = last_but_one_idx_type;
-                  std::vector<unsigned long long> gepi_dims;
-                  do
-                  {
-                     if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
-                     {
-                        gepi_dims.push_back(arr_ty->getArrayNumElements());
-                        rec_ty = arr_ty->getArrayElementType();
-                     }
-                     else
-                     {
-                        break;
-                     }
-                  } while(true);
-
-                  unsigned long long idx = 0;
-                  if(llvm::ConstantInt* c_idx = llvm::dyn_cast<llvm::ConstantInt>(last_idx))
-                  {
-                     idx = (unsigned long long)c_idx->getSExtValue();
-                  }
-
-                  if(!gepi_dims.empty())
-                  {
-                     unsigned long long new_arg_dims_front = gepi_dims.front() - idx;
-                     if(new_arg_dims_front > 0)
-                     {
-                        gepi_dims.front() = new_arg_dims_front;
-                     }
-                     else
-                     {
-                        llvm::errs() << "ERR: Dim out of range\n";
-                        gep_op_op->dump();
-                        gep_op_op->getOperand(1);
-                        exit(-1);
-                     }
-                  }
-                  else
-                  {
-                     gepi_dims.push_back(1);
-                  }
-
-                  dimensions.push_back(gepi_dims);
-               }
-               else
-               {
-                  llvm::errs() << "ERR: Gep op with no indices\n";
-                  gep_op_op->dump();
-                  exit(-1);
-               }
-            }
-            else if(llvm::Argument* arg_op = llvm::dyn_cast<llvm::Argument>(op))
-            {
-               auto arg_size_it = arg_size_map.find(arg_op);
-
-               if(arg_size_it != arg_size_map.end())
-               {
-                  std::vector<unsigned long long> arg_dims = arg_size_it->second;
-                  dimensions.push_back(arg_dims);
-               }
-               else
-               {
-                  llvm::errs() << "ERR: Argument dimension not found\n";
-                  arg_op->dump();
-                  call_inst->dump();
-                  exit(-1);
-               }
-            }
-            else if(llvm::AllocaInst* alloca_inst_op = llvm::dyn_cast<llvm::AllocaInst>(op))
-            {
-               llvm::Type* rec_ty = alloca_inst_op->getType()->getPointerElementType();
-               std::vector<unsigned long long> alloca_dims;
-               do
-               {
-                  if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
-                  {
-                     alloca_dims.push_back(arr_ty->getArrayNumElements());
-                     rec_ty = arr_ty->getArrayElementType();
-                  }
-                  else
-                  {
-                     break;
-                  }
-               } while(true);
-
-               if(alloca_dims.empty())
-               {
-                  alloca_dims.push_back(1);
-               }
-               dimensions.push_back(alloca_dims);
-            }
-            else if(llvm::GlobalVariable* g_var_op = llvm::dyn_cast<llvm::GlobalVariable>(op))
-            {
-               llvm::Type* rec_ty = g_var_op->getType()->getPointerElementType();
-               std::vector<unsigned long long> g_var_dims;
-               do
-               {
-                  if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
-                  {
-                     g_var_dims.push_back(arr_ty->getArrayNumElements());
-                     rec_ty = arr_ty->getArrayElementType();
-                  }
-                  else
-                  {
-                     break;
-                  }
-               } while(true);
-
-               if(g_var_dims.empty())
-               {
-                  g_var_dims.push_back(1);
-               }
-               dimensions.push_back(g_var_dims);
-            }
-         }
-         else
-         {
-            dimensions.push_back(std::vector<unsigned long long>());
-         }
+         dimensions.push_back(get_op_arg_dims(&call_inst->getArgOperandUse(op_idx)));
       }
 
       llvm::Function* synthesized_function = nullptr;
@@ -1464,8 +1264,237 @@ void CustomScalarReplacementOfAggregatesPass::replicate_calls(llvm::Function* ke
          }
       }
    }
+} // end perform_function_versioning(...)
 
-} // end replicate_calls(...)
+std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use)
+{
+   llvm::Value* op_arg = op_arg_use->get();
+
+   /*
+    * Compute the dimension of the value (supposed arg operand) returning:
+    *  - an empty vector in case of scalar and a vector
+    *  - a vector containing the operand dimensions in case of pointer
+    */
+
+   // If pointer return empty vector, proceed otherwise
+   if(op_arg->getType()->isPointerTy())
+   {
+      // Discriminate whether the operand is a gepi, argument, alloca or global
+      if(llvm::GEPOperator* gep_op_op = llvm::dyn_cast<llvm::GEPOperator>(op_arg))
+      {
+         // In case the gepi has one index only, the argument
+         if(gep_op_op->getNumIndices() == 1)
+         {
+            llvm::Value* ptr_op = gep_op_op->getPointerOperand();
+
+            // Which is supposed to be an argument (err otherwise)
+            if(llvm::Argument* arg_ptr_op = llvm::dyn_cast<llvm::Argument>(ptr_op))
+            {
+               auto arg_size_it = arg_size_map.find(arg_ptr_op);
+
+               // Which is supposed to have known size (since already processed)
+               if(arg_size_it != arg_size_map.end())
+               {
+                  std::vector<unsigned long long> arg_dims = arg_size_it->second;
+
+                  // In case of known constant index shorten the array accordingly
+                  unsigned long long idx = 0;
+                  if(llvm::ConstantInt* c_idx = llvm::dyn_cast<llvm::ConstantInt>(gep_op_op->getOperand(1)))
+                  {
+                     idx = (unsigned long long)c_idx->getSExtValue();
+                  }
+
+                  // Check if the argument size is not empty (as it should)
+                  if(!arg_dims.empty())
+                  {
+                     unsigned long long new_arg_dims_front = arg_dims.front() - idx;
+                     if(new_arg_dims_front > 0)
+                     {
+                        arg_dims.front() = new_arg_dims_front;
+                     }
+                     else
+                     {
+                        llvm::errs() << "ERR: Dim out of range\n";
+                        gep_op_op->dump();
+                        gep_op_op->getOperand(1);
+                        exit(-1);
+                     }
+                  }
+                  else
+                  {
+                     llvm::errs() << "ERR: empty dims\n";
+                     gep_op_op->dump();
+                     gep_op_op->getOperand(1);
+                     exit(-1);
+                  }
+
+                  return arg_dims;
+               }
+               else
+               {
+                  llvm::errs() << "ERR: Argument dimension not found\n";
+                  arg_ptr_op->dump();
+                  op_arg_use->getUser()->dump();
+                  exit(-1);
+               }
+            }
+            else
+            {
+               llvm::errs() << "ERR: Ptr op can be argument only for this gepi\n";
+               gep_op_op->dump();
+               gep_op_op->getOperand(1);
+               exit(-1);
+            }
+         }
+         else if(gep_op_op->hasIndices()) // Otherwise, if gepi has indices
+         {
+            // Spot the last and last but one index
+            llvm::Value* last_idx = gep_op_op->getOperand(gep_op_op->getNumOperands() - 1);
+            llvm::Value* last_but_one_idx = gep_op_op->getOperand(gep_op_op->getNumOperands() - 2);
+
+            // Get the last and last but one indexed type
+            llvm::Type* last_idx_type = nullptr;
+            llvm::Type* last_but_one_idx_type = nullptr;
+            unsigned long long op_idx = 0;
+            for(llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op_op), GTE = llvm::gep_type_end(gep_op_op); gt_it != GTE; ++gt_it)
+            {
+               if(op_idx == gep_op_op->getNumIndices() - 1)
+               {
+                  last_idx_type = gt_it.getIndexedType();
+               }
+               else if(op_idx == gep_op_op->getNumIndices() - 2)
+               {
+                  last_but_one_idx_type = gt_it.getIndexedType();
+               }
+
+               ++op_idx;
+            }
+
+            // Consider the last but one avoiding decay so
+            llvm::Type* rec_ty = last_but_one_idx_type;
+            std::vector<unsigned long long> gepi_dims;
+            do
+            {
+               if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+               {
+                  gepi_dims.push_back(arr_ty->getArrayNumElements());
+                  rec_ty = arr_ty->getArrayElementType();
+               }
+               else
+               {
+                  break;
+               }
+            } while(true);
+
+            unsigned long long idx = 0;
+            if(llvm::ConstantInt* c_idx = llvm::dyn_cast<llvm::ConstantInt>(last_idx))
+            {
+               idx = (unsigned long long)c_idx->getSExtValue();
+            }
+
+            if(!gepi_dims.empty())
+            {
+               unsigned long long new_arg_dims_front = gepi_dims.front() - idx;
+               if(new_arg_dims_front > 0)
+               {
+                  gepi_dims.front() = new_arg_dims_front;
+               }
+               else
+               {
+                  llvm::errs() << "ERR: Dim out of range\n";
+                  gep_op_op->dump();
+                  gep_op_op->getOperand(1);
+                  exit(-1);
+               }
+            }
+            else
+            {
+               gepi_dims.push_back(1);
+            }
+
+            return gepi_dims;
+         }
+         else
+         {
+            llvm::errs() << "ERR: Gep op with no indices\n";
+            gep_op_op->dump();
+            exit(-1);
+         }
+      }
+      else if(llvm::Argument* arg_op = llvm::dyn_cast<llvm::Argument>(op_arg))
+      {
+         auto arg_size_it = arg_size_map.find(arg_op);
+
+         if(arg_size_it != arg_size_map.end())
+         {
+            std::vector<unsigned long long> arg_dims = arg_size_it->second;
+            return arg_dims;
+         }
+         else
+         {
+            llvm::errs() << "ERR: Argument dimension not found\n";
+            arg_op->dump();
+            op_arg_use->getUser()->dump();
+            exit(-1);
+         }
+      }
+      else if(llvm::AllocaInst* alloca_inst_op = llvm::dyn_cast<llvm::AllocaInst>(op_arg))
+      {
+         llvm::Type* rec_ty = alloca_inst_op->getType()->getPointerElementType();
+         std::vector<unsigned long long> alloca_dims;
+         do
+         {
+            if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+            {
+               alloca_dims.push_back(arr_ty->getArrayNumElements());
+               rec_ty = arr_ty->getArrayElementType();
+            }
+            else
+            {
+               break;
+            }
+         } while(true);
+
+         if(alloca_dims.empty())
+         {
+            alloca_dims.push_back(1);
+         }
+         return alloca_dims;
+      }
+      else if(llvm::GlobalVariable* g_var_op = llvm::dyn_cast<llvm::GlobalVariable>(op_arg))
+      {
+         llvm::Type* rec_ty = g_var_op->getType()->getPointerElementType();
+         std::vector<unsigned long long> g_var_dims;
+         do
+         {
+            if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+            {
+               g_var_dims.push_back(arr_ty->getArrayNumElements());
+               rec_ty = arr_ty->getArrayElementType();
+            }
+            else
+            {
+               break;
+            }
+         } while(true);
+
+         if(g_var_dims.empty())
+         {
+            g_var_dims.push_back(1);
+         }
+         return g_var_dims;
+      }
+      else
+      {
+         llvm::errs() << "ERR: unknown element\n";
+         exit(-1);
+      }
+   }
+   else
+   {
+      return std::vector<unsigned long long>();
+   }
+}
 
 void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsage& AU) const
 {
@@ -1536,10 +1565,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element,
 #if __clang_major__ > 4 && !defined(__APPLE__)
-                             DL->getAllocaAddrSpace(),
+                                                                              DL->getAllocaAddrSpace(),
 #endif
-                                                                                                  new_alloca_name,
-                                                                                                  alloca_inst);
+                                                                              new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
                   }
@@ -1554,10 +1582,9 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
                      std::string new_alloca_name = alloca_inst->getName().str() + "." + std::to_string(idx);
                      llvm::AllocaInst* new_alloca_inst = new llvm::AllocaInst(/*new_alloca_type*/ element_ty,
 #if __clang_major__ > 4 && !defined(__APPLE__)
-                             DL->getAllocaAddrSpace(),
+                                                                              DL->getAllocaAddrSpace(),
 #endif
-                                                                                                  new_alloca_name,
-                                                                                                  alloca_inst);
+                                                                              new_alloca_name, alloca_inst);
 
                      exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
                   }
@@ -1584,7 +1611,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
 
       if(expansion_allowed(g_var))
       {
-          if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()->getPointerElementType()))
+         if(llvm::StructType* str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()->getPointerElementType()))
          {
             for(unsigned e_idx = 0; e_idx < str_ty->getStructNumElements(); ++e_idx)
             {
@@ -1604,8 +1631,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                exp_globals_map[g_var].push_back(new_g_var);
                globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
             }
-         } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
-                  g_var->getType()->getPointerElementType()))
+         }
+         else if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(g_var->getType()->getPointerElementType()))
          {
             for(unsigned e_idx = 0; e_idx < arr_ty->getArrayNumElements(); ++e_idx)
             {
@@ -1806,8 +1833,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
 #if __clang_major__ == 4 && !defined(__APPLE__)
             llvm::Argument* lastArg = &new_mock_function->getArgumentList().back();
 #else
-             llvm::Argument *lastArg = nullptr;
-             for (auto &arg : new_mock_function->args())
+            llvm::Argument* lastArg = nullptr;
+            for(auto& arg : new_mock_function->args())
             {
                lastArg = &arg;
             }
@@ -1979,7 +2006,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
                // Replace the old one
                new_call_inst->takeName(call_inst);
                call_inst->replaceAllUsesWith(new_call_inst);
-                inst_to_remove.insert(call_inst);
+               inst_to_remove.insert(call_inst);
             }
          }
       }
@@ -2098,30 +2125,43 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
       }
 
     public:
-       // Check whether the argument is used by one store only (and no calls)
-       static bool storedOnce(llvm::Argument *arg) {
-           if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType())) {
-               if (!ptr_ty->getElementType()->isAggregateType()) {
-                   if (arg->getNumUses() == 1) {
-                       llvm::Use &first_use = *arg->use_begin();
+      // Check whether the argument is used by one store only (and no calls)
+      static bool storedOnce(llvm::Argument* arg)
+      {
+         if(llvm::PointerType* ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType()))
+         {
+            if(!ptr_ty->getElementType()->isAggregateType())
+            {
+               if(arg->getNumUses() == 1)
+               {
+                  llvm::Use& first_use = *arg->use_begin();
 
-                       if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(first_use.getUser())) {
-                           return store_inst->getPointerOperand() == arg;
-                       } else {
-                           return false;
-                       }
-                   } else {
-                       return false;
-                   }
-               } else {
-                   return false;
+                  if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(first_use.getUser()))
+                  {
+                     return store_inst->getPointerOperand() == arg;
+                  }
+                  else
+                  {
+                     return false;
+                  }
                }
-           } else {
+               else
+               {
+                  return false;
+               }
+            }
+            else
+            {
                return false;
-           }
+            }
+         }
+         else
+         {
+            return false;
+         }
 
-           return true;
-       }
+         return true;
+      }
 
       static bool usedByArgsOnly_wrapper(llvm::Argument* arg)
       {
@@ -2159,28 +2199,33 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
       // Create the new function type based on the recomputed parameters.
       std::vector<llvm::Type*> arg_tys;
 
-       llvm::Argument *arg_stored_once = nullptr;
-       if (function->getReturnType()->isVoidTy()) {
-           unsigned long long num_args_stored_once = 0;
+      llvm::Argument* arg_stored_once = nullptr;
+      if(function->getReturnType()->isVoidTy())
+      {
+         unsigned long long num_args_stored_once = 0;
 
-           for (auto check_stored_it = function->arg_begin();
-                check_stored_it != function->arg_end(); ++check_stored_it) {
-               llvm::Argument *arg = &*check_stored_it;
+         for(auto check_stored_it = function->arg_begin(); check_stored_it != function->arg_end(); ++check_stored_it)
+         {
+            llvm::Argument* arg = &*check_stored_it;
 
-               if (exp_idx_args_map[function].count(arg->getArgNo()) == 0) {
-                   if (exp_args_map.count(arg) == 0) {
-                       if (CheckArg::storedOnce(arg)) {
-                           ++num_args_stored_once;
-                           arg_stored_once = arg;
-                       }
-                   }
+            if(exp_idx_args_map[function].count(arg->getArgNo()) == 0)
+            {
+               if(exp_args_map.count(arg) == 0)
+               {
+                  if(CheckArg::storedOnce(arg))
+                  {
+                     ++num_args_stored_once;
+                     arg_stored_once = arg;
+                  }
                }
-           }
+            }
+         }
 
-           if (num_args_stored_once > 1) {
-               arg_stored_once = nullptr;
-           }
-       }
+         if(num_args_stored_once > 1)
+         {
+            arg_stored_once = nullptr;
+         }
+      }
 
       for(auto& a : function->args())
       {
@@ -2189,47 +2234,58 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          {
             if(exp_args_map.count(&a) == 0)
             {
-                // If the argument is stored once
-                if (arg_stored_once == &a) {
-                    // Do not insert anything
-                } else {
-                    // If it is not only uesd as argument recursively
-                    if (!CheckArg::usedByArgsOnly_wrapper(&a)) {
-                        // Check whether recursively loaded only
-                        if (CheckArg::loadedOnly_wrapper(&a)) {
-                            arg_tys.push_back(a.getType()->getPointerElementType());
-                        } else {
-                            arg_tys.push_back(a.getType());
-                        }
-                    }
-                }
+               // If the argument is stored once
+               if(arg_stored_once == &a)
+               {
+                  // Do not insert anything
+               }
+               else
+               {
+                  // If it is not only uesd as argument recursively
+                  if(!CheckArg::usedByArgsOnly_wrapper(&a))
+                  {
+                     // Check whether recursively loaded only
+                     if(CheckArg::loadedOnly_wrapper(&a))
+                     {
+                        arg_tys.push_back(a.getType()->getPointerElementType());
+                     }
+                     else
+                     {
+                        arg_tys.push_back(a.getType());
+                     }
+                  }
+               }
             }
          }
       }
 
-       if (arg_stored_once != nullptr) {
-           // Get the store instruction
-           llvm::StoreInst *single_store_inst = llvm::dyn_cast<llvm::StoreInst>(
-                   arg_stored_once->use_begin()->getUser());
+      if(arg_stored_once != nullptr)
+      {
+         // Get the store instruction
+         llvm::StoreInst* single_store_inst = llvm::dyn_cast<llvm::StoreInst>(arg_stored_once->use_begin()->getUser());
 
-           for (llvm::BasicBlock &bb : *function) {
-               if (llvm::ReturnInst *ret_inst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator())) {
-                   llvm::ReturnInst *new_ret_inst = llvm::ReturnInst::Create(ret_inst->getContext(),
-                                                                             single_store_inst->getValueOperand(), &bb);
-                   ret_inst->eraseFromParent();
-               }
-           }
+         for(llvm::BasicBlock& bb : *function)
+         {
+            if(llvm::ReturnInst* ret_inst = llvm::dyn_cast<llvm::ReturnInst>(bb.getTerminator()))
+            {
+               llvm::ReturnInst* new_ret_inst = llvm::ReturnInst::Create(ret_inst->getContext(), single_store_inst->getValueOperand(), &bb);
+               ret_inst->eraseFromParent();
+            }
+         }
 
-           single_store_inst->eraseFromParent();
-       }
+         single_store_inst->eraseFromParent();
+      }
 
-       llvm::Type *return_type = nullptr;
-       if (arg_stored_once == nullptr) {
-           return_type = function->getReturnType();
-       } else {
-           return_type = arg_stored_once->getType()->getPointerElementType();
-       }
-       llvm::FunctionType *new_fun_ty = llvm::FunctionType::get(return_type, arg_tys, function->isVarArg());
+      llvm::Type* return_type = nullptr;
+      if(arg_stored_once == nullptr)
+      {
+         return_type = function->getReturnType();
+      }
+      else
+      {
+         return_type = arg_stored_once->getType()->getPointerElementType();
+      }
+      llvm::FunctionType* new_fun_ty = llvm::FunctionType::get(return_type, arg_tys, function->isVarArg());
 
       std::string new_fun_name = function->getName().str() + ".clean";
       llvm::Function* new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name, function->getParent());
@@ -2249,39 +2305,53 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          {
             if(exp_args_map.count(&*fun_arg_it) == 0)
             {
-                // If the argument is stored once
-                if (&*fun_arg_it == arg_stored_once) {
-                    unused_args.insert(&*fun_arg_it);
-                } else {
-                    // If it is not only uesd as argument recursively
-                    if (!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it)) {
-                        // Check whether recursively loaded only
-                        if (CheckArg::loadedOnly_wrapper(&*fun_arg_it)) {
-                            for (auto &use : fun_arg_it->uses()) {
-                                if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser())) {
-                                    load_inst->replaceAllUsesWith(&*new_fun_arg_it);
-                                    load_inst->eraseFromParent();
-                                } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser())) {
-                                    arg_to_arg.insert(std::make_pair(std::make_pair(call_inst, use.getOperandNo()),
-                                                                     &*new_fun_arg_it));
-                                } else {
-                                    llvm::errs() << "ERR\n";
-                                    exit(-1);
-                                }
-                            }
-
-                            scalar_args.insert(&*fun_arg_it);
-                            fun_arg_it->replaceAllUsesWith(llvm::UndefValue::get(fun_arg_it->getType()));
-                        } else {
-                            fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+               // If the argument is stored once
+               if(&*fun_arg_it == arg_stored_once)
+               {
+                  unused_args.insert(&*fun_arg_it);
+               }
+               else
+               {
+                  // If it is not only uesd as argument recursively
+                  if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it))
+                  {
+                     // Check whether recursively loaded only
+                     if(CheckArg::loadedOnly_wrapper(&*fun_arg_it))
+                     {
+                        for(auto& use : fun_arg_it->uses())
+                        {
+                           if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(use.getUser()))
+                           {
+                              load_inst->replaceAllUsesWith(&*new_fun_arg_it);
+                              load_inst->eraseFromParent();
+                           }
+                           else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser()))
+                           {
+                              arg_to_arg.insert(std::make_pair(std::make_pair(call_inst, use.getOperandNo()), &*new_fun_arg_it));
+                           }
+                           else
+                           {
+                              llvm::errs() << "ERR\n";
+                              exit(-1);
+                           }
                         }
-                        new_fun_arg_it->takeName(&*fun_arg_it);
-                        ++new_fun_arg_it;
-                    } else {
-                        unused_args.insert(&*fun_arg_it);
-                        fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
-                    }
-                }
+
+                        scalar_args.insert(&*fun_arg_it);
+                        fun_arg_it->replaceAllUsesWith(llvm::UndefValue::get(fun_arg_it->getType()));
+                     }
+                     else
+                     {
+                        fun_arg_it->replaceAllUsesWith(&*new_fun_arg_it);
+                     }
+                     new_fun_arg_it->takeName(&*fun_arg_it);
+                     ++new_fun_arg_it;
+                  }
+                  else
+                  {
+                     unused_args.insert(&*fun_arg_it);
+                     fun_arg_it->replaceAllUsesWith(llvm::Constant::getNullValue(fun_arg_it->getType()));
+                  }
+               }
             }
             else
             {
@@ -2347,14 +2417,17 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
             std::string new_call_name = call_inst->getName().str() + ".clean";
             llvm::CallInst* new_call_inst = llvm::CallInst::Create(new_function, call_ops, (call_inst->hasName() ? new_call_name : ""), call_inst);
 
-             if (arg_stored_once != nullptr) {
-                 llvm::Value *arg_op = call_inst->getOperand(arg_stored_once->getArgNo());
+            if(arg_stored_once != nullptr)
+            {
+               llvm::Value* arg_op = call_inst->getOperand(arg_stored_once->getArgNo());
 
-                 llvm::StoreInst *new_store = new llvm::StoreInst(new_call_inst, arg_op);
-                 new_store->insertAfter(new_call_inst);
-             } else {
-                 call_inst->replaceAllUsesWith(new_call_inst);
-             }
+               llvm::StoreInst* new_store = new llvm::StoreInst(new_call_inst, arg_op);
+               new_store->insertAfter(new_call_inst);
+            }
+            else
+            {
+               call_inst->replaceAllUsesWith(new_call_inst);
+            }
 
             call_inst->eraseFromParent();
          }
@@ -2412,13 +2485,16 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                {
                   for(auto& u : exp_g_var->uses())
                   {
-                      if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser())) {
-                          load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
-                          load_isnt->eraseFromParent();
-                      } else {
-                          llvm::errs() << "ERR: Non load use\n";
-                          exit(-1);
-                      }
+                     if(llvm::LoadInst* load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser()))
+                     {
+                        load_isnt->replaceAllUsesWith(exp_g_var->getInitializer());
+                        load_isnt->eraseFromParent();
+                     }
+                     else
+                     {
+                        llvm::errs() << "ERR: Non load use\n";
+                        exit(-1);
+                     }
                   }
                }
             }
@@ -2503,10 +2579,8 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
    if(aggregate->getType()->isPointerTy())
    {
       auto arg_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
-       if (aggregate->getType()->getPointerElementType()->isAggregateType() or
-           (llvm::isa<llvm::GlobalValue>(aggregate) &&
-            llvm::dyn_cast<llvm::GlobalValue>(aggregate)->getValueType()->isAggregateType()) or
-           (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
+      if(aggregate->getType()->getPointerElementType()->isAggregateType() or (llvm::isa<llvm::GlobalValue>(aggregate) && llvm::dyn_cast<llvm::GlobalValue>(aggregate)->getValueType()->isAggregateType()) or
+         (arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1))
       {
          std::vector<llvm::Type*> contained_types;
 
@@ -2552,6 +2626,7 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
             }
          }
 
+         /*
          const llvm::DataLayout* DL = nullptr;
          if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(aggregate))
          {
@@ -2565,8 +2640,8 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
          {
             DL = &alloca_inst->getModule()->getDataLayout();
          }
-
-          unsigned long long allocated_size = DL->getTypeAllocSize(ptr_ty);
+         */
+         unsigned long long allocated_size = DL->getTypeAllocSize(ptr_ty);
 
          auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
          if(size_it != arg_size_map.end() and !size_it->second.empty())
@@ -2575,7 +2650,7 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
             allocated_size *= size_it->second.front();
          }
 
-          return non_aggregates_types <= MaxNumScalarTypes and allocated_size <= MaxTypeByteSize;
+         return non_aggregates_types <= MaxNumScalarTypes and allocated_size <= MaxTypeByteSize;
       }
       else
       {
