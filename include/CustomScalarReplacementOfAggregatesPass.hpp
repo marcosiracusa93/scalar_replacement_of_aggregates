@@ -55,6 +55,8 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    char ID = 0;
 
  private:
+   unsigned short working_mode = 0;
+
    const std::string kernel_name;
 
    inst_set_ty inst_to_remove;
@@ -89,7 +91,7 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
    void spot_accessed_globals(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, std::set<llvm::GlobalVariable*>& accessed_globals);
 
-   void perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
+   void compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning);
 
    void expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
 

@@ -62,19 +62,40 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
    assert(kernel_function != nullptr && "Unknown kernel function!");
 
+   /*
+    * bit 0 : function versioning
+    * bit 1 : basic sroa (only contant accesses in function)
+    * bit 2 : aggressive sroa (constan and variable accesses in function)
+    */
+   working_mode = 2;
+
    // Functions contained by the kernel and the callees
    std::vector<llvm::Function*> inner_functions;
 
    // Global variables accessed by the inner functions
    std::set<llvm::GlobalVariable*> accessed_globals;
 
+   if(working_mode == 0)
+   {
+      return false;
+   }
+   // If only function versioning to be performed
+   if(working_mode == 1)
+   {
+      // Compute the inner functions, replicating those on call sites and check assumptions
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true);
+      return true;
+   }
+
+   // Otherwise check assumptions
    if(!check_assumptions(kernel_function))
    {
       return false;
    }
 
-   // Compute the inner functions, replicating those on call sites and check assumptions
-   perform_function_versioning(kernel_function, inner_functions);
+   // Perform function versioning or compute arguments
+   bool perform_function_versioning = (bool)(working_mode & 0x1);
+   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, perform_function_versioning);
 
    // Spot the accessed global variables
    spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
@@ -1111,7 +1132,7 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* 
 
 } // end check_assumptions(...)
 
-void CustomScalarReplacementOfAggregatesPass::perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions)
+void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning)
 {
    // TODO: how about circular call graphs
    // TODO: how about memOps/intrinsic/extern functions
@@ -1221,27 +1242,48 @@ void CustomScalarReplacementOfAggregatesPass::perform_function_versioning(llvm::
       }
       else
       {
-         // Clone the function
-         llvm::ValueToValueMapTy VMap;
-         llvm::ClonedCodeInfo* code_info = new llvm::ClonedCodeInfo();
-         llvm::Function* cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
-         std::string new_name = called_function->getName().str() + "_";
-         for(auto d1 : dimensions)
+         if(perform_function_versioning)
          {
-            for(auto d2 : d1)
+            // Clone the function
+            llvm::ValueToValueMapTy VMap;
+            llvm::ClonedCodeInfo* code_info = new llvm::ClonedCodeInfo();
+            llvm::Function* cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
+            std::string new_name = called_function->getName().str() + "_";
+            for(auto d1 : dimensions)
             {
-               new_name.append(std::to_string(d2) + ".");
+               for(auto d2 : d1)
+               {
+                  new_name.append(std::to_string(d2) + ".");
+               }
+               new_name.append(".");
             }
-            new_name.append(".");
+
+            cloned_function->setName(new_name);
+
+            synthesized_function = cloned_function;
          }
-
-         cloned_function->setName(new_name);
-
-         synthesized_function = cloned_function;
+         else
+         {
+            synthesized_function = called_function;
+         }
 
          for(auto& arg : synthesized_function->args())
          {
-            arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
+            auto size_it = arg_size_map.find(&arg);
+            if(size_it != arg_size_map.end())
+            {
+               std::vector<unsigned long long> v1 = size_it->second;
+               std::vector<unsigned long long> v2 = dimensions.at(arg.getArgNo());
+               if(v1 != v2)
+               {
+                  llvm::errs() << "ERR: wrong versioning\n";
+                  exit(-1);
+               }
+            }
+            else
+            {
+               arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
+            }
          }
 
          function_dim_map.insert(std::make_pair(FunctionDimKey(called_function, dimensions), synthesized_function));
@@ -1249,8 +1291,10 @@ void CustomScalarReplacementOfAggregatesPass::perform_function_versioning(llvm::
          inner_functions.push_back(synthesized_function);
       }
 
-      // Replace the call site
-      call_inst->setCalledFunction(synthesized_function);
+      if(perform_function_versioning)
+      {
+         call_inst->setCalledFunction(synthesized_function);
+      }
 
       // add to the vector function calls inside the cloned function
       for(llvm::BasicBlock& bb : *synthesized_function)
@@ -1264,7 +1308,7 @@ void CustomScalarReplacementOfAggregatesPass::perform_function_versioning(llvm::
          }
       }
    }
-} // end perform_function_versioning(...)
+} // end compute_op_dims_and_perform_function_versioning(...)
 
 std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use)
 {
