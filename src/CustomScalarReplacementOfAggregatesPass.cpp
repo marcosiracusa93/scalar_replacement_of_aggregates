@@ -2320,7 +2320,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
 
          if(num_args_stored_once > 1)
          {
-            arg_stored_once = nullptr;
+             //arg_stored_once = nullptr;
          }
       }
 
