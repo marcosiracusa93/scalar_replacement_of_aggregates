@@ -67,7 +67,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
     * bit 1 : basic sroa (only contant accesses in function)
     * bit 2 : aggressive sroa (constan and variable accesses in function)
     */
-   working_mode = 2;
+   working_mode = 0x2 + 0x1;
 
    // Functions contained by the kernel and the callees
    std::vector<llvm::Function*> inner_functions;
@@ -1304,6 +1304,52 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&i))
             {
                call_inst_vec.push_back(call_inst);
+            }
+         }
+      }
+   }
+
+   for(llvm::Function* function : inner_functions)
+   {
+      for(llvm::Argument& arg : function->args())
+      {
+         if(arg.getType()->isIntegerTy())
+         {
+            bool can_propagate = true;
+            llvm::Value* op_arg = nullptr;
+
+            for(llvm::Use& use : function->uses())
+            {
+               if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser()))
+               {
+                  llvm::Value* op = call_inst->getOperand(arg.getArgNo());
+                  if(op_arg == nullptr)
+                  {
+                     op_arg = op;
+                  }
+                  else
+                  {
+                     if(op_arg != op)
+                     {
+                        can_propagate = false;
+                        break;
+                     }
+                     else
+                     {
+                        // Nothing to do
+                     }
+                  }
+               }
+               else
+               {
+                  llvm::errs() << "ERR: use not call\n";
+                  exit(-1);
+               }
+            }
+
+            if(can_propagate and op_arg != nullptr)
+            {
+               arg.replaceAllUsesWith(op_arg);
             }
          }
       }
