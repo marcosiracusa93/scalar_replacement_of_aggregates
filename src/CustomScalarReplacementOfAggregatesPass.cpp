@@ -1320,9 +1320,16 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
 
             for(llvm::Use& use : function->uses())
             {
+               if(!can_propagate)
+                  break;
                if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser()))
                {
                   llvm::Value* op = call_inst->getOperand(arg.getArgNo());
+                  if(!llvm::isa<llvm::ConstantInt>(op))
+                  {
+                     can_propagate = false;
+                     break;
+                  }
                   if(op_arg == nullptr)
                   {
                      op_arg = op;
