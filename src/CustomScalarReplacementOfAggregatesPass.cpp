@@ -67,7 +67,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
     * bit 1 : basic sroa (only contant accesses in function)
     * bit 2 : aggressive sroa (constan and variable accesses in function)
     */
-   working_mode = 0x2 + 0x1;
+   working_mode = 0x4 + 0x0;
 
    // Functions contained by the kernel and the callees
    std::vector<llvm::Function*> inner_functions;
@@ -87,16 +87,20 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       return true;
    }
 
+   // Perform function versioning or compute arguments
+   bool perform_function_versioning = (bool)(working_mode & 0x1);
+   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, perform_function_versioning);
+
+   if(working_mode & 0x4)
+   {
+      inline_wrappers(kernel_function, inner_functions);
+   }
+
    // Otherwise check assumptions
    if(!check_assumptions(kernel_function))
    {
       return false;
    }
-
-   // Perform function versioning or compute arguments
-   bool perform_function_versioning = (bool)(working_mode & 0x1);
-   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, perform_function_versioning);
-
    // Spot the accessed global variables
    spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
 
@@ -396,6 +400,79 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, bytes_sum, offset, name, user_inst);
             }
 
+            llvm::Function* wrapper_function = nullptr;
+            llvm::CallInst* wrapper_call = nullptr;
+            llvm::ReturnInst* ret = nullptr;
+            bool wrap_non_const = !(working_mode & 0x4);
+            if(wrap_non_const)
+            {
+               unsigned long long type_count = 0;
+               for(llvm::Type* exp_ty : expanded_types)
+               {
+                  // llvm::Type *bitcast_type = nullptr;
+                  llvm::Type* ty1 = exp_ty;
+                  llvm::Type* ty2 = ptr_u->get()->getType()->getPointerElementType();
+                  if(ty1->getTypeID() == ty2->getTypeID() and DL->getTypeAllocSize(ty1) > DL->getTypeAllocSize(ty2))
+                  {
+                     // bitcast_type = ty2;
+                     llvm::errs() << "ERR: bitcast brokes anything";
+                  }
+                  else if(ty1 != ty2)
+                  {
+                     continue;
+                  }
+
+                  ++type_count;
+               }
+
+               llvm::Type* return_type = nullptr;
+               llvm::Type* ptr_type = nullptr;
+               if(llvm::LoadInst* inst = llvm::dyn_cast<llvm::LoadInst>(user_inst))
+               {
+                  return_type = inst->getPointerOperand()->getType()->getPointerElementType();
+                  ptr_type = inst->getPointerOperand()->getType();
+               }
+               else if(llvm::StoreInst* inst = llvm::dyn_cast<llvm::StoreInst>(user_inst))
+               {
+                  return_type = llvm::Type::getVoidTy(inst->getContext());
+                  ptr_type = inst->getPointerOperand()->getType();
+               }
+
+               std::vector<llvm::Type*> param_tys = std::vector<llvm::Type*>(type_count, ptr_type);
+               llvm::Type* offset_ty = bytes_sum->getType();
+               param_tys.insert(param_tys.begin(), offset_ty);
+
+               llvm::FunctionType* function_ty = llvm::FunctionType::get(return_type, param_tys, false);
+               wrapper_function = llvm::Function::Create(function_ty, llvm::GlobalValue::LinkageTypes::InternalLinkage, wrapper_function_name, user_inst->getModule());
+               wrapper_function->addFnAttr(llvm::Attribute::NoInline);
+               wrapper_function->addFnAttr(llvm::Attribute::OptimizeNone);
+
+               llvm::BasicBlock* bb = llvm::BasicBlock::Create(user_inst->getContext(), "", wrapper_function);
+               if(return_type->isVoidTy())
+               {
+                  ret = llvm::ReturnInst::Create(user_inst->getContext(), bb);
+               }
+               else
+               {
+                  ret = llvm::ReturnInst::Create(user_inst->getContext(), llvm::UndefValue::get(return_type), bb);
+               }
+               llvm::Instruction* new_inst = user_inst->clone();
+               new_inst->insertBefore(ret);
+
+               std::vector<llvm::Value*> args = std::vector<llvm::Value*>(type_count, llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
+               args.insert(args.begin(), bytes_sum);
+
+               wrapper_call = llvm::CallInst::Create(wrapper_function, args, (return_type->isVoidTy() ? "" : "wrapper_call"), user_inst);
+
+               if(!return_type->isVoidTy())
+               {
+                  user_inst->replaceAllUsesWith(wrapper_call);
+               }
+               inst_to_remove.insert(user_inst);
+
+               user_inst = new_inst;
+            }
+
             // Keep track on where to split
             llvm::Instruction* split_before = user_inst;
 
@@ -406,6 +483,17 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 
             // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
 
+            llvm::Function::arg_iterator arg_it;
+            llvm::Instruction::op_iterator op_it;
+            if(wrapper_function != nullptr)
+            {
+               arg_it = wrapper_function->arg_begin();
+               op_it = wrapper_call->op_begin();
+
+               arg_it->setName("offset");
+               ++arg_it;
+               ++op_it;
+            }
             // Create the if-then-else chain
             for(llvm::Type* exp_ty : expanded_types)
             {
@@ -429,7 +517,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 
                llvm::ConstantInt* bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
                std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
-               llvm::CmpInst* cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp, llvm::CmpInst::Predicate::ICMP_EQ, bytes_sum, bytes_c, cmp_name, split_before);
+               llvm::Value* offset = (wrap_non_const ? &*wrapper_function->arg_begin() : bytes_sum);
+               llvm::CmpInst* cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp, llvm::CmpInst::Predicate::ICMP_EQ, offset, bytes_c, cmp_name, split_before);
 
                llvm::TerminatorInst* then_term;
                llvm::TerminatorInst* else_term;
@@ -449,6 +538,17 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                if(llvm::LoadInst* load_isnt = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser()))
                {
                   llvm::PHINode* phi_node = llvm::PHINode::Create(ptr_u->get()->getType()->getPointerElementType(), expanded_types.size(), ptr_u->getUser()->getName().str() + ".phi", split_before);
+
+                  if(ret != nullptr)
+                  {
+                     if(!ret->getReturnValue()->getType()->isVoidTy())
+                     {
+                        if(llvm::isa<llvm::UndefValue>(ret->getReturnValue()))
+                        {
+                           ret->setOperand(0, phi_node);
+                        }
+                     }
+                  }
 
                   phi_node->addIncoming(new_inst, then_term->getParent());
                   phi_node->addIncoming(llvm::UndefValue::get(new_inst->getType()), else_term->getParent());
@@ -472,7 +572,21 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                    llvm::BitCastInst *bitcast_inst = new llvm::BitCastInst(exp_val, bitcast_type, bitcast_name, new_inst);
                    exp_val = bitcast_inst;
                }*/
-               new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
+
+               if(wrap_non_const)
+               {
+                  std::string arg_name = "arg" + std::to_string(arg_it->getArgNo());
+                  arg_it->setName(arg_name);
+                  wrapper_call->setOperand(op_it->getOperandNo(), exp_val);
+
+                  new_inst->setOperand(ptr_u->getOperandNo(), &*arg_it);
+                  ++arg_it;
+                  ++op_it;
+               }
+               else
+               {
+                  new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
+               }
 
                split_before = else_term;
             }
@@ -1224,6 +1338,11 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
          continue;
       }
 
+      if(called_function->getName().str() == wrapper_function_name)
+      {
+         continue;
+      }
+
       std::vector<std::vector<unsigned long long>> dimensions;
 
       // Get argument's dimensions
@@ -1584,6 +1703,8 @@ std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_
       else
       {
          llvm::errs() << "ERR: unknown element\n";
+         op_arg_use->get()->dump();
+         op_arg_use->getUser()->dump();
          exit(-1);
       }
    }
@@ -2189,6 +2310,11 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                      }
                      else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser()))
                      {
+                        if(call_inst->getCalledFunction()->getName().str() == wrapper_function_name)
+                        {
+                           return false;
+                        }
+
                         llvm::Function::arg_iterator arg_it = call_inst->getCalledFunction()->arg_begin();
 
                         for(unsigned long long i = 0; i < use.getOperandNo(); i++)
@@ -2344,7 +2470,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                else
                {
                   // If it is not only uesd as argument recursively
-                  if(!CheckArg::usedByArgsOnly_wrapper(&a))
+                  if(!CheckArg::usedByArgsOnly_wrapper(&a) or true)
                   {
                      // Check whether recursively loaded only
                      if(CheckArg::loadedOnly_wrapper(&a))
@@ -2415,7 +2541,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                else
                {
                   // If it is not only uesd as argument recursively
-                  if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it))
+                  if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it) or true)
                   {
                      // Check whether recursively loaded only
                      if(CheckArg::loadedOnly_wrapper(&*fun_arg_it))
@@ -2763,6 +2889,42 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
    {
       return false;
    }
+}
+
+void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions)
+{
+   inner_functions.insert(inner_functions.begin(), kernel_function);
+
+   for(llvm::Function* f : inner_functions)
+   {
+   process_function:
+      for(llvm::BasicBlock& bb : *f)
+      {
+         for(llvm::Instruction& inst : bb)
+         {
+            if(llvm::CallInst* call_isnt = llvm::dyn_cast<llvm::CallInst>(&inst))
+            {
+               llvm::errs() << "F: " << f->getName() << " " << call_isnt->getCalledFunction()->getName() << " " << wrapper_function_name << "\n";
+               if(call_isnt->getCalledFunction()->getName().str() == wrapper_function_name)
+               {
+                  call_isnt->getCalledFunction()->removeFnAttr(llvm::Attribute::NoInline);
+                  call_isnt->getCalledFunction()->removeFnAttr(llvm::Attribute::OptimizeNone);
+                  llvm::InlineFunctionInfo IFI = llvm::InlineFunctionInfo();
+                  if(!llvm::InlineFunction(call_isnt, IFI))
+                  {
+                     llvm::errs() << "ERR: Cannot inline wrapper\n";
+                     exit(-1);
+                  }
+
+                  goto process_function;
+                  call_isnt->getCalledFunction()->eraseFromParent();
+               }
+            }
+         }
+      }
+   }
+
+   inner_functions.erase(inner_functions.begin());
 }
 
 CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name)

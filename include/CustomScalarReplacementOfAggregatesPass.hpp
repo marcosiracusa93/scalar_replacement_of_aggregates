@@ -49,6 +49,8 @@
 typedef std::set<llvm::Instruction*> inst_set_ty;
 typedef std::map<llvm::Function*, std::set<llvm::AllocaInst*>> fun_to_alloca_map_ty;
 
+#define wrapper_function_name "__non_const_wrapper__"
+
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 {
  public:
@@ -92,6 +94,8 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    void spot_accessed_globals(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, std::set<llvm::GlobalVariable*>& accessed_globals);
 
    void compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning);
+
+   void inline_wrappers(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
 
    void expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
 
