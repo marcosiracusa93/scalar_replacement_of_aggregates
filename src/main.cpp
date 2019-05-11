@@ -16,6 +16,8 @@
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include "llvm/IR/Verifier.h"
+
 #include "cmdline_options_parser.hpp"
 
 unsigned long getTime()
@@ -89,6 +91,7 @@ int main(int argc, char** argv)
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
       passManager->add(createCustomScalarReplacementOfAggregatesPass(args_info.target_function));
+      passManager->add(llvm::createVerifierPass());
       // passManager->add(llvm::createDeadCodeEliminationPass());
       // passManager->add(llvm::createPromoteMemoryToRegisterPass());
 
