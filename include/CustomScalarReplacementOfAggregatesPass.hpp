@@ -51,13 +51,20 @@ typedef std::map<llvm::Function*, std::set<llvm::AllocaInst*>> fun_to_alloca_map
 
 #define wrapper_function_name "__non_const_wrapper__"
 
+enum SROA_phase
+{
+   SROA_functionVersioning,
+   SROA_disaggregation,
+   SROA_wrapperInlining
+};
+
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 {
  public:
    char ID = 0;
 
  private:
-   unsigned short working_mode = 0;
+   unsigned short sroa_phase = 0;
 
    const std::string kernel_name;
 
@@ -78,7 +85,7 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    explicit CustomScalarReplacementOfAggregatesPass(const std::string& kernel_name, char& _ID) : llvm::ModulePass(_ID), kernel_name(kernel_name), DL(nullptr)
    {
    }
-   explicit CustomScalarReplacementOfAggregatesPass(const std::string& kernel_name) : llvm::ModulePass(ID), kernel_name(kernel_name), DL(nullptr)
+   explicit CustomScalarReplacementOfAggregatesPass(const std::string& kernel_name, unsigned short sroa_phase) : llvm::ModulePass(ID), kernel_name(kernel_name), sroa_phase(sroa_phase), DL(nullptr)
    {
    }
 
@@ -119,6 +126,9 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    std::vector<unsigned long long> get_op_arg_dims(llvm::Use* op_arg);
 };
 
-CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);
+// CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);
+CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name);
+CustomScalarReplacementOfAggregatesPass* createSROADisaggregationPass(std::string kernel_name);
+CustomScalarReplacementOfAggregatesPass* createSROAWrapperInliningPass(std::string kernel_name);
 
 #endif // SCALAR_REPLACEMENT_OF_AGGREGATES_CUSTOMSCALARREPLACEMENTOFAGGREGATESPASS_HPP

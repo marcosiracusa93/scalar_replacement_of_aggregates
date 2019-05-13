@@ -62,66 +62,79 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
    assert(kernel_function != nullptr && "Unknown kernel function!");
 
-   /*
-    * bit 0 : function versioning
-    * bit 1 : basic sroa (only contant accesses in function)
-    * bit 2 : aggressive sroa (constan and variable accesses in function)
-    */
-   working_mode = 0x4 + 0x0;
-
-   // Functions contained by the kernel and the callees
-   std::vector<llvm::Function*> inner_functions;
-
-   // Global variables accessed by the inner functions
-   std::set<llvm::GlobalVariable*> accessed_globals;
-
-   if(working_mode == 0)
+   if(sroa_phase == SROA_functionVersioning)
    {
-      return false;
-   }
-   // If only function versioning to be performed
-   if(working_mode == 1)
-   {
+      // Functions contained by the kernel and the callees
+      std::vector<llvm::Function*> inner_functions;
+
       // Compute the inner functions, replicating those on call sites and check assumptions
       compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true);
+
       return true;
    }
 
-   // Perform function versioning or compute arguments
-   bool perform_function_versioning = (bool)(working_mode & 0x1);
-   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, perform_function_versioning);
-
-   if(working_mode & 0x4)
+   if(sroa_phase == SROA_disaggregation)
    {
+      // Functions contained by the kernel and the callees
+      std::vector<llvm::Function*> inner_functions;
+
+      // Global variables accessed by the inner functions
+      std::set<llvm::GlobalVariable*> accessed_globals;
+
+      // Compute the inner functions, replicating those on call sites and check assumptions
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false);
+
+      // Otherwise check assumptions
+      if(!check_assumptions(kernel_function))
+      {
+         return false;
+      }
+
+      // Spot the accessed global variables
+      spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
+
+      // Expand the accessed global variables
+      expand_globals(accessed_globals);
+
+      // Map specifying the expanded arguments for each function
+      std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
+      // Map linking any function with its modified version
+      std::map<llvm::Function*, llvm::Function*> exp_fun_map;
+
+      // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
+      expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, kernel_function);
+
+      // Expand all the loads/stores/calls
+      expand_ptrs(kernel_function, inner_functions);
+
+      // Cleanup the remaining code
+      cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
+
+      return true;
+   }
+
+   if(sroa_phase == SROA_wrapperInlining)
+   {
+      // Map specifying the expanded arguments for each function
+      std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
+
+      // Map linking any function with its modified version
+      std::map<llvm::Function*, llvm::Function*> exp_fun_map;
+
+      // Functions contained by the kernel and the callees
+      std::vector<llvm::Function*> inner_functions;
+
+      // Compute the inner functions, replicating those on call sites and check assumptions
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false);
+
       inline_wrappers(kernel_function, inner_functions);
+
+      cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
+
+      return true;
    }
 
-   // Otherwise check assumptions
-   if(!check_assumptions(kernel_function))
-   {
-      return false;
-   }
-   // Spot the accessed global variables
-   spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
-
-   // Expand the accessed global variables
-   expand_globals(accessed_globals);
-
-   // Map specifying the expanded arguments for each function
-   std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
-   // Map linking any function with its modified version
-   std::map<llvm::Function*, llvm::Function*> exp_fun_map;
-
-   // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
-   expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, kernel_function);
-
-   // Expand all the loads/stores/calls
-   expand_ptrs(kernel_function, inner_functions);
-
-   // Cleanup the remaining code
-   cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
-
-   return true;
+   return false;
 }
 
 void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain)
@@ -403,7 +416,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
             llvm::Function* wrapper_function = nullptr;
             llvm::CallInst* wrapper_call = nullptr;
             llvm::ReturnInst* ret = nullptr;
-            bool wrap_non_const = !(working_mode & 0x4);
+            bool wrap_non_const = true;
             if(wrap_non_const)
             {
                unsigned long long type_count = 0;
@@ -1326,6 +1339,8 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
 
    std::map<FunctionDimKey, llvm::Function*, CmpFunDim> function_dim_map;
 
+   std::set<llvm::Function*> called_cloned_functions;
+
    // Go through the vector (which may grow at any iteration)
    for(unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx)
    {
@@ -1338,7 +1353,8 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
          continue;
       }
 
-      if(called_function->getName().str() == wrapper_function_name)
+      bool is_wrapper = strncmp(called_function->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
+      if(is_wrapper)
       {
          continue;
       }
@@ -1367,6 +1383,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             llvm::ValueToValueMapTy VMap;
             llvm::ClonedCodeInfo* code_info = new llvm::ClonedCodeInfo();
             llvm::Function* cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
+            called_cloned_functions.insert(called_function);
             std::string new_name = called_function->getName().str() + "_";
             for(auto d1 : dimensions)
             {
@@ -1426,6 +1443,13 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             }
          }
       }
+   }
+
+   for(auto f_it = called_cloned_functions.begin(); f_it != called_cloned_functions.end(); ++f_it)
+   {
+      llvm::Function* f = *f_it;
+
+      f->eraseFromParent();
    }
 
    for(llvm::Function* function : inner_functions)
@@ -2310,7 +2334,8 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                      }
                      else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(use.getUser()))
                      {
-                        if(call_inst->getCalledFunction()->getName().str() == wrapper_function_name)
+                        bool is_wrapper = strncmp(call_inst->getCalledFunction()->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
+                        if(is_wrapper)
                         {
                            return false;
                         }
@@ -2566,6 +2591,9 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
 
                         scalar_args.insert(&*fun_arg_it);
                         fun_arg_it->replaceAllUsesWith(llvm::UndefValue::get(fun_arg_it->getType()));
+
+                        new_fun_arg_it->removeAttr(llvm::Attribute::ReadOnly);
+                        new_fun_arg_it->removeAttr(llvm::Attribute::NoCapture);
                      }
                      else
                      {
@@ -2895,6 +2923,8 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
 {
    inner_functions.insert(inner_functions.begin(), kernel_function);
 
+   std::set<llvm::Function*> fun_to_del;
+
    for(llvm::Function* f : inner_functions)
    {
    process_function:
@@ -2902,22 +2932,23 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
       {
          for(llvm::Instruction& inst : bb)
          {
-            if(llvm::CallInst* call_isnt = llvm::dyn_cast<llvm::CallInst>(&inst))
+            if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&inst))
             {
-               llvm::errs() << "F: " << f->getName() << " " << call_isnt->getCalledFunction()->getName() << " " << wrapper_function_name << "\n";
-               if(call_isnt->getCalledFunction()->getName().str() == wrapper_function_name)
+               bool is_wrapper = strncmp(call_inst->getCalledFunction()->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
+               if(is_wrapper)
                {
-                  call_isnt->getCalledFunction()->removeFnAttr(llvm::Attribute::NoInline);
-                  call_isnt->getCalledFunction()->removeFnAttr(llvm::Attribute::OptimizeNone);
+                  call_inst->getCalledFunction()->removeFnAttr(llvm::Attribute::NoInline);
+                  call_inst->getCalledFunction()->removeFnAttr(llvm::Attribute::OptimizeNone);
                   llvm::InlineFunctionInfo IFI = llvm::InlineFunctionInfo();
-                  if(!llvm::InlineFunction(call_isnt, IFI))
+                  if(!llvm::InlineFunction(call_inst, IFI))
                   {
                      llvm::errs() << "ERR: Cannot inline wrapper\n";
                      exit(-1);
                   }
 
+                  fun_to_del.insert(call_inst->getCalledFunction());
+
                   goto process_function;
-                  call_isnt->getCalledFunction()->eraseFromParent();
                }
             }
          }
@@ -2925,9 +2956,28 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
    }
 
    inner_functions.erase(inner_functions.begin());
-}
 
+   for(auto f_it = fun_to_del.rbegin(); f_it != fun_to_del.rend(); ++f_it)
+   {
+      llvm::Function* f = *f_it;
+      f->eraseFromParent();
+   }
+}
+/*
 CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name)
 {
    return new CustomScalarReplacementOfAggregatesPass(kernel_name);
+}
+*/
+CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name)
+{
+   return new CustomScalarReplacementOfAggregatesPass(kernel_name, SROA_functionVersioning);
+}
+CustomScalarReplacementOfAggregatesPass* createSROADisaggregationPass(std::string kernel_name)
+{
+   return new CustomScalarReplacementOfAggregatesPass(kernel_name, SROA_disaggregation);
+}
+CustomScalarReplacementOfAggregatesPass* createSROAWrapperInliningPass(std::string kernel_name)
+{
+   return new CustomScalarReplacementOfAggregatesPass(kernel_name, SROA_wrapperInlining);
 }
