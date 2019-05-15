@@ -2516,7 +2516,15 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                // If the argument is stored once
                if(arg_stored_once == &a)
                {
-                  // Do not insert anything
+                  for(unsigned short attr_idx = 0; attr_idx < llvm::Attribute::EndAttrKinds; attr_idx++)
+                  {
+                     if(a.hasAttribute((llvm::Attribute::AttrKind)attr_idx))
+                     {
+                        llvm::errs() << " " << attr_idx;
+                        a.removeAttr((llvm::Attribute::AttrKind)attr_idx);
+                     }
+                  }
+                  // TODO definitely improve this feature
                }
                else
                {
