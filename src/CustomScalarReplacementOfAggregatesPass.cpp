@@ -1110,7 +1110,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
                }
             }
 
-            if(new_bb != nullptr)
+            if(new_bb != nullptr and false)
             {
                bbs.insert(bbs.begin() + bb_idx + 1, new_bb);
                break;
