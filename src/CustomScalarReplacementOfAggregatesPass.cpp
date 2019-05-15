@@ -405,6 +405,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
             llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
 
             llvm::Value* bytes_sum = zero_c;
+            llvm::Value* stored_val_if_non_const = nullptr;
 
             // Build the chain of adders for computing the offset
             for(llvm::Value* offset : offset_chain)
@@ -449,10 +450,15 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                {
                   return_type = llvm::Type::getVoidTy(inst->getContext());
                   ptr_type = inst->getPointerOperand()->getType();
+                  stored_val_if_non_const = inst->getValueOperand();
                }
 
                std::vector<llvm::Type*> param_tys = std::vector<llvm::Type*>(type_count, ptr_type);
                llvm::Type* offset_ty = bytes_sum->getType();
+               if(stored_val_if_non_const != nullptr)
+               {
+                  param_tys.insert(param_tys.begin(), stored_val_if_non_const->getType());
+               }
                param_tys.insert(param_tys.begin(), offset_ty);
 
                llvm::FunctionType* function_ty = llvm::FunctionType::get(return_type, param_tys, false);
@@ -469,13 +475,25 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                {
                   ret = llvm::ReturnInst::Create(user_inst->getContext(), llvm::UndefValue::get(return_type), bb);
                }
+
                llvm::Instruction* new_inst = user_inst->clone();
+               if(llvm::StoreInst* new_store_inst = llvm::dyn_cast<llvm::StoreInst>(new_inst))
+               {
+                  if(stored_val_if_non_const != nullptr)
+                  {
+                     new_store_inst->setOperand(0, &*(++(wrapper_function->arg_begin())));
+                  }
+               }
                new_inst->insertBefore(ret);
 
-               std::vector<llvm::Value*> args = std::vector<llvm::Value*>(type_count, llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
-               args.insert(args.begin(), bytes_sum);
+               std::vector<llvm::Value*> arg_ops = std::vector<llvm::Value*>(type_count, llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
+               if(stored_val_if_non_const != nullptr)
+               {
+                  arg_ops.insert(arg_ops.begin(), stored_val_if_non_const);
+               }
+               arg_ops.insert(arg_ops.begin(), bytes_sum);
 
-               wrapper_call = llvm::CallInst::Create(wrapper_function, args, (return_type->isVoidTy() ? "" : "wrapper_call"), user_inst);
+               wrapper_call = llvm::CallInst::Create(wrapper_function, arg_ops, (return_type->isVoidTy() ? "" : "wrapper_call"), user_inst);
 
                if(!return_type->isVoidTy())
                {
@@ -506,7 +524,15 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                arg_it->setName("offset");
                ++arg_it;
                ++op_it;
+
+               if(stored_val_if_non_const != nullptr)
+               {
+                  arg_it->setName("stored");
+                  ++arg_it;
+                  ++op_it;
+               }
             }
+
             // Create the if-then-else chain
             for(llvm::Type* exp_ty : expanded_types)
             {
