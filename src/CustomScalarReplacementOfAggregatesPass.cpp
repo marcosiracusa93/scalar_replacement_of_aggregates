@@ -37,15 +37,21 @@
  *
  */
 
+#include <llvm/Pass.h>
+
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Transforms/Utils/Local.h"
+#include <llvm/Analysis/InlineCost.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
-#include <llvm/Transforms/Scalar.h>
+#include <llvm/IR/IntrinsicInst.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #define DEBUG_TYPE "csroa"
 
@@ -57,7 +63,6 @@ static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl:
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 {
-   DL = &module.getDataLayout();
    llvm::Function* kernel_function = module.getFunction(kernel_name);
 
    assert(kernel_function != nullptr && "Unknown kernel function!");
@@ -67,77 +72,111 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       // Functions contained by the kernel and the callees
       std::vector<llvm::Function*> inner_functions;
 
+      // Map specifying array argument sizes
+      std::map<llvm::Argument*, std::vector<unsigned long long>> arg_size_map;
+
       // Compute the inner functions, replicating those on call sites and check assumptions
-      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true);
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true, arg_size_map);
+      assert(!llvm::verifyModule(module, &llvm::errs()));
 
       return true;
    }
 
    if(sroa_phase == SROA_disaggregation)
    {
+      // check assumptions
+      if(!check_assumptions(kernel_function))
+      {
+         return false;
+      }
+
       // Functions contained by the kernel and the callees
       std::vector<llvm::Function*> inner_functions;
 
       // Global variables accessed by the inner functions
       std::set<llvm::GlobalVariable*> accessed_globals;
 
-      // Compute the inner functions, replicating those on call sites and check assumptions
-      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false);
+      // Map specifying array argument sizes
+      std::map<llvm::Argument*, std::vector<unsigned long long>> arg_size_map;
 
-      // Otherwise check assumptions
-      if(!check_assumptions(kernel_function))
-      {
-         return false;
-      }
+      // Map specifying how global variables have been expanded
+      std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
+
+      const llvm::DataLayout* DL = &module.getDataLayout();
+
+      // Map linking any function with its modified version
+      std::map<llvm::Function*, llvm::Function*> exp_fun_map;
+
+      inst_set_ty inst_to_remove;
+      fun_to_alloca_map_ty alloca_to_remove;
+
+      // Map specifying how arguments have been expanded
+      std::map<llvm::Argument*, std::vector<llvm::Argument*>> exp_args_map;
+
+      // Map specifying how allocas have been expanded
+      std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
+
+      // Compute the inner functions, replicating those on call sites and check assumptions
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false, arg_size_map);
 
       // Spot the accessed global variables
       spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
 
       // Expand the accessed global variables
-      expand_globals(accessed_globals);
-
-      // Map specifying the expanded arguments for each function
-      std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
-      // Map linking any function with its modified version
-      std::map<llvm::Function*, llvm::Function*> exp_fun_map;
+      expand_globals(accessed_globals, exp_globals_map, arg_size_map, DL);
 
       // Expand aggregate elements in signatures and in call sites (use nullptrs for expanded arguments)
-      expand_signatures_and_call_sites(inner_functions, exp_fun_map, exp_idx_args_map, kernel_function);
+      expand_signatures_and_call_sites(inner_functions, exp_fun_map, kernel_function, inst_to_remove, alloca_to_remove, exp_args_map, exp_allocas_map, arg_size_map, DL);
 
       // Expand all the loads/stores/calls
-      expand_ptrs(kernel_function, inner_functions);
+      expand_ptrs(kernel_function, inner_functions, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL);
 
       // Cleanup the remaining code
-      cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
+      cleanup(exp_fun_map, inner_functions, inst_to_remove, exp_args_map, exp_globals_map);
+
+      assert(!llvm::verifyModule(module, &llvm::errs()));
 
       return true;
    }
 
    if(sroa_phase == SROA_wrapperInlining)
    {
-      // Map specifying the expanded arguments for each function
-      std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
-
-      // Map linking any function with its modified version
-      std::map<llvm::Function*, llvm::Function*> exp_fun_map;
-
-      // Functions contained by the kernel and the callees
-      std::vector<llvm::Function*> inner_functions;
-
-      // Compute the inner functions, replicating those on call sites and check assumptions
-      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false);
-
-      inline_wrappers(kernel_function, inner_functions);
-
-      cleanup(exp_idx_args_map, exp_fun_map, inner_functions);
-
-      return true;
+      return SROA_wrapperInliningStep(kernel_function, module, this);
    }
-
    return false;
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain)
+bool CustomScalarReplacementOfAggregatesPass::SROA_wrapperInliningStep(llvm::Function* kernel_function, llvm::Module& module, ModulePass *modulePass)
+{
+   // Map linking any function with its modified version
+   std::map<llvm::Function*, llvm::Function*> exp_fun_map;
+
+   // Functions contained by the kernel and the callees
+   std::vector<llvm::Function*> inner_functions;
+
+   inst_set_ty inst_to_remove;
+
+   // Map specifying how global variables have been expanded
+   std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
+
+   // Map specifying array argument sizes
+   std::map<llvm::Argument*, std::vector<unsigned long long>> arg_size_map;
+
+   // Map specifying how arguments have been expanded
+   std::map<llvm::Argument*, std::vector<llvm::Argument*>> exp_args_map;
+
+   // Compute the inner functions, replicating those on call sites and check assumptions
+   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false, arg_size_map);
+
+   inline_wrappers(kernel_function, inner_functions, modulePass);
+
+   //cleanup(exp_fun_map, inner_functions, inst_to_remove, exp_args_map, exp_globals_map);
+
+   assert(!llvm::verifyModule(module, &llvm::errs()));
+   return true;
+}
+
+void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain, const llvm::DataLayout* DL)
 {
    if(llvm::BitCastOperator* bitcast_op = llvm::dyn_cast<llvm::BitCastOperator>(ptr_use->get()))
    {
@@ -146,7 +185,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use*
          inst_chain.push_back(inst);
       }
       // Recursively go through the gepi chain up to the base address
-      compute_base_and_offset(&bitcast_op->getOperandUse(0), base_address, offset_chain, inst_chain);
+      compute_base_and_offset(&bitcast_op->getOperandUse(0), base_address, offset_chain, inst_chain, DL);
    }
    else if(llvm::GEPOperator* gep_op = llvm::dyn_cast<llvm::GEPOperator>(ptr_use->get()))
    {
@@ -172,10 +211,8 @@ void CustomScalarReplacementOfAggregatesPass::compute_base_and_offset(llvm::Use*
          }
       }
 
-      // const llvm::DataLayout* DL = &containing_inst->getModule()->getDataLayout();
-
       // Recursively go through the gepi chain up to the base address
-      compute_base_and_offset(&gep_op->getOperandUse(gep_op->getPointerOperandIndex()), base_address, offset_chain, inst_chain);
+      compute_base_and_offset(&gep_op->getOperandUse(gep_op->getPointerOperandIndex()), base_address, offset_chain, inst_chain, DL);
 
       if(gep_op->hasAllConstantIndices())
       {
@@ -300,7 +337,9 @@ void expand_types(T* ptr, std::map<T*, std::vector<T*>>& exp_map_ref, std::vecto
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb)
+void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, inst_set_ty& inst_to_remove, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+                                                              std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
+                                                              std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL)
 {
    llvm::Value* base_address = nullptr;
    std::vector<llvm::Value*> offset_chain;
@@ -315,9 +354,9 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
    {
       std::vector<llvm::Instruction*> inst_chain;
 
-      compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain);
+      compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain, DL);
 
-      bool is_expansion_allowed = expansion_allowed(base_address);
+      bool is_expansion_allowed = expansion_allowed(base_address, arg_size_map, DL);
       if(is_expansion_allowed)
       {
          for(llvm::Instruction* i : inst_chain)
@@ -373,7 +412,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
          {
             // const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
             unsigned long long accessed_size = DL->getTypeAllocSize(ptr_u->get()->getType()->getPointerElementType());
-            llvm::Value* exp_val = get_expanded_value(base_address, constant_sum, accessed_size, nullptr, ptr_u);
+            llvm::Value* exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL, base_address, constant_sum, accessed_size, nullptr, ptr_u);
 
             ptr_u->set(exp_val);
          }
@@ -405,7 +444,6 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
             llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
 
             llvm::Value* bytes_sum = zero_c;
-            llvm::Value* stored_val_if_non_const = nullptr;
 
             // Build the chain of adders for computing the offset
             for(llvm::Value* offset : offset_chain)
@@ -418,29 +456,23 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
             llvm::CallInst* wrapper_call = nullptr;
             llvm::ReturnInst* ret = nullptr;
             bool wrap_non_const = true;
+            bool isStore = false;
             if(wrap_non_const)
             {
                unsigned long long type_count = 0;
-               for(llvm::Type* exp_ty : expanded_types)
-               {
-                  // llvm::Type *bitcast_type = nullptr;
-                  llvm::Type* ty1 = exp_ty;
-                  llvm::Type* ty2 = ptr_u->get()->getType()->getPointerElementType();
-                  if(ty1->getTypeID() == ty2->getTypeID() and DL->getTypeAllocSize(ty1) > DL->getTypeAllocSize(ty2))
-                  {
-                     // bitcast_type = ty2;
-                     llvm::errs() << "ERR: bitcast brokes anything";
-                  }
-                  else if(ty1 != ty2)
-                  {
-                     continue;
-                  }
-
-                  ++type_count;
-               }
-
                llvm::Type* return_type = nullptr;
                llvm::Type* ptr_type = nullptr;
+               std::vector<llvm::Type*> param_tys;
+               llvm::Type* offset_ty = bytes_sum->getType();
+               std::vector<llvm::Value*> args;
+               if(llvm::StoreInst* SI = llvm::dyn_cast<llvm::StoreInst>(user_inst))
+               {
+                  param_tys.push_back(SI->getValueOperand()->getType());
+                  args.push_back(SI->getValueOperand());
+               }
+               param_tys.push_back(offset_ty);
+               args.push_back(bytes_sum);
+
                if(llvm::LoadInst* inst = llvm::dyn_cast<llvm::LoadInst>(user_inst))
                {
                   return_type = inst->getPointerOperand()->getType()->getPointerElementType();
@@ -450,16 +482,28 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                {
                   return_type = llvm::Type::getVoidTy(inst->getContext());
                   ptr_type = inst->getPointerOperand()->getType();
-                  stored_val_if_non_const = inst->getValueOperand();
+                  isStore = true;
                }
 
-               std::vector<llvm::Type*> param_tys = std::vector<llvm::Type*>(type_count, ptr_type);
-               llvm::Type* offset_ty = bytes_sum->getType();
-               if(stored_val_if_non_const != nullptr)
+               for(llvm::Type* exp_ty : expanded_types)
                {
-                  param_tys.insert(param_tys.begin(), stored_val_if_non_const->getType());
+                  // llvm::Type *bitcast_type = nullptr;
+                  llvm::Type* ty1 = exp_ty;
+                  llvm::Type* ty2 = ptr_u->get()->getType()->getPointerElementType();
+                  if(ty1->getTypeID() == ty2->getTypeID() and DL->getTypeAllocSize(ty1) > DL->getTypeAllocSize(ty2))
+                  {
+                     // bitcast_type = ty2;
+                     llvm::errs() << "ERR: bitcast brokes everything";
+                  }
+                  else if(ty1 != ty2)
+                  {
+                     continue;
+                  }
+
+                  ++type_count;
+                  param_tys.push_back(ptr_type);
+                  args.push_back(llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
                }
-               param_tys.insert(param_tys.begin(), offset_ty);
 
                llvm::FunctionType* function_ty = llvm::FunctionType::get(return_type, param_tys, false);
                wrapper_function = llvm::Function::Create(function_ty, llvm::GlobalValue::LinkageTypes::InternalLinkage, wrapper_function_name, user_inst->getModule());
@@ -475,25 +519,10 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                {
                   ret = llvm::ReturnInst::Create(user_inst->getContext(), llvm::UndefValue::get(return_type), bb);
                }
-
                llvm::Instruction* new_inst = user_inst->clone();
-               if(llvm::StoreInst* new_store_inst = llvm::dyn_cast<llvm::StoreInst>(new_inst))
-               {
-                  if(stored_val_if_non_const != nullptr)
-                  {
-                     new_store_inst->setOperand(0, &*(++(wrapper_function->arg_begin())));
-                  }
-               }
                new_inst->insertBefore(ret);
 
-               std::vector<llvm::Value*> arg_ops = std::vector<llvm::Value*>(type_count, llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
-               if(stored_val_if_non_const != nullptr)
-               {
-                  arg_ops.insert(arg_ops.begin(), stored_val_if_non_const);
-               }
-               arg_ops.insert(arg_ops.begin(), bytes_sum);
-
-               wrapper_call = llvm::CallInst::Create(wrapper_function, arg_ops, (return_type->isVoidTy() ? "" : "wrapper_call"), user_inst);
+               wrapper_call = llvm::CallInst::Create(wrapper_function, args, (return_type->isVoidTy() ? "" : "wrapper_call"), user_inst);
 
                if(!return_type->isVoidTy())
                {
@@ -509,30 +538,28 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 
             unsigned long long bytes_acc = 0;
 
-            llvm::Value* right_phi_operand = llvm::UndefValue::get(ptr_u->getUser()->getType());
             llvm::PHINode* last_phi_set = nullptr;
 
             // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
 
-            llvm::Function::arg_iterator arg_it;
-            llvm::Instruction::op_iterator op_it;
+            llvm::Function::arg_iterator arg_it = wrapper_function->arg_begin();
+            llvm::Instruction::op_iterator op_it = wrapper_call->op_begin();
+            llvm::Function::arg_iterator arg_offset_it = wrapper_function->arg_begin();
+            llvm::Function::arg_iterator arg_value_it = wrapper_function->arg_begin();
             if(wrapper_function != nullptr)
             {
-               arg_it = wrapper_function->arg_begin();
-               op_it = wrapper_call->op_begin();
-
-               arg_it->setName("offset");
-               ++arg_it;
-               ++op_it;
-
-               if(stored_val_if_non_const != nullptr)
+               if(isStore)
                {
-                  arg_it->setName("stored");
+                  arg_it->setName("value");
+                  arg_value_it = arg_it;
                   ++arg_it;
                   ++op_it;
                }
+               arg_it->setName("offset");
+               arg_offset_it = arg_it;
+               ++arg_it;
+               ++op_it;
             }
-
             // Create the if-then-else chain
             for(llvm::Type* exp_ty : expanded_types)
             {
@@ -556,7 +583,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 
                llvm::ConstantInt* bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
                std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
-               llvm::Value* offset = (wrap_non_const ? &*wrapper_function->arg_begin() : bytes_sum);
+               llvm::Value* offset = (wrap_non_const ? &*arg_offset_it : bytes_sum);
                llvm::CmpInst* cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp, llvm::CmpInst::Predicate::ICMP_EQ, offset, bytes_c, cmp_name, split_before);
 
                llvm::TerminatorInst* then_term;
@@ -604,7 +631,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                   last_phi_set = phi_node;
                }
 
-               llvm::Value* exp_val = get_expanded_value(base_address, bytes_acc - type_size, type_size, nullptr, ptr_u);
+               llvm::Value* exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL, base_address, bytes_acc - type_size, type_size, nullptr, ptr_u);
 
                /*if (bitcast_type != nullptr) {
                    std::string bitcast_name = user_inst->getName().str() + ".bitcast";
@@ -617,6 +644,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                   std::string arg_name = "arg" + std::to_string(arg_it->getArgNo());
                   arg_it->setName(arg_name);
                   wrapper_call->setOperand(op_it->getOperandNo(), exp_val);
+                  if(isStore)
+                     new_inst->setOperand(0, &*arg_value_it);
 
                   new_inst->setOperand(ptr_u->getOperandNo(), &*arg_it);
                   ++arg_it;
@@ -667,7 +696,7 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
                      accessed_size *= exp_arg_size_it->second.front();
                   }
 
-                  llvm::Value* exp_val = get_expanded_value(base_address, arg_offset, accessed_size, arg_u, ptr_u);
+                  llvm::Value* exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL, base_address, arg_offset, accessed_size, arg_u, ptr_u);
 
                   // Take care of array decay now
                   if(exp_val->getType()->getPointerElementType()->isArrayTy())
@@ -726,7 +755,8 @@ void CustomScalarReplacementOfAggregatesPass::process_pointer(llvm::Use* ptr_u, 
 }
 
 template <class I>
-llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size) //, const llvm::DataLayout* DL)
+llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size,
+                                                                            std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL)
 {
    I* el_to_exp = base_address;
    signed long long offset_to_exp = offset;
@@ -859,9 +889,11 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_element_at_offset(I* b
    return el_to_exp;
 }
 
-llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::Value* base_address, signed long long offset, unsigned long long accessed_size, llvm::Argument* arg_if_any, llvm::Use* use)
+llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
+                                                                         std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                                                                         const llvm::DataLayout* DL, llvm::Value* base_address, signed long long offset, unsigned long long accessed_size, llvm::Argument* arg_if_any, llvm::Use* use)
 {
-   if(!expansion_allowed(base_address))
+   if(!expansion_allowed(base_address, arg_size_map, DL))
    {
       std::map<llvm::Value*, std::vector<llvm::Value*>> gepi_map;
 
@@ -996,7 +1028,7 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::V
          exit(-1);
       }
 
-      llvm::Value* exp_el = get_element_at_offset(base_address, gepi_map, offset, accessed_size); //, DL);
+      llvm::Value* exp_el = get_element_at_offset(base_address, gepi_map, offset, accessed_size, arg_size_map, DL);
 
       bool some_deletion = false;
       do
@@ -1035,17 +1067,17 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::V
    else if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
    {
       // const llvm::DataLayout* DL = &alloca_inst->getModule()->getDataLayout();
-      return get_element_at_offset(alloca_inst, exp_allocas_map, offset, accessed_size); //, DL);
+      return get_element_at_offset(alloca_inst, exp_allocas_map, offset, accessed_size, arg_size_map, DL);
    }
    else if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(base_address))
    {
       // const llvm::DataLayout* DL = &arg->getParent()->getParent()->getDataLayout();
-      return get_element_at_offset(arg, exp_args_map, offset, accessed_size); //, DL);
+      return get_element_at_offset(arg, exp_args_map, offset, accessed_size, arg_size_map, DL);
    }
    else if(llvm::GlobalVariable* g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address))
    {
       // const llvm::DataLayout* DL = &g_var->getParent()->getDataLayout();
-      return get_element_at_offset(g_var, exp_globals_map, offset, accessed_size); //, DL);
+      return get_element_at_offset(g_var, exp_globals_map, offset, accessed_size, arg_size_map, DL);
    }
    else
    {
@@ -1055,7 +1087,9 @@ llvm::Value* CustomScalarReplacementOfAggregatesPass::get_expanded_value(llvm::V
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions)
+void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, inst_set_ty& inst_to_remove, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+                                                          std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
+                                                          std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL)
 {
    inner_functions.insert(inner_functions.begin(), kernel_function);
 
@@ -1083,11 +1117,11 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
             llvm::BasicBlock* new_bb = nullptr;
             if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(&i))
             {
-               process_pointer(&load_inst->getOperandUse(0), new_bb);
+               process_pointer(&load_inst->getOperandUse(0), new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL);
             }
             else if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(&i))
             {
-               process_pointer(&store_inst->getOperandUse(1), new_bb);
+               process_pointer(&store_inst->getOperandUse(1), new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL);
             }
             else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&i))
             {
@@ -1105,7 +1139,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
 
                   if(op_u->get()->getType()->isPointerTy())
                   {
-                     process_pointer(op_u, new_bb);
+                     process_pointer(op_u, new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL);
                   }
                }
             }
@@ -1285,7 +1319,8 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* 
 
 } // end check_assumptions(...)
 
-void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning)
+void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning,
+                                                                                              std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map)
 {
    // TODO: how about circular call graphs
    // TODO: how about memOps/intrinsic/extern functions
@@ -1390,7 +1425,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
       // Get argument's dimensions
       for(unsigned long long op_idx = 0; op_idx < call_inst->getNumArgOperands(); ++op_idx)
       {
-         dimensions.push_back(get_op_arg_dims(&call_inst->getArgOperandUse(op_idx)));
+         dimensions.push_back(get_op_arg_dims(&call_inst->getArgOperandUse(op_idx), arg_size_map));
       }
 
       llvm::Function* synthesized_function = nullptr;
@@ -1471,13 +1506,6 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
       }
    }
 
-   for(auto f_it = called_cloned_functions.begin(); f_it != called_cloned_functions.end(); ++f_it)
-   {
-      llvm::Function* f = *f_it;
-
-      f->eraseFromParent();
-   }
-
    for(llvm::Function* function : inner_functions)
    {
       for(llvm::Argument& arg : function->args())
@@ -1532,7 +1560,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
    }
 } // end compute_op_dims_and_perform_function_versioning(...)
 
-std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use)
+std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map)
 {
    llvm::Value* op_arg = op_arg_use->get();
 
@@ -1769,7 +1797,8 @@ void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsa
    AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
 }
 
-void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* function)
+void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* function, fun_to_alloca_map_ty& alloca_to_remove, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
+                                                             std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL)
 {
    // Global alloca vec so to avoid loops in analysis
    std::set<llvm::AllocaInst*> alloca_vec = std::set<llvm::AllocaInst*>();
@@ -1819,7 +1848,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
       {
          if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(a))
          {
-            if(expansion_allowed(alloca_inst))
+            if(expansion_allowed(alloca_inst, arg_size_map, DL))
             {
                alloca_to_remove[alloca_inst->getFunction()].insert(alloca_inst);
 
@@ -1863,7 +1892,8 @@ void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* fun
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::GlobalVariable*> accessed_variables)
+void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::GlobalVariable*> accessed_variables, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
+                                                             std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL)
 {
    // Global vector containing globals to be expanded yet
    std::vector<llvm::GlobalVariable*> globals_to_exp = std::vector<llvm::GlobalVariable*>();
@@ -1877,7 +1907,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
    {
       llvm::GlobalVariable* g_var = globals_to_exp.at(g_idx);
 
-      if(expansion_allowed(g_var))
+      if(expansion_allowed(g_var, arg_size_map, DL))
       {
          if(llvm::StructType* str_ty = llvm::dyn_cast<llvm::StructType>(g_var->getType()->getPointerElementType()))
          {
@@ -1892,7 +1922,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                {
                   initializer = c_el;
                }
-               llvm::GlobalVariable* new_g_var = new llvm::GlobalVariable(*g_var->getParent(), element, false, g_var->getLinkage(), initializer, new_global_name, g_var);
+               llvm::GlobalVariable* new_g_var = new llvm::GlobalVariable(*g_var->getParent(), element, g_var->isConstant(), g_var->getLinkage(), initializer, new_global_name, g_var);
 
                new_g_var->copyAttributesFrom(g_var);
 
@@ -1913,7 +1943,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
                {
                   initializer = c_el;
                }
-               llvm::GlobalVariable* new_g_var = new llvm::GlobalVariable(*g_var->getParent(), element, false, g_var->getLinkage(), initializer, new_global_name, g_var);
+               llvm::GlobalVariable* new_g_var = new llvm::GlobalVariable(*g_var->getParent(), element, g_var->isConstant(), g_var->getLinkage(), initializer, new_global_name, g_var);
                new_g_var->copyAttributesFrom(g_var);
 
                exp_globals_map[g_var].push_back(new_g_var);
@@ -1924,10 +1954,10 @@ void CustomScalarReplacementOfAggregatesPass::expand_globals(std::set<llvm::Glob
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(std::vector<llvm::Function*>& inner_functions, std::map<llvm::Function*, llvm::Function*>& exp_fun_map,
-                                                                               std::map<llvm::Function*, std::set<unsigned long long>>& exp_idx_args_map,
-                                                                               // std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
-                                                                               llvm::Function* kernel_function)
+void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(std::vector<llvm::Function*>& inner_functions, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, llvm::Function* kernel_function, inst_set_ty& inst_to_remove,
+                                                                               fun_to_alloca_map_ty& alloca_to_remove, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+                                                                               std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                                                                               const llvm::DataLayout* DL)
 {
    // Loop through the inner functions:
    //  - recursively expanding the signatures
@@ -2111,7 +2141,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
 
             idxs_of_exp_args[new_arg->getArgNo()] = arg;
 
-            if(!expansion_allowed(arg))
+            if(!expansion_allowed(arg, arg_size_map, DL))
             {
                continue;
             }
@@ -2289,16 +2319,19 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
    inner_functions.erase(inner_functions.begin(), inner_functions.begin() + inner_size);
 
    // Expand allocas in kernel and inner functions
-   expand_allocas(kernel_function);
+   expand_allocas(kernel_function, alloca_to_remove, exp_allocas_map, arg_size_map, DL);
    for(llvm::Function* function : inner_functions)
    {
-      expand_allocas(function);
+      expand_allocas(function, alloca_to_remove, exp_allocas_map, arg_size_map, DL);
    }
 
 } // end expand_signatures_and_call_sites
 
-void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, std::set<unsigned long long>>& exp_idx_args_map, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::vector<llvm::Function*>& inner_functions)
+void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::vector<llvm::Function*>& inner_functions, inst_set_ty& inst_to_remove,
+                                                      std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map)
 {
+   // Map specifying the expanded arguments for each function
+   std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
    for(auto& i : inst_to_remove)
    {
       i->replaceAllUsesWith(llvm::UndefValue::get(i->getType()));
@@ -2520,6 +2553,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                   {
                      if(a.hasAttribute((llvm::Attribute::AttrKind)attr_idx))
                      {
+                        llvm::errs() << "Function: " << function->getName() << "\n  ";
                         llvm::errs() << " " << attr_idx;
                         a.removeAttr((llvm::Attribute::AttrKind)attr_idx);
                      }
@@ -2528,7 +2562,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                }
                else
                {
-                  // If it is not only uesd as argument recursively
+                  // If it is not only used as argument recursively
                   if(!CheckArg::usedByArgsOnly_wrapper(&a) or true)
                   {
                      // Check whether recursively loaded only
@@ -2599,7 +2633,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                }
                else
                {
-                  // If it is not only uesd as argument recursively
+                  // If it is not only used as argument recursively
                   if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it) or true)
                   {
                      // Check whether recursively loaded only
@@ -2864,7 +2898,7 @@ void CustomScalarReplacementOfAggregatesPass::spot_accessed_globals(llvm::Functi
    inner_functions.erase(inner_functions.begin());
 }
 
-bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* aggregate)
+bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* aggregate, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL)
 {
    if(aggregate->getType()->isPointerTy())
    {
@@ -2944,26 +2978,36 @@ bool CustomScalarReplacementOfAggregatesPass::expansion_allowed(llvm::Value* agg
       }
       else
       {
+         llvm::errs() << "2)Expansion not allowed for ";
+         aggregate->print(llvm::errs());
+         llvm::errs() << "\n";
          return false;
       }
    }
    else
    {
+      llvm::errs() << "3)Expansion not allowed for ";
+      aggregate->print(llvm::errs());
+      llvm::errs() << "\n";
       return false;
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions)
+void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, ModulePass *modulePass)
 {
    inner_functions.insert(inner_functions.begin(), kernel_function);
 
    std::set<llvm::Function*> fun_to_del;
 
+   llvm::errs()<<"Pre\n";
    for(llvm::Function* f : inner_functions)
    {
+      bool doOpt = false;
    process_function:
+      llvm::errs()<<"F" << f->getName()<<"\n";
       for(llvm::BasicBlock& bb : *f)
       {
+
          for(llvm::Instruction& inst : bb)
          {
             if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&inst))
@@ -2981,12 +3025,57 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
                   }
 
                   fun_to_del.insert(call_inst->getCalledFunction());
+                  doOpt = true;
 
                   goto process_function;
                }
             }
          }
       }
+      if(doOpt)
+      {
+         llvm::errs()<<"Opt\n";
+         llvm::TargetLibraryInfo& TLI = modulePass->getAnalysis<llvm::TargetLibraryInfoWrapperPass>().getTLI();
+         const llvm::TargetTransformInfo& TTI = modulePass->getAnalysis<llvm::TargetTransformInfoWrapperPass>().getTTI(*f);
+         for(llvm::Function::iterator BBIt = f->begin(); BBIt != f->end();)
+                 llvm::SimplifyInstructionsInBlock(&*BBIt++, &TLI);
+         for(llvm::Function::iterator BBIt = f->begin(); BBIt != f->end();)
+#if __clang_major__ >= 6
+            llvm::simplifyCFG(&*BBIt++, TTI, 1);
+#else
+            llvm::SimplifyCFG(&*BBIt++, TTI, 1);
+#endif
+         llvm::removeUnreachableBlocks(*f);
+
+         ///whenever it is possible the following promotes alloca to reg
+         {
+            auto& DT = modulePass->getAnalysis<llvm::DominatorTreeWrapperPass>(*f).getDomTree();
+            auto& AC = modulePass->getAnalysis<llvm::AssumptionCacheTracker>().getAssumptionCache(*f);
+            std::vector<llvm::AllocaInst *> Allocas;
+            llvm::BasicBlock &BB = f->getEntryBlock(); // Get the entry node for the function
+
+            while (1) {
+               Allocas.clear();
+
+               // Find allocas that are safe to promote, by looking at all instructions in
+               // the entry node
+               for (llvm::BasicBlock::iterator I = BB.begin(), E = --BB.end(); I != E; ++I)
+                  if (llvm::AllocaInst *AI = llvm::dyn_cast<llvm::AllocaInst>(I)) // Is it an alloca?
+                     if (llvm::isAllocaPromotable(AI))
+                        Allocas.push_back(AI);
+
+               if (Allocas.empty())
+                  break;
+#if __clang_major__ != 4
+               llvm::PromoteMemToReg(Allocas, DT, &AC);
+#else
+               llvm::PromoteMemToReg(Allocas, DT, nullptr, &AC);
+#endif
+            }
+
+         }
+      }
+
    }
 
    inner_functions.erase(inner_functions.begin());
@@ -2997,12 +3086,7 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
       f->eraseFromParent();
    }
 }
-/*
-CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name)
-{
-   return new CustomScalarReplacementOfAggregatesPass(kernel_name);
-}
-*/
+
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name)
 {
    return new CustomScalarReplacementOfAggregatesPass(kernel_name, SROA_functionVersioning);

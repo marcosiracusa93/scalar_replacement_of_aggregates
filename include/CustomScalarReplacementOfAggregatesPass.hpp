@@ -64,28 +64,15 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    char ID = 0;
 
  private:
-   unsigned short sroa_phase = 0;
+   const unsigned short sroa_phase = 0;
 
    const std::string kernel_name;
 
-   inst_set_ty inst_to_remove;
-   fun_to_alloca_map_ty alloca_to_remove;
-   const llvm::DataLayout* DL;
-
-   // Map specifying how arguments have been expanded
-   std::map<llvm::Argument*, std::vector<llvm::Argument*>> exp_args_map;
-   // Map specifying how allocas have been expanded
-   std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
-   // Map specifying how global variables have been expanded
-   std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
-   // Map specifying array argument sizes
-   std::map<llvm::Argument*, std::vector<unsigned long long>> arg_size_map;
-
  public:
-   explicit CustomScalarReplacementOfAggregatesPass(const std::string& kernel_name, char& _ID) : llvm::ModulePass(_ID), kernel_name(kernel_name), DL(nullptr)
+   explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, char& _ID, unsigned short _sroa_phase) : llvm::ModulePass(_ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
    {
    }
-   explicit CustomScalarReplacementOfAggregatesPass(const std::string& kernel_name, unsigned short sroa_phase) : llvm::ModulePass(ID), kernel_name(kernel_name), sroa_phase(sroa_phase), DL(nullptr)
+   explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, unsigned short _sroa_phase) : llvm::ModulePass(ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
    {
    }
 
@@ -93,40 +80,52 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
    void getAnalysisUsage(llvm::AnalysisUsage& AU) const override;
 
+   static bool SROA_wrapperInliningStep(llvm::Function* kernel_function, llvm::Module& module, llvm::ModulePass* modulePass);
+
  private:
    bool check_assumptions(llvm::Function* kernel_function);
 
-   bool expansion_allowed(llvm::Value* aggregate);
+   bool expansion_allowed(llvm::Value* aggregate, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL);
 
    void spot_accessed_globals(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, std::set<llvm::GlobalVariable*>& accessed_globals);
 
-   void compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning);
+   static void compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map);
 
-   void inline_wrappers(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
+   static void inline_wrappers(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, ModulePass *modulePass);
 
-   void expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions);
+   void expand_ptrs(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, inst_set_ty& inst_to_remove, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+                    std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
+                    std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL);
 
-   void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb);
+   void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, inst_set_ty& inst_to_remove, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
+                        std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL);
 
-   void compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain);
+   void compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain, const llvm::DataLayout* DL);
 
    template <class I>
-   llvm::Value* get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size); //, const llvm::DataLayout* DL);
+   llvm::Value* get_element_at_offset(I* base_address, std::map<I*, std::vector<I*>>& map, signed long long offset, unsigned long long accessed_size, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL);
 
-   llvm::Value* get_expanded_value(llvm::Value* base_address, signed long long offset, unsigned long long accessed_size, llvm::Argument* arg_if_any = nullptr, llvm::Use* use = nullptr);
+   llvm::Value* get_expanded_value(std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
+                                   std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL, llvm::Value* base_address,
+                                   signed long long offset, unsigned long long accessed_size, llvm::Argument* arg_if_any = nullptr, llvm::Use* use = nullptr);
 
-   void expand_signatures_and_call_sites(std::vector<llvm::Function*>& inner_functions, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::map<llvm::Function*, std::set<unsigned long long>>& exp_idx_args_map, llvm::Function* kernel_function);
+   void expand_signatures_and_call_sites(std::vector<llvm::Function*>& inner_functions, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, llvm::Function* kernel_function, inst_set_ty& inst_to_remove, fun_to_alloca_map_ty& alloca_to_remove,
+                                         std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
+                                         std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout* DL);
 
-   void expand_allocas(llvm::Function* function);
+   void expand_allocas(llvm::Function* function, fun_to_alloca_map_ty& alloca_to_remove, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                       const llvm::DataLayout* DL);
 
-   void expand_globals(std::set<llvm::GlobalVariable*> accessed_variables);
+   void expand_globals(std::set<llvm::GlobalVariable*> accessed_variables, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                       const llvm::DataLayout* DL);
 
-   void cleanup(std::map<llvm::Function*, std::set<unsigned long long>>& exp_idx_args_map, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::vector<llvm::Function*>& inner_functions);
+   static void cleanup(std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::vector<llvm::Function*>& inner_functions, inst_set_ty& inst_to_remove, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+                       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map);
 
-   std::vector<unsigned long long> get_op_arg_dims(llvm::Use* op_arg);
+   static
+   std::vector<unsigned long long> get_op_arg_dims(llvm::Use* op_arg, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map);
 };
 
-// CustomScalarReplacementOfAggregatesPass* createCustomScalarReplacementOfAggregatesPass(std::string kernel_name);
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name);
 CustomScalarReplacementOfAggregatesPass* createSROADisaggregationPass(std::string kernel_name);
 CustomScalarReplacementOfAggregatesPass* createSROAWrapperInliningPass(std::string kernel_name);
