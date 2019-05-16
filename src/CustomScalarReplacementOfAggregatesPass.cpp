@@ -1795,6 +1795,10 @@ std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_
 void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsage& AU) const
 {
    AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
+   AU.addRequiredTransitive<llvm::TargetTransformInfoWrapperPass>();
+   AU.addRequiredTransitive<llvm::TargetLibraryInfoWrapperPass>();
+   AU.addRequiredTransitive<llvm::DominatorTreeWrapperPass>();
+   AU.addRequiredTransitive<llvm::AssumptionCacheTracker>();
 }
 
 void CustomScalarReplacementOfAggregatesPass::expand_allocas(llvm::Function* function, fun_to_alloca_map_ty& alloca_to_remove, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,

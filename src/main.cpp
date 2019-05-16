@@ -67,13 +67,13 @@ int main(int argc, char** argv)
       llvm::errs() << "Error: Null module!\n";
       exit(-1);
    }
-
+/*
    char progName[] = "progName";
    char debug[] = "-debug";
 
    char* opt_argv[] = {progName, debug};
    llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
-
+*/
    // Run on module
    {
       llvm::legacy::PassManager* passManager = new llvm::legacy::PassManager();
@@ -81,6 +81,7 @@ int main(int argc, char** argv)
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
+      passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
