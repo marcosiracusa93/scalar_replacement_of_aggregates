@@ -3040,7 +3040,7 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
          for(llvm::Function::iterator BBIt = f->begin(); BBIt != f->end();)
                  llvm::SimplifyInstructionsInBlock(&*BBIt++, &TLI);
          for(llvm::Function::iterator BBIt = f->begin(); BBIt != f->end();)
-#if __clang_major__ >= 6
+#if __clang_major__ >= 6 && !defined(__APPLE__)
             llvm::simplifyCFG(&*BBIt++, TTI, 1);
 #else
             llvm::SimplifyCFG(&*BBIt++, TTI, 1);
@@ -3066,7 +3066,7 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
 
                if (Allocas.empty())
                   break;
-#if __clang_major__ != 4
+#if __clang_major__ != 4 && !defined(__APPLE__)
                llvm::PromoteMemToReg(Allocas, DT, &AC);
 #else
                llvm::PromoteMemToReg(Allocas, DT, nullptr, &AC);
