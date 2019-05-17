@@ -2616,6 +2616,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
       llvm::Function* new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name, function->getParent());
       new_function->copyAttributesFrom(function);
       new_function->setComdat(function->getComdat());
+      new_function->setCallingConv(function->getCallingConv());
 
       new_function->getBasicBlockList().splice(new_function->begin(), function->getBasicBlockList());
 
@@ -2744,6 +2745,9 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
 
             std::string new_call_name = call_inst->getName().str() + ".clean";
             llvm::CallInst* new_call_inst = llvm::CallInst::Create(new_function, call_ops, (call_inst->hasName() ? new_call_name : ""), call_inst);
+
+            new_call_inst->setTailCall(call_inst->isTailCall());
+            new_call_inst->setTailCallKind(call_inst->getTailCallKind());
 
             if(arg_stored_once != nullptr)
             {
