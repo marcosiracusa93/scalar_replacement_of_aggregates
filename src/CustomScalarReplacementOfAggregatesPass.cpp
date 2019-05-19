@@ -45,10 +45,6 @@
 #include <llvm/Analysis/InlineCost.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/IR/GetElementPtrTypeIterator.h>
-#include <llvm/IR/IntrinsicInst.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
@@ -2568,7 +2564,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                else
                {
                   // If it is not only used as argument recursively
-                  if(!CheckArg::usedByArgsOnly_wrapper(&a) or true)
+                  if(!CheckArg::usedByArgsOnly_wrapper(&a))
                   {
                      // Check whether recursively loaded only
                      if(CheckArg::loadedOnly_wrapper(&a))
@@ -2615,7 +2611,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
 
       std::string new_fun_name = function->getName().str() + ".c";
       llvm::Function* new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name, function->getParent());
-      new_function->copyAttributesFrom(function);
+      //new_function->copyAttributesFrom(function);
       new_function->setComdat(function->getComdat());
       new_function->setCallingConv(function->getCallingConv());
 
@@ -2640,7 +2636,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
                else
                {
                   // If it is not only used as argument recursively
-                  if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it) or true)
+                  if(!CheckArg::usedByArgsOnly_wrapper(&*fun_arg_it))
                   {
                      // Check whether recursively loaded only
                      if(CheckArg::loadedOnly_wrapper(&*fun_arg_it))
