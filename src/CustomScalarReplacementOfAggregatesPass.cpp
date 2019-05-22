@@ -1441,6 +1441,13 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             llvm::ValueToValueMapTy VMap;
             llvm::ClonedCodeInfo* code_info = new llvm::ClonedCodeInfo();
             llvm::Function* cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
+            if(called_function->hasFnAttribute(llvm::Attribute::NoInline))
+               cloned_function->addFnAttr(llvm::Attribute::NoInline);
+            if(called_function->hasFnAttribute(llvm::Attribute::AlwaysInline))
+               cloned_function->addFnAttr(llvm::Attribute::AlwaysInline);
+            if(called_function->hasFnAttribute(llvm::Attribute::InlineHint))
+               cloned_function->addFnAttr(llvm::Attribute::InlineHint);
+
             called_cloned_functions.insert(called_function);
             std::string new_name = called_function->getName().str() + "_";
             for(auto d1 : dimensions)
@@ -2100,6 +2107,12 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
 
       // Create function prototype
       llvm::Function* new_mock_function = llvm::Function::Create(new_mock_function_type, mock_linkage, new_mock_function_name, called_function->getParent());
+      if(called_function->hasFnAttribute(llvm::Attribute::NoInline))
+         new_mock_function->addFnAttr(llvm::Attribute::NoInline);
+      if(called_function->hasFnAttribute(llvm::Attribute::AlwaysInline))
+         new_mock_function->addFnAttr(llvm::Attribute::AlwaysInline);
+      if(called_function->hasFnAttribute(llvm::Attribute::InlineHint))
+         new_mock_function->addFnAttr(llvm::Attribute::InlineHint);
 
       llvm::ValueToValueMapTy mock_VMap;
 
@@ -2165,6 +2178,12 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
 
       // Create function prototype
       llvm::Function* new_function = llvm::Function::Create(new_function_type, linkage, new_function_name, called_function->getParent());
+      if(called_function->hasFnAttribute(llvm::Attribute::NoInline))
+         new_function->addFnAttr(llvm::Attribute::NoInline);
+      if(called_function->hasFnAttribute(llvm::Attribute::AlwaysInline))
+         new_function->addFnAttr(llvm::Attribute::AlwaysInline);
+      if(called_function->hasFnAttribute(llvm::Attribute::InlineHint))
+         new_function->addFnAttr(llvm::Attribute::InlineHint);
 
       llvm::ValueToValueMapTy VMap;
 
@@ -2611,7 +2630,12 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
 
       std::string new_fun_name = function->getName().str() + ".c";
       llvm::Function* new_function = llvm::Function::Create(new_fun_ty, function->getLinkage(), new_fun_name, function->getParent());
-      //new_function->copyAttributesFrom(function);
+      if(function->hasFnAttribute(llvm::Attribute::NoInline))
+         new_function->addFnAttr(llvm::Attribute::NoInline);
+      if(function->hasFnAttribute(llvm::Attribute::AlwaysInline))
+         new_function->addFnAttr(llvm::Attribute::AlwaysInline);
+      if(function->hasFnAttribute(llvm::Attribute::InlineHint))
+         new_function->addFnAttr(llvm::Attribute::InlineHint);
       new_function->setComdat(function->getComdat());
       new_function->setCallingConv(function->getCallingConv());
 
