@@ -46,10 +46,6 @@
 #include <llvm/Analysis/InlineCost.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/IR/GetElementPtrTypeIterator.h>
-#include <llvm/IR/IntrinsicInst.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
@@ -1434,7 +1430,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
       }
       else
       {
-         if(perform_function_versioning)
+         if(perform_function_versioning and called_function->getBasicBlockList().size() > 0)
          {
             // Clone the function
             llvm::ValueToValueMapTy VMap;
