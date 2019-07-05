@@ -1470,6 +1470,10 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
          continue;
       }
 
+      if(called_function->getBasicBlockList().size() == 0) {
+          continue;
+      }
+
       std::vector<std::vector<unsigned long long>> dimensions;
 
       // Get argument's dimensions
