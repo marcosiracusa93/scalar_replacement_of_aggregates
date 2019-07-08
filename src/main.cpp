@@ -67,13 +67,13 @@ int main(int argc, char** argv)
       llvm::errs() << "Error: Null module!\n";
       exit(-1);
    }
-/*
-   char progName[] = "progName";
-   char debug[] = "-debug";
+   /*
+      char progName[] = "progName";
+      char debug[] = "-debug";
 
-   char* opt_argv[] = {progName, debug};
-   llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
-*/
+      char* opt_argv[] = {progName, debug};
+      llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
+   */
    // Run on module
    {
       llvm::legacy::PassManager* passManager = new llvm::legacy::PassManager();
@@ -85,26 +85,26 @@ int main(int argc, char** argv)
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
-      // Insert -O1 in chain
+      // Insert -O3 in chain
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 1;
+         passManagerBuilder.OptLevel = 3;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         passManagerBuilder.populateModulePassManager(*passManager);
+         ///passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createSROADisaggregationPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
-      // Insert -O1 in chain
+      // Insert -O3 in chain
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 1;
+         passManagerBuilder.OptLevel = 3;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
@@ -114,6 +114,18 @@ int main(int argc, char** argv)
 
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
+
+      // Insert -O3 in chain
+      {
+          passManager->add(llvm::createVerifierPass());
+          llvm::PassManagerBuilder passManagerBuilder;
+          passManagerBuilder.OptLevel = 3;
+          passManagerBuilder.DisableUnrollLoops = true;
+          passManagerBuilder.BBVectorize = false;
+          passManagerBuilder.LoopVectorize = false;
+          passManagerBuilder.SLPVectorize = false;
+          passManagerBuilder.populateModulePassManager(*passManager);
+      }
 
       passManager->run(*module);
    }
