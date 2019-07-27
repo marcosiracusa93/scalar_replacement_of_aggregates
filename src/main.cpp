@@ -3,6 +3,7 @@
 #include <iostream>
 #include <list>
 #include <sys/time.h>
+#include <GepiCanonicalizationPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -80,6 +81,9 @@ int main(int argc, char** argv)
       llvm::TargetIRAnalysis TIRA = llvm::TargetIRAnalysis();
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
+      passManager->add(createGepiCanonicalizationPass());
+      passManager->add(llvm::createVerifierPass());
+
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
       passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
