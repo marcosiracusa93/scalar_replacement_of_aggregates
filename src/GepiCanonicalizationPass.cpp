@@ -95,7 +95,7 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function &function) {
                     } else if (phi_node->getIncomingValue(idx) == ind_var_gepi) {
                         llvm::Constant *one_cint = llvm::ConstantInt::get(gepi_index->getType(), 1, false);
                         std::string add_inst_name = ind_var_gepi->getName().str() + ".add";
-                        llvm::BinaryOperator *add_inst = llvm::BinaryOperator::Create(llvm::Instruction::Add, new_phi_node, one_cint, add_inst_name, ind_var_gepi);
+                        llvm::BinaryOperator *add_inst = llvm::BinaryOperator::Create(llvm::Instruction::Add, new_phi_node, gepi_index, add_inst_name, ind_var_gepi);
                         new_phi_node->addIncoming(add_inst, phi_node->getIncomingBlock(idx));
                     } else {
                         exit(-1);
