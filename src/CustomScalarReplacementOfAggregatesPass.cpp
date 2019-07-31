@@ -47,6 +47,10 @@
 #include <llvm/Analysis/InlineCost.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
+#include <llvm/IR/IntrinsicInst.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 
@@ -3161,6 +3165,11 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
    for(llvm::Function* f : inner_functions)
    {
       bool doOpt = false;
+      unsigned nStmtsCaller = 0;
+      for(const auto& bbCaller: *f)
+      {
+         nStmtsCaller += bbCaller.size();
+      }
    process_function:
       for(auto& bb : *f)
       {
@@ -3170,9 +3179,23 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
             {
                auto cf = call_inst->getCalledFunction();
                assert(cf);
-               bool is_wrapper = strncmp(cf->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
-               if(is_wrapper)
+               if(cf->isIntrinsic()) continue;
+               unsigned nStmtsCallee = 0;
+               for(const auto& bbCallee: *cf)
                {
+                  nStmtsCallee += bbCallee.size();
+               }
+               unsigned nusers = 0;
+               for (auto it: cf->users())
+               {
+                  ++nusers;
+               }
+               //llvm::errs()<<cf->getName().str() << " number of users: "<< nusers << " Caller: " << nStmtsCaller << " Callee: " << nStmtsCallee << "\n";
+               auto inlineCost = nStmtsCaller+nusers*nStmtsCallee;
+               bool is_wrapper = strncmp(cf->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
+               if(is_wrapper || (nusers<5 && inlineCost<CSROAInlineThreshold))
+               {
+                  //llvm::errs()<<cf->getName().str() << " Inlined!\n";
                   cf->removeFnAttr(llvm::Attribute::NoInline);
                   cf->removeFnAttr(llvm::Attribute::OptimizeNone);
                   llvm::InlineFunctionInfo IFI = llvm::InlineFunctionInfo();
@@ -3236,11 +3259,11 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
 
    inner_functions.erase(inner_functions.begin());
 
-   for(auto f_it = fun_to_del.rbegin(); f_it != fun_to_del.rend(); ++f_it)
-   {
-      llvm::Function* f = *f_it;
-      f->eraseFromParent();
-   }
+   //for(auto f_it = fun_to_del.rbegin(); f_it != fun_to_del.rend(); ++f_it)
+   //{
+   //   llvm::Function* f = *f_it;
+   //   f->eraseFromParent();
+   //}
 }
 
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name)

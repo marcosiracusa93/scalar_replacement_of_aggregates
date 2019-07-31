@@ -14,7 +14,8 @@ public:
     char ID = 0;
 
 public:
-    GepiCanonicalizationPass() : llvm::FunctionPass(ID) {}
+    explicit GepiCanonicalizationPass(char& _ID) : llvm::FunctionPass(_ID){}
+    explicit GepiCanonicalizationPass() : llvm::FunctionPass(ID) {}
 
     bool runOnFunction(llvm::Function &function) override;
 
