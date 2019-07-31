@@ -212,6 +212,8 @@ public:
     }
 };
 
+static llvm::cl::opt<uint32_t> CSROAInlineThreshold("csroa-inline-threshold", llvm::cl::Hidden, llvm::cl::init(200), llvm::cl::desc("number of maximum statements of the single called function after the inline is applied"));
+
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 {
    llvm::Function* kernel_function = module.getFunction(kernel_name);
