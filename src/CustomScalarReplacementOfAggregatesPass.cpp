@@ -47,10 +47,6 @@
 #include <llvm/Analysis/InlineCost.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
-#include <llvm/IR/GetElementPtrTypeIterator.h>
-#include <llvm/IR/IntrinsicInst.h>
-#include <llvm/Support/Debug.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 
@@ -1457,8 +1453,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             {
                if(this_a_it->size() != oth_a_it->size())
                {
-                  llvm::errs() << "ERR: different number of dims for function implementation (" << this_a_it->size() << " " << oth_a_it->size()<< ")\n";
-                  exit(-1);
+                  return this_a_it->size() < oth_a_it->size();
                }
 
                auto this_d_it = this_a_it->begin();
