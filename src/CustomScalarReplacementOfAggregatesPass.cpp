@@ -1427,7 +1427,9 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             // Can expand same arguments
             if(arg_can_exp.size() != oth.arg_can_exp.size())
             {
-               llvm::errs() << "ERR: different number of arguments for function implementation\n";
+               llvm::errs() << "ERR: different number of arguments for function implementation for \n";
+               llvm::errs() << function_ptr->getName() << " "; function_ptr->getFunctionType()->dump();
+               llvm::errs() << oth.function_ptr->getName() << " "; oth.function_ptr->getFunctionType()->dump();
                exit(-1);
             }
             auto this_c_it = arg_can_exp.begin();
@@ -1442,7 +1444,9 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
 
             if(arg_dims.size() != oth.arg_dims.size())
             {
-               llvm::errs() << "ERR: different number of arguments for function implementation\n";
+               llvm::errs() << "ERR: different number of arguments for function implementation for \n";
+               llvm::errs() << function_ptr->getName() << " "; function_ptr->getFunctionType()->dump();
+               llvm::errs() << oth.function_ptr->getName() << " "; oth.function_ptr->getFunctionType()->dump();
                exit(-1);
             }
 
@@ -1515,7 +1519,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
       {
          std::set<llvm::Value*> traversed_instructions_for_op;
          bool constant_access = true;
-         bool check_ptr = InstChecker::check_ptr(call_inst->getArgOperandUse(op_idx).get(), traversed_instructions_for_op, &constant_access);
+         bool check_ptr = (call_inst->getArgOperandUse(op_idx).get()->getType()->isPointerTy() ? InstChecker::check_ptr(call_inst->getArgOperandUse(op_idx).get(), traversed_instructions_for_op, &constant_access) : false);
          can_exp.push_back(check_ptr and constant_access);
       }
 
@@ -3190,7 +3194,7 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
                //llvm::errs()<<cf->getName().str() << " number of users: "<< nusers << " Caller: " << nStmtsCaller << " Callee: " << nStmtsCallee << "\n";
                auto inlineCost = nStmtsCaller+nusers*nStmtsCallee;
                bool is_wrapper = strncmp(cf->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
-               if(is_wrapper || (nusers<5 && inlineCost<CSROAInlineThreshold))
+               if(is_wrapper /*|| (nusers<5 && inlineCost<CSROAInlineThreshold)*/)
                {
                   //llvm::errs()<<cf->getName().str() << " Inlined!\n";
                   cf->removeFnAttr(llvm::Attribute::NoInline);
