@@ -58,20 +58,122 @@ static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshol
 
 static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(32 * 8), llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
-class InstChecker
+bool is_relevant_function(llvm::Function *called_function) {
+   if (called_function) {
+      if (called_function->size() > 0) {
+         if (!called_function->isIntrinsic()) {
+            if (!called_function->isVarArg()) {
+               return true;
+            }
+         }
+      }
+   }
+
+   return false;
+}
+
+bool is_relevant_call(llvm::CallInst *call_inst) {
+   if (call_inst != nullptr) {
+
+      llvm::Function *called_function = call_inst->getCalledFunction();
+
+      if (called_function) {
+         return is_relevant_function(called_function);
+      }
+   }
+
+   return false;
+}
+
+bool is_allowed_intrinsic_call(llvm::CallInst *call_inst) {
+   if (call_inst != nullptr) {
+
+      llvm::Function *called_function = call_inst->getCalledFunction();
+
+      if (called_function) {
+         if(called_function->getIntrinsicID() == llvm::Intrinsic::lifetime_start)
+         {
+            return true;
+         }
+         if(called_function->getIntrinsicID() == llvm::Intrinsic::lifetime_end)
+         {
+            return true;
+         }
+      }
+   }
+
+   return false;
+}
+
+bool check_ptr_expandability(llvm::Use &ptr_use, llvm::Value *base_ptr,
+                             std::map<llvm::Use *, bool> &operand_expandability_map,
+                             std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
+                             bool (*is_relevant_call_fun)(llvm::CallInst *call_inst)) {
+
+   point_to_set_map.insert(std::make_pair(ptr_use.get(), base_ptr));
+
+   if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr_use.get())) {
+      if (ptr_use.getOperandNo() == gep_inst->getPointerOperandIndex()) {
+
+         bool ret = true;
+         for (llvm::Use &use : gep_inst->uses()) {
+            ret = ret and check_ptr_expandability(use, base_ptr, operand_expandability_map, point_to_set_map,
+                                                  is_relevant_call_fun);
+         }
+
+         return ret;
+      } else {
+         return false;
+      }
+   } else if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_use.get())) {
+      return true;
+   } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_use.get())) {
+      return true;
+   } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_use.getUser())){
+      if (is_allowed_intrinsic_call(call_inst)) {
+         operand_expandability_map.insert(std::make_pair(&ptr_use, true));
+         return true;
+      } else if (is_relevant_call_fun(call_inst)) {
+         llvm::Function *called_function = call_inst->getCalledFunction();
+         bool ret = true;
+         llvm::Argument *ptr_arg = &*std::next(called_function->arg_begin(), ptr_use.getOperandNo());
+         for (llvm::Use &use : ptr_arg->uses()) {
+            bool op_exp = check_ptr_expandability(use, base_ptr, operand_expandability_map, point_to_set_map,
+                                                  is_relevant_call_fun);
+            ret = ret and op_exp;
+         }
+
+         operand_expandability_map.insert(std::make_pair(&ptr_use, ret));
+         return ret;
+      } else {
+         return false;
+      }
+   } else {
+      return false;
+   }
+}
+
+
+
+class BA_InstChecker
 {
 public:
-    static bool check_ptr(llvm::Value* ptr, std::set<llvm::Value*>& traversed_instructions, bool *constant_access_ptr = nullptr)
+    static bool check_ptr(llvm::Value* ptr, std::map<llvm::Value*, bool>& inst_expandability_map, std::set<llvm::Value *> &traversed_ptrs, const std::map<llvm::Argument*, bool> &arg_expandability_map ,bool *constant_access_ptr = nullptr)
     {
        llvm::Value* ptr_rec = ptr;
 
-       if(traversed_instructions.count(ptr_rec) > 0)
+       auto exp_it = inst_expandability_map.find(ptr_rec);
+       if(exp_it != inst_expandability_map.end());
+       {
+          return exp_it->second;
+       }
+
+       auto trav_it = traversed_ptrs.find(ptr_rec);
+       if(trav_it != traversed_ptrs.end())
        {
           return true;
-       }
-       else
-       {
-          traversed_instructions.insert(ptr_rec);
+       } else {
+          traversed_ptrs.insert(ptr_rec);
        }
 
        do
@@ -86,14 +188,13 @@ public:
           }
           else if (llvm::SelectInst *select_inst = llvm::dyn_cast<llvm::SelectInst>(ptr_rec))
           {
-             check_ptr(select_inst->getTrueValue(), traversed_instructions, constant_access_ptr);
-             check_ptr(select_inst->getFalseValue(), traversed_instructions, constant_access_ptr);
+             check_ptr(select_inst->getTrueValue(), inst_expandability_map, traversed_ptrs, arg_expandability_map, constant_access_ptr);
+             check_ptr(select_inst->getFalseValue(), inst_expandability_map, traversed_ptrs, arg_expandability_map, constant_access_ptr);
              return false;
           }
           else if(llvm::BitCastOperator* bitcast_op = llvm::dyn_cast<llvm::BitCastOperator>(ptr_rec))
           {
-             /// ptr_rec = bitcast_op->getOperand(0);
-             check_ptr(bitcast_op->getOperand(0), traversed_instructions, constant_access_ptr);
+             check_ptr(bitcast_op->getOperand(0), inst_expandability_map, traversed_ptrs, arg_expandability_map, constant_access_ptr);
              return false;
           }
           else if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(ptr_rec))
@@ -102,15 +203,7 @@ public:
           }
           else if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(ptr_rec))
           {
-             bool expandable = true;
-
-             for(auto u_it = arg->getParent()->use_begin(); u_it != arg->getParent()->use_end(); ++u_it)
-             {
-                llvm::Value* op = u_it->getUser()->getOperand(arg->getArgNo());
-                expandable = expandable and check_ptr(op, traversed_instructions/*, constant_access_ptr*/);
-             }
-
-             return expandable;
+             return arg_expandability_map.at(arg);
           }
           else if(llvm::GlobalVariable* g_var = llvm::dyn_cast<llvm::GlobalVariable>(ptr_rec))
           {
@@ -120,7 +213,7 @@ public:
           {
              for(auto it = phi_node->value_op_begin(); it != phi_node->value_op_end(); ++it)
              {
-                check_ptr(*it, traversed_instructions, constant_access_ptr);
+                check_ptr(*it, inst_expandability_map, traversed_ptrs, arg_expandability_map, constant_access_ptr);
              }
              return false;
           }
@@ -134,33 +227,33 @@ public:
        } while(true);
     }
 
-    static bool check_inst(llvm::Instruction* inst, std::set<llvm::Value*>& avoid_expansion)
+    static bool check_inst(llvm::Instruction* inst, std::map<llvm::Value*, bool>& inst_expandability_map, const std::map<llvm::Argument*, bool> &arg_expandability_map)
     {
        if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(inst))
        {
-          std::set<llvm::Value*> traversed_instructions;
-          bool expandable = check_ptr(load_inst->getPointerOperand(), traversed_instructions);
+          std::set<llvm::Value*> traversed_ptrs;
+          bool expandable = check_ptr(load_inst->getPointerOperand(), inst_expandability_map, traversed_ptrs, arg_expandability_map);
 
-          if(!expandable)
-          {
-             avoid_expansion.insert(load_inst);
-             avoid_expansion.insert(traversed_instructions.begin(), traversed_instructions.end());
+          inst_expandability_map.insert(std::make_pair(load_inst, expandable));
+          for (auto it : traversed_ptrs) {
+             inst_expandability_map.insert(std::make_pair(it, expandable));
           }
+
           return expandable;
        }
        else if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(inst))
        {
-          std::set<llvm::Value*> traversed_instructions;
-          bool expandable = check_ptr(store_inst->getPointerOperand(), traversed_instructions);
+          std::set<llvm::Value*> traversed_ptrs;
+          bool expandable = check_ptr(store_inst->getPointerOperand(), inst_expandability_map, traversed_ptrs, arg_expandability_map);
 
-          if(!expandable)
-          {
-             avoid_expansion.insert(store_inst);
-             avoid_expansion.insert(traversed_instructions.begin(), traversed_instructions.end());
+          inst_expandability_map.insert(std::make_pair(store_inst, expandable));
+          for (auto it : traversed_ptrs) {
+             inst_expandability_map.insert(std::make_pair(it, expandable));
           }
+
           return expandable;
        }
-       else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(inst))
+       /*else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(inst))
        {
           llvm::Function* called_function = call_inst->getCalledFunction();
 
@@ -182,7 +275,7 @@ public:
              {
                 std::set<llvm::Value*> traversed_instructions_for_op;
                 bool constant_access = true;
-                if(check_ptr(op, traversed_instructions_for_op, &constant_access) and constant_access)
+                if(check_ptr_expandability(op, traversed_instructions_for_op, &constant_access) and constant_access)
                 {
 
                 }
@@ -200,7 +293,7 @@ public:
           }
 
           return expandable;
-       }
+       }*/
        else
        {
           return true;
@@ -224,8 +317,20 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       // Map specifying array argument sizes
       std::map<llvm::Argument*, std::vector<unsigned long long>> arg_size_map;
 
+      std::map<llvm::AllocaInst *, bool> allocas_expandability_map;
+      std::map<llvm::GlobalVariable *, bool> globals_expandability_map;
+      std::map<llvm::Use *, bool> operands_expandability_map;
+      std::map<llvm::Argument *, bool> arguments_expandability_map;
+      std::map<llvm::Use *, std::vector<unsigned long long>> op_dims_map;
+
+      std::map<llvm::Value *, llvm::Value *> point_to_set_map;
+
+      check_expandability_and_compute_op_dims(kernel_function, &module, allocas_expandability_map,
+                                              globals_expandability_map, operands_expandability_map,
+                                              point_to_set_map, op_dims_map);
+
       // Compute the inner functions, replicating those on call sites and check assumptions
-      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true, arg_size_map);
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true, arg_size_map, arguments_expandability_map);
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
       return true;
@@ -243,6 +348,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       // Map specifying array argument sizes
       std::map<llvm::Argument*, std::vector<unsigned long long>> arg_size_map;
+
+      // Map specifying array argument sizes
+      std::map<llvm::Argument*, bool> arg_expandability_map;
 
       // Map specifying how global variables have been expanded
       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
@@ -262,7 +370,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
 
       // Compute the inner functions, replicating those on call sites and check assumptions
-      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false, arg_size_map);
+      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false, arg_size_map, arg_expandability_map);
 
       // Spot the accessed global variables
       spot_accessed_globals(kernel_function, inner_functions, accessed_globals);
@@ -274,7 +382,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       expand_signatures_and_call_sites(inner_functions, exp_fun_map, kernel_function, inst_to_remove, alloca_to_remove, exp_args_map, exp_allocas_map, arg_size_map, DL);
 
       // Check assumptions and collect instructions/pointers expansion should be avoided of
-      check_assumptions(kernel_function, avoid_expansion);
+      check_assumptions(kernel_function, avoid_expansion, arg_expandability_map);
 
       // Expand all the loads/stores/calls
       expand_ptrs(kernel_function, inner_functions, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, DL, avoid_expansion);
@@ -313,8 +421,11 @@ bool CustomScalarReplacementOfAggregatesPass::SROA_wrapperInliningStep(llvm::Fun
    // Map specifying how arguments have been expanded
    std::map<llvm::Argument*, std::vector<llvm::Argument*>> exp_args_map;
 
+   // Map specifying array argument sizes
+   std::map<llvm::Argument*, bool> arg_expandability_map;
+
    // Compute the inner functions, replicating those on call sites and check assumptions
-   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false, arg_size_map);
+   compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, false, arg_size_map, arg_expandability_map);
 
    inline_wrappers(kernel_function, inner_functions, modulePass);
 
@@ -1253,6 +1364,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
 
          for(llvm::Instruction& i : *bb)
          {
+
             if(avoid_expansion.count(&i) != 0)
             {
                ///llvm::errs() << "In " << f->getName() << " avoided expansion: ";
@@ -1316,41 +1428,28 @@ void CustomScalarReplacementOfAggregatesPass::expand_ptrs(llvm::Function* kernel
    inner_functions.erase(inner_functions.begin());
 }
 
-bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* kernel_function, std::set<llvm::Value*>& avoid_expansion)
+bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* kernel_function, std::set<llvm::Value*>& avoid_expansion, const std::map<llvm::Argument *, bool> &arg_expandability_map)
 {
 
    // TODO: how about circular call graphs
    // TODO: how about memOps/intrinsic/extern functions
    std::vector<llvm::CallInst*> call_inst_vec;
+   call_inst_vec.push_back(nullptr);
 
-   // Initialize the vector containing the calls
-   for(llvm::BasicBlock& bb : *kernel_function)
-   {
-      for(llvm::Instruction& i : bb)
-      {
-         if(llvm::isa<llvm::LoadInst>(i) or llvm::isa<llvm::StoreInst>(i) or llvm::isa<llvm::CallInst>(i))
-         {
-            if(!InstChecker::check_inst(&i, avoid_expansion) and false)
-            {
-               ///llvm::errs() << "WAR: ";
-               ///i.print(llvm::errs());
-               ///llvm::errs() << " inhibits transformation\n";
-               ///                 return false;
-            }
-
-            if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&i))
-            {
-               call_inst_vec.push_back(call_inst);
-            }
-         }
-      }
-   }
+   std::map<llvm::Value *, bool> inst_expandability_map;
 
    // Go through the vector (which may grow at any iteration)
    for(unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx)
    {
       llvm::CallInst* call_inst = call_inst_vec.at(idx);
-      llvm::Function* called_function = call_inst->getCalledFunction();
+
+      llvm::Function* called_function = nullptr;
+
+      if (call_inst == nullptr) {
+         called_function = kernel_function;
+      } else {
+         called_function = call_inst->getCalledFunction();
+      }
 
       // TODO improve it
       if(called_function->isIntrinsic())
@@ -1365,13 +1464,7 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* 
          {
             if(llvm::isa<llvm::LoadInst>(i) or llvm::isa<llvm::StoreInst>(i) or llvm::isa<llvm::CallInst>(i))
             {
-               if(!InstChecker::check_inst(&i, avoid_expansion) and false)
-               {
-                  ///llvm::errs() << "WAR: ";
-                  ///i.print(llvm::errs());
-                  ///llvm::errs() << " inhibits transformation\n";
-                  ///                     return false;
-               }
+               BA_InstChecker::check_inst(&i, inst_expandability_map, arg_expandability_map);
 
                if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&i))
                {
@@ -1387,7 +1480,8 @@ bool CustomScalarReplacementOfAggregatesPass::check_assumptions(llvm::Function* 
 } // end check_assumptions(...)
 
 void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_function_versioning(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, bool perform_function_versioning,
-                                                                                              std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map)
+                                                                                              std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                                                                                              std::map<llvm::Argument*, bool> &arg_expandability_map)
 {
    // TODO: how about circular call graphs
    // TODO: how about memOps/intrinsic/extern functions
@@ -1517,9 +1611,11 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
       // Get argument's expandability
       for(unsigned long long op_idx = 0; op_idx < call_inst->getNumArgOperands(); ++op_idx)
       {
+         llvm::Value *arg_op = call_inst->getArgOperandUse(op_idx).get();
          std::set<llvm::Value*> traversed_instructions_for_op;
          bool constant_access = true;
-         bool check_ptr = (call_inst->getArgOperandUse(op_idx).get()->getType()->isPointerTy() ? InstChecker::check_ptr(call_inst->getArgOperandUse(op_idx).get(), traversed_instructions_for_op, &constant_access) : false);
+         std::map<llvm::Value *, bool> inst_expandability;
+         bool check_ptr = (arg_op->getType()->isPointerTy() ? BA_InstChecker::check_ptr(arg_op, inst_expandability, traversed_instructions_for_op, arg_expandability_map, &constant_access) : false);
          can_exp.push_back(check_ptr and constant_access);
       }
 
@@ -1616,6 +1712,22 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
             {
                arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
             }
+
+            auto exp_it = arg_expandability_map.find(&arg);
+            if(exp_it != arg_expandability_map.end())
+            {
+               bool v1 = exp_it->second;
+               bool v2 = can_exp.at(arg.getArgNo());
+               if(v1 != v2)
+               {
+                  llvm::errs() << "ERR: wrong versioning\n";
+                  exit(-1);
+               }
+            }
+            else
+            {
+               arg_expandability_map.insert(std::make_pair(&arg, can_exp.at(arg.getArgNo())));
+            }
          }
 
          function_dim_map.insert(std::make_pair(FunctionDimKey(called_function, dimensions, can_exp), synthesized_function));
@@ -1695,7 +1807,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
    }
 } // end compute_op_dims_and_perform_function_versioning(...)
 
-std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map)
+std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use, const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map)
 {
    llvm::Value* op_arg = op_arg_use->get();
 
@@ -2468,6 +2580,7 @@ void CustomScalarReplacementOfAggregatesPass::expand_signatures_and_call_sites(s
 void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::vector<llvm::Function*>& inner_functions, inst_set_ty& inst_to_remove,
                                                       std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, std::set<llvm::Value*>& avoid_expansion)
 {
+
    // Map specifying the expanded arguments for each function
    std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
    for(auto& i : inst_to_remove)
@@ -2478,7 +2591,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          i->eraseFromParent();
       }
    }
-
+/*
    class CheckArg
    {
     private:
@@ -2934,7 +3047,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
       llvm::Function *f = *r_it;
       f->eraseFromParent();
    }
-
+*/
    // Delete all the functions which has been expanded in something else and have no uses
    for(auto exp_it = exp_fun_map.begin(); exp_it != exp_fun_map.end(); ++exp_it)
    {
@@ -2945,7 +3058,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          function->eraseFromParent();
       }
    }
-
+/*
    for(auto glob_it = exp_globals_map.begin(); glob_it != exp_globals_map.end(); ++glob_it)
    {
       std::vector<llvm::GlobalVariable*> exp_g_var_vec = glob_it->second;
@@ -3002,7 +3115,7 @@ void CustomScalarReplacementOfAggregatesPass::cleanup(std::map<llvm::Function*, 
          }
       }
    }
-
+*/
 } // end cleanup
 
 void CustomScalarReplacementOfAggregatesPass::spot_accessed_globals(llvm::Function* kernel_function, std::vector<llvm::Function*>& inner_functions, std::set<llvm::GlobalVariable*>& accessed_globals)
@@ -3265,6 +3378,71 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
    //   llvm::Function* f = *f_it;
    //   f->eraseFromParent();
    //}
+}
+
+void
+CustomScalarReplacementOfAggregatesPass::check_expandability_and_compute_op_dims(llvm::Function *kernel_function,
+                                                                                 llvm::Module *module,
+                                                                                 std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
+                                                                                 std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
+                                                                                 std::map<llvm::Use *, bool> &operand_expandability_map,
+                                                                                 std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
+                                                                                 std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map) {
+
+   std::vector<llvm::CallInst *> call_inst_vec;
+   call_inst_vec.push_back(nullptr);
+
+   for(unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx) {
+      llvm::CallInst *call_inst = call_inst_vec.at(idx);
+
+      llvm::Function *called_function = nullptr;
+      if (call_inst) {
+         called_function = kernel_function;
+      } else {
+         called_function = call_inst->getCalledFunction();
+      }
+
+      for (llvm::BasicBlock &bb : *called_function) {
+         for (llvm::Instruction &i : bb) {
+            if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i)) {
+               if (alloca_inst->getOperand(0)->getType()->isAggregateType()) {
+                  bool can_exp = check_ptr_expandability(alloca_inst->getOperandUse(0), alloca_inst, operand_expandability_map, point_to_set_map, is_relevant_call);
+                  allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
+               }
+            } else if (llvm::CallInst *call_isnt = llvm::dyn_cast<llvm::CallInst>(&i)) {
+               if (is_relevant_call(call_inst)) {
+                  call_inst_vec.push_back(call_inst);
+               }
+            }
+         }
+      }
+   }
+
+   call_inst_vec.erase(call_inst_vec.begin());
+
+   for (llvm::GlobalVariable &global_var : module->globals()) {
+      for (llvm::Use &use : global_var.uses()) {
+         bool is_in_inner_function = true;
+
+         if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use.getUser())) {
+            for (llvm::CallInst *call_inst : call_inst_vec) {
+               llvm::Function *called_function = call_inst->getCalledFunction();
+
+               if (called_function != user_inst->getFunction()) {
+                  is_in_inner_function = false;
+                  break;
+               }
+            }
+         }
+
+         if (is_in_inner_function) {
+            bool can_exp = check_ptr_expandability(use, &global_var, operand_expandability_map, point_to_set_map, is_relevant_call);
+            globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
+         } else {
+            globals_expandability_map.insert(std::make_pair(&global_var, false));
+         }
+      }
+   }
 }
 
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name)
