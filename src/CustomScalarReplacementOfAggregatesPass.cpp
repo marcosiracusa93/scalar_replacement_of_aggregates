@@ -49,6 +49,7 @@
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+#include <stack>
 
 #define DEBUG_TYPE "csroa"
 
@@ -58,12 +59,99 @@ static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshol
 
 static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(32 * 8), llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
+class FunctionDimKey
+{
+public:
+    llvm::Function* const function_ptr = nullptr;
+    std::vector<std::vector<unsigned long long>> arg_dims = std::vector<std::vector<unsigned long long>>();
+    std::vector<bool> arg_can_exp = std::vector<bool>();
+
+    FunctionDimKey(llvm::Function* const function_ptr, const std::vector<std::vector<unsigned long long>>& arg_dims, const std::vector<bool> &arg_can_exp) : function_ptr(function_ptr), arg_dims(arg_dims), arg_can_exp(arg_can_exp)
+    {
+    }
+
+    bool operator<(const FunctionDimKey& oth) const
+    {
+       if(function_ptr != oth.function_ptr)
+       {
+          return function_ptr < oth.function_ptr;
+       }
+       else
+       {
+          // Can expand same arguments
+          if(arg_can_exp.size() != oth.arg_can_exp.size())
+          {
+             llvm::errs() << "ERR: different number of arguments for function implementation for \n";
+             llvm::errs() << function_ptr->getName() << " "; function_ptr->getFunctionType()->dump();
+             llvm::errs() << oth.function_ptr->getName() << " "; oth.function_ptr->getFunctionType()->dump();
+             exit(-1);
+          }
+          auto this_c_it = arg_can_exp.begin();
+          auto oth_c_it = oth.arg_can_exp.begin();
+
+          for(; this_c_it != arg_can_exp.end() or oth_c_it != oth.arg_can_exp.end(); ++this_c_it, ++oth_c_it)
+          {
+             if (!*this_c_it and *oth_c_it) {
+                return true;
+             }
+          }
+
+          if(arg_dims.size() != oth.arg_dims.size())
+          {
+             llvm::errs() << "ERR: different number of arguments for function implementation for \n";
+             llvm::errs() << function_ptr->getName() << " "; function_ptr->getFunctionType()->dump();
+             llvm::errs() << oth.function_ptr->getName() << " "; oth.function_ptr->getFunctionType()->dump();
+             exit(-1);
+          }
+
+          auto this_a_it = arg_dims.begin();
+          auto oth_a_it = oth.arg_dims.begin();
+
+          for(; this_a_it != arg_dims.end() or oth_a_it != oth.arg_dims.end(); ++this_a_it, ++oth_a_it)
+          {
+             if(this_a_it->size() != oth_a_it->size())
+             {
+                return this_a_it->size() < oth_a_it->size();
+             }
+
+             auto this_d_it = this_a_it->begin();
+             auto oth_d_it = oth_a_it->begin();
+
+             for(; this_d_it != this_a_it->end() or oth_d_it != oth_a_it->end(); ++this_d_it, ++oth_d_it)
+             {
+                if(*this_d_it != *oth_d_it)
+                {
+                   return *this_d_it < *oth_d_it;
+                }
+             }
+          }
+
+          return false;
+       }
+    }
+};
+
+struct CmpFunDim
+{
+    bool operator()(const FunctionDimKey& lhs, const FunctionDimKey& rhs) const
+    {
+       return lhs < rhs;
+    }
+};
+
 bool is_relevant_function(llvm::Function *called_function) {
+
    if (called_function) {
-      if (called_function->size() > 0) {
-         if (!called_function->isIntrinsic()) {
-            if (!called_function->isVarArg()) {
-               return true;
+      if (!called_function->isIntrinsic()) {
+         if (called_function->size() > 0) {
+            if(called_function->getBasicBlockList().size() != 0) {
+               if (!called_function->isVarArg()) {
+                  bool is_wrapper = strncmp(called_function->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
+                  if(!is_wrapper)
+                  {
+                     return true;
+                  }
+               }
             }
          }
       }
@@ -108,17 +196,20 @@ bool is_allowed_intrinsic_call(llvm::CallInst *call_inst) {
 bool check_ptr_expandability(llvm::Use &ptr_use, llvm::Value *base_ptr,
                              std::map<llvm::Use *, bool> &operand_expandability_map,
                              std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
-                             bool (*is_relevant_call_fun)(llvm::CallInst *call_inst)) {
+                             bool (*is_relevant_call_fun)(llvm::CallInst *call_inst),
+                             bool constant_access) {
 
    point_to_set_map.insert(std::make_pair(ptr_use.get(), base_ptr));
 
    if (llvm::GetElementPtrInst *gep_inst = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr_use.get())) {
       if (ptr_use.getOperandNo() == gep_inst->getPointerOperandIndex()) {
 
+         constant_access = constant_access and gep_inst->hasAllConstantIndices();
+
          bool ret = true;
          for (llvm::Use &use : gep_inst->uses()) {
             ret = ret and check_ptr_expandability(use, base_ptr, operand_expandability_map, point_to_set_map,
-                                                  is_relevant_call_fun);
+                                                  is_relevant_call_fun, constant_access);
          }
 
          return ret;
@@ -130,7 +221,10 @@ bool check_ptr_expandability(llvm::Use &ptr_use, llvm::Value *base_ptr,
    } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_use.get())) {
       return true;
    } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_use.getUser())){
-      if (is_allowed_intrinsic_call(call_inst)) {
+      if (!constant_access) {
+         operand_expandability_map.insert(std::make_pair(&ptr_use, false));
+         return false;
+      } else if (is_allowed_intrinsic_call(call_inst)) {
          operand_expandability_map.insert(std::make_pair(&ptr_use, true));
          return true;
       } else if (is_relevant_call_fun(call_inst)) {
@@ -139,13 +233,14 @@ bool check_ptr_expandability(llvm::Use &ptr_use, llvm::Value *base_ptr,
          llvm::Argument *ptr_arg = &*std::next(called_function->arg_begin(), ptr_use.getOperandNo());
          for (llvm::Use &use : ptr_arg->uses()) {
             bool op_exp = check_ptr_expandability(use, base_ptr, operand_expandability_map, point_to_set_map,
-                                                  is_relevant_call_fun);
+                                                  is_relevant_call_fun, true);
             ret = ret and op_exp;
          }
 
          operand_expandability_map.insert(std::make_pair(&ptr_use, ret));
          return ret;
       } else {
+         operand_expandability_map.insert(std::make_pair(&ptr_use, false));
          return false;
       }
    } else {
@@ -154,6 +249,522 @@ bool check_ptr_expandability(llvm::Use &ptr_use, llvm::Value *base_ptr,
 }
 
 
+void check_expandability(llvm::Function *kernel_function,
+                         llvm::Module *module,
+                         std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
+                         std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
+                         std::map<llvm::Use *, bool> &operand_expandability_map,
+                         std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
+                         std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> &compact_callgraph) {
+
+   std::vector<llvm::CallInst *> call_inst_vec;
+   call_inst_vec.push_back(nullptr);
+
+   for(unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx) {
+      llvm::CallInst *call_inst = call_inst_vec.at(idx);
+
+      llvm::Function *called_function = nullptr;
+      if (call_inst) {
+         called_function = call_inst->getCalledFunction();
+      } else {
+         called_function = kernel_function;
+      }
+
+      for (llvm::BasicBlock &bb : *called_function) {
+         for (llvm::Instruction &i : bb) {
+            if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i)) {
+               if (alloca_inst->getOperand(0)->getType()->isAggregateType()) {
+                  bool can_exp = check_ptr_expandability(alloca_inst->getOperandUse(0), alloca_inst, operand_expandability_map, point_to_set_map, is_relevant_call, true);
+                  allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
+               }
+            } else if (llvm::CallInst *inner_call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
+               if (is_relevant_call(inner_call_inst)) {
+                  call_inst_vec.push_back(inner_call_inst);
+                  compact_callgraph[call_inst].push_back(inner_call_inst);
+               }
+            }
+         }
+      }
+   }
+
+   call_inst_vec.erase(call_inst_vec.begin());
+
+   for (llvm::GlobalVariable &global_var : module->globals()) {
+      for (llvm::Use &use : global_var.uses()) {
+         bool is_in_inner_function = true;
+
+         if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use.getUser())) {
+            for (llvm::CallInst *call_inst : call_inst_vec) {
+               llvm::Function *called_function = call_inst->getCalledFunction();
+
+               if (called_function != user_inst->getFunction()) {
+                  is_in_inner_function = false;
+                  break;
+               }
+            }
+         }
+
+         if (is_in_inner_function) {
+            bool can_exp = check_ptr_expandability(use, &global_var, operand_expandability_map, point_to_set_map, is_relevant_call, true);
+            globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
+         } else {
+            globals_expandability_map.insert(std::make_pair(&global_var, false));
+         }
+      }
+   }
+}
+
+
+std::vector<unsigned long long> get_op_dims(llvm::Use *op_use, llvm::CallInst *parent_call_isnt,
+                                            const std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map)
+{
+   llvm::Value* op = op_use->get();
+
+   /*
+    * Compute the dimension of the value (supposed arg operand) returning:
+    *  - an empty vector in case of scalar and a vector
+    *  - a vector containing the operand dimensions in case of pointer
+    */
+
+   // If pointer returns empty vector, proceed otherwise
+   if(op->getType()->isPointerTy())
+   {
+      // Discriminate whether the operand is a gepi, argument, alloca or global
+      if(llvm::GEPOperator* gep_op_op = llvm::dyn_cast<llvm::GEPOperator>(op))
+      {
+         // In case the gepi has one index only, the argument
+         if(gep_op_op->getNumIndices() == 1)
+         {
+            llvm::Value* ptr_op = gep_op_op->getPointerOperand();
+
+            // Which is supposed to be an argument (err otherwise)
+            if(llvm::Argument* arg_ptr_op = llvm::dyn_cast<llvm::Argument>(ptr_op))
+            {
+               llvm::Use &parent_op = parent_call_isnt->getOperandUse(arg_ptr_op->getArgNo());
+               auto op_dim_it = op_dims_map.find(&parent_op);
+
+               // Which is supposed to have known size (since already processed)
+               if(op_dim_it != op_dims_map.end())
+               {
+                  std::vector<unsigned long long> arg_dims = op_dim_it->second;
+
+                  // In case of known constant index shorten the array accordingly
+                  unsigned long long idx = 0;
+                  if(llvm::ConstantInt* c_idx = llvm::dyn_cast<llvm::ConstantInt>(gep_op_op->getOperand(1)))
+                  {
+                     idx = (unsigned long long)c_idx->getSExtValue();
+                  }
+
+                  // Check if the argument size is not empty (as it should)
+                  if(!arg_dims.empty())
+                  {
+                     unsigned long long new_arg_dims_front = arg_dims.front() - idx;
+                     if(new_arg_dims_front > 0)
+                     {
+                        arg_dims.front() = new_arg_dims_front;
+                     }
+                     else
+                     {
+                        llvm::errs() << "WAR: Dim out of range\n";
+                        gep_op_op->dump();
+                        gep_op_op->getOperand(1);
+                        ///exit(-1);
+                     }
+                  }
+                  else
+                  {
+                     llvm::errs() << "ERR: empty dims\n";
+                     gep_op_op->dump();
+                     gep_op_op->getOperand(1);
+                     exit(-1);
+                  }
+
+                  return arg_dims;
+               }
+               else
+               {
+                  llvm::errs() << "ERR: Argument dimension not found\n";
+                  arg_ptr_op->dump();
+                  op_use->getUser()->dump();
+                  exit(-1);
+               }
+            }
+            else
+            {
+               llvm::errs() << "ERR: Ptr op can be argument only for this gepi\n";
+               gep_op_op->dump();
+               gep_op_op->getOperand(1);
+               exit(-1);
+            }
+         }
+         else if(gep_op_op->hasIndices()) // Otherwise, if gepi has indices
+         {
+            // Spot the last and last but one index
+            llvm::Value* last_idx = gep_op_op->getOperand(gep_op_op->getNumOperands() - 1);
+
+            // Get the last and last but one indexed type
+            llvm::Type* last_idx_type = nullptr;
+            llvm::Type* last_but_one_idx_type = nullptr;
+            unsigned long long op_idx = 0;
+            for(llvm::gep_type_iterator gt_it = llvm::gep_type_begin(gep_op_op), GTE = llvm::gep_type_end(gep_op_op); gt_it != GTE; ++gt_it)
+            {
+               if(op_idx == gep_op_op->getNumIndices() - 1)
+               {
+                  last_idx_type = gt_it.getIndexedType();
+               }
+               else if(op_idx == gep_op_op->getNumIndices() - 2)
+               {
+                  last_but_one_idx_type = gt_it.getIndexedType();
+               }
+
+               ++op_idx;
+            }
+
+            // Consider the last but one avoiding decay so
+            llvm::Type* rec_ty = last_but_one_idx_type;
+            std::vector<unsigned long long> gepi_dims;
+            do
+            {
+               if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+               {
+                  gepi_dims.push_back(arr_ty->getArrayNumElements());
+                  rec_ty = arr_ty->getArrayElementType();
+               }
+               else
+               {
+                  break;
+               }
+            } while(true);
+
+            unsigned long long idx = 0;
+            if(llvm::ConstantInt* c_idx = llvm::dyn_cast<llvm::ConstantInt>(last_idx))
+            {
+               idx = (unsigned long long)c_idx->getSExtValue();
+            }
+
+            if(!gepi_dims.empty())
+            {
+               unsigned long long new_arg_dims_front = gepi_dims.front() - idx;
+               if(new_arg_dims_front > 0)
+               {
+                  gepi_dims.front() = new_arg_dims_front;
+               }
+               else
+               {
+                  llvm::errs() << "WAR: Dim out of range\n";
+                  gep_op_op->dump();
+                  gep_op_op->getOperand(1);
+                  ///exit(-1);
+               }
+            }
+            else
+            {
+               gepi_dims.push_back(1);
+            }
+
+            return gepi_dims;
+         }
+         else
+         {
+            llvm::errs() << "ERR: Gep op with no indices\n";
+            gep_op_op->dump();
+            exit(-1);
+         }
+      }
+      else if(llvm::Argument* arg_op = llvm::dyn_cast<llvm::Argument>(op))
+      {
+         llvm::Use &parent_op = parent_call_isnt->getOperandUse(arg_op->getArgNo());
+         auto op_dim_it = op_dims_map.find(&parent_op);
+
+         // Which is supposed to have known size (since already processed)
+         if(op_dim_it != op_dims_map.end())
+         {
+            std::vector<unsigned long long> arg_dims = op_dim_it->second;
+            return arg_dims;
+         }
+         else
+         {
+            llvm::errs() << "ERR: Argument dimension not found\n";
+            arg_op->dump();
+            op_use->getUser()->dump();
+            exit(-1);
+         }
+      }
+      else if(llvm::AllocaInst* alloca_inst_op = llvm::dyn_cast<llvm::AllocaInst>(op))
+      {
+         llvm::Type* rec_ty = alloca_inst_op->getType()->getPointerElementType();
+         std::vector<unsigned long long> alloca_dims;
+         do
+         {
+            if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+            {
+               alloca_dims.push_back(arr_ty->getArrayNumElements());
+               rec_ty = arr_ty->getArrayElementType();
+            }
+            else
+            {
+               break;
+            }
+         } while(true);
+
+         if(alloca_dims.empty())
+         {
+            alloca_dims.push_back(1);
+         }
+         return alloca_dims;
+      }
+      else if(llvm::GlobalVariable* g_var_op = llvm::dyn_cast<llvm::GlobalVariable>(op))
+      {
+         llvm::Type* rec_ty = g_var_op->getType()->getPointerElementType();
+         std::vector<unsigned long long> g_var_dims;
+         do
+         {
+            if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+            {
+               g_var_dims.push_back(arr_ty->getArrayNumElements());
+               rec_ty = arr_ty->getArrayElementType();
+            }
+            else
+            {
+               break;
+            }
+         } while(true);
+
+         if(g_var_dims.empty())
+         {
+            g_var_dims.push_back(1);
+         }
+         return g_var_dims;
+      }
+      else
+      {
+         llvm::errs() << "ERR: unknown element\n";
+         op_use->get()->dump();
+         op_use->getUser()->dump();
+         exit(-1);
+      }
+   }
+   else
+   {
+      return std::vector<unsigned long long>();
+   }
+}
+
+
+void compute_op_dims(llvm::CallInst *call_inst, llvm::CallInst *parent_call_inst,
+                     const std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> &compact_callgraph,
+                     const std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
+                     const std::map<llvm::Use *, bool> &op_expandability_map,
+                     const std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
+                     const std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
+                     std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map) {
+
+   if (call_inst) {
+      if (llvm::Function *called_function = call_inst->getFunction()) {
+         for (auto idx = 0; idx < call_inst->getNumArgOperands(); ++idx) {
+            llvm::Use &op_use = call_inst->getOperandUse(idx);
+
+            std::vector<unsigned long long> dims = std::vector<unsigned long long>(1, 0);
+            auto exp_it = op_expandability_map.find(&op_use);
+            if (exp_it != op_expandability_map.end()) {
+               if (exp_it->second) {
+                  dims = get_op_dims(&op_use, parent_call_inst, op_dims_map);
+               }
+            }
+
+            op_dims_map.insert(std::make_pair(&op_use, dims));
+         }
+      }
+   }
+
+   auto call_it = compact_callgraph.find(call_inst);
+
+   if (call_it != compact_callgraph.end()) {
+      for (llvm::CallInst *inner_call_inst : call_it->second) {
+         compute_op_dims(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map);
+      }
+   }
+}
+
+void perform_function_versioning(llvm::CallInst *call_inst, llvm::CallInst *parent_call_inst,
+                                 const std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> &compact_callgraph,
+                                 const std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
+                                 const std::map<llvm::Use *, bool> &op_expandability_map,
+                                 const std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
+                                 const std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
+                                 const std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map,
+                                 std::map<FunctionDimKey, llvm::Function*, CmpFunDim> &function_dim_map,
+                                 bool just_check_versioning = false) {
+
+   auto call_it = compact_callgraph.find(call_inst);
+
+   if (call_it != compact_callgraph.end()) {
+      for (llvm::CallInst *inner_call_inst : call_it->second) {
+         perform_function_versioning(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, function_dim_map);
+      }
+   }
+
+   if (call_inst) {
+      if (llvm::Function *called_function = call_inst->getFunction()) {
+
+         std::vector<std::vector<unsigned long long>> dimensions;
+         std::vector<bool> can_exp;
+
+         // Get argument's expandability and dimensions
+         for(unsigned long long op_idx = 0; op_idx < call_inst->getNumArgOperands(); ++op_idx)
+         {
+            llvm::Use *arg_op_use = &call_inst->getArgOperandUse(op_idx);
+            bool can_exp_ptr = false;
+            if (arg_op_use->get()->getType()->isPointerTy()) {
+               auto exp_it = op_expandability_map.find(arg_op_use);
+
+               if (exp_it != op_expandability_map.end()) {
+                  can_exp_ptr = exp_it->second;
+               }
+            }
+            can_exp.push_back(can_exp_ptr);
+
+            if (can_exp_ptr) {
+               dimensions.push_back(op_dims_map.at(arg_op_use));
+            } else {
+               if (arg_op_use->get()->getType()->isPointerTy()) {
+                  dimensions.push_back(std::vector<unsigned long long>(1, 0));
+               } else {
+                  dimensions.push_back(std::vector<unsigned long long>());
+               }
+            }
+         }
+
+         llvm::Function* synthesized_function = nullptr;
+
+         FunctionDimKey search_key = FunctionDimKey(called_function, dimensions, can_exp);
+         std::map<std::string, std::set<std::string>> used_names;
+         auto fd_it = function_dim_map.find(search_key);
+         if(fd_it != function_dim_map.end())
+         {
+            synthesized_function = fd_it->second;
+         }
+         else
+         {
+            if(just_check_versioning)
+            {
+               synthesized_function = called_function;
+            }
+            else
+            {
+               // Clone the function
+               llvm::ValueToValueMapTy VMap;
+               llvm::ClonedCodeInfo* code_info = new llvm::ClonedCodeInfo();
+               llvm::Function* cloned_function = llvm::CloneFunction(called_function, VMap, code_info);
+               if(called_function->hasFnAttribute(llvm::Attribute::NoInline))
+                  cloned_function->addFnAttr(llvm::Attribute::NoInline);
+               if(called_function->hasFnAttribute(llvm::Attribute::AlwaysInline))
+                  cloned_function->addFnAttr(llvm::Attribute::AlwaysInline);
+               if(called_function->hasFnAttribute(llvm::Attribute::InlineHint))
+                  cloned_function->addFnAttr(llvm::Attribute::InlineHint);
+
+#ifdef DEBUG_CSROA
+               std::string new_name = called_function->getName().str() + "_";
+            for(auto d1 : dimensions)
+            {
+               for(auto d2 : d1)
+               {
+                  new_name.append(std::to_string(d2) + ".");
+               }
+               new_name.append(".");
+            }
+#else
+               const auto Fname = called_function->getName().str();
+               std::string new_name = called_function->getName().str() + ".";
+
+               if(used_names.find(Fname) != used_names.end())
+               {
+                  unsigned int index = 0;
+                  std::string s = std::to_string(index);
+                  while(used_names.find(Fname)->second.find(new_name + s) != used_names.find(Fname)->second.end())
+                  {
+                     ++index;
+                  }
+                  used_names[Fname].insert(new_name + s);
+                  new_name = new_name + s;
+               }
+               else
+               {
+                  std::string s = std::to_string(0);
+                  used_names[Fname].insert(new_name + s);
+                  new_name = new_name + s;
+               }
+#endif
+               cloned_function->setName(new_name);
+
+               synthesized_function = cloned_function;
+            }
+/*
+            for(auto& arg : synthesized_function->args())
+            {
+               auto size_it = arg_size_map.find(&arg);
+               if(size_it != arg_size_map.end())
+               {
+                  std::vector<unsigned long long> v1 = size_it->second;
+                  std::vector<unsigned long long> v2 = dimensions.at(arg.getArgNo());
+                  if(v1 != v2)
+                  {
+                     llvm::errs() << "ERR: wrong versioning\n";
+                     exit(-1);
+                  }
+               }
+               else
+               {
+                  arg_size_map.insert(std::make_pair(&arg, dimensions.at(arg.getArgNo())));
+               }
+
+               auto exp_it = arg_expandability_map.find(&arg);
+               if(exp_it != arg_expandability_map.end())
+               {
+                  bool v1 = exp_it->second;
+                  bool v2 = can_exp.at(arg.getArgNo());
+                  if(v1 != v2)
+                  {
+                     llvm::errs() << "ERR: wrong versioning\n";
+                     exit(-1);
+                  }
+               }
+               else
+               {
+                  arg_expandability_map.insert(std::make_pair(&arg, can_exp.at(arg.getArgNo())));
+               }
+            }
+*/
+            function_dim_map.insert(std::make_pair(FunctionDimKey(called_function, dimensions, can_exp), synthesized_function));
+         }
+
+         if(!just_check_versioning)
+         {
+            call_inst->setCalledFunction(synthesized_function);
+         }
+      }
+   }
+}
+
+void check_function_versioning(llvm::CallInst *call_inst, llvm::CallInst *parent_call_inst,
+                               const std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> &compact_callgraph,
+                               const std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
+                               const std::map<llvm::Use *, bool> &op_expandability_map,
+                               const std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
+                               const std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
+                               const std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map,
+                               std::map<FunctionDimKey, llvm::Function*, CmpFunDim> &function_dim_map) {
+
+   perform_function_versioning(call_inst, parent_call_inst,
+                               compact_callgraph,
+                               point_to_set_map,
+                               op_expandability_map,
+                               allocas_expandability_map,
+                               globals_expandability_map,
+                               op_dims_map,
+                               function_dim_map,
+                               true);
+}
 
 class BA_InstChecker
 {
@@ -321,16 +932,21 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::GlobalVariable *, bool> globals_expandability_map;
       std::map<llvm::Use *, bool> operands_expandability_map;
       std::map<llvm::Argument *, bool> arguments_expandability_map;
-      std::map<llvm::Use *, std::vector<unsigned long long>> op_dims_map;
+      std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> compact_callgraph;
 
       std::map<llvm::Value *, llvm::Value *> point_to_set_map;
 
-      check_expandability_and_compute_op_dims(kernel_function, &module, allocas_expandability_map,
-                                              globals_expandability_map, operands_expandability_map,
-                                              point_to_set_map, op_dims_map);
+      check_expandability(kernel_function, &module, allocas_expandability_map,
+                          globals_expandability_map, operands_expandability_map,
+                          point_to_set_map, compact_callgraph);
 
-      // Compute the inner functions, replicating those on call sites and check assumptions
-      compute_op_dims_and_perform_function_versioning(kernel_function, inner_functions, true, arg_size_map, arguments_expandability_map);
+      std::map<llvm::Use *, std::vector<unsigned long long>> op_dims_map;
+
+      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map);
+
+      std::map<FunctionDimKey, llvm::Function*, CmpFunDim> function_dim_map;
+      perform_function_versioning(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, function_dim_map);
+
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
       return true;
@@ -1623,7 +2239,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
       for(unsigned long long op_idx = 0; op_idx < call_inst->getNumArgOperands(); ++op_idx)
       {
          if (can_exp.at(op_idx)) {
-            dimensions.push_back(get_op_arg_dims(&call_inst->getArgOperandUse(op_idx), arg_size_map));
+            dimensions.push_back(get_op_dims(&call_inst->getArgOperandUse(op_idx), arg_size_map));
          } else {
             dimensions.push_back(std::vector<unsigned long long>(1, 0));
          }
@@ -1807,7 +2423,8 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_dims_and_perform_functi
    }
 } // end compute_op_dims_and_perform_function_versioning(...)
 
-std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_arg_dims(llvm::Use* op_arg_use, const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map)
+std::vector<unsigned long long> CustomScalarReplacementOfAggregatesPass::get_op_dims(llvm::Use *op_arg_use,
+                                                                                     const std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_size_map)
 {
    llvm::Value* op_arg = op_arg_use->get();
 
@@ -3378,71 +3995,6 @@ void CustomScalarReplacementOfAggregatesPass::inline_wrappers(llvm::Function* ke
    //   llvm::Function* f = *f_it;
    //   f->eraseFromParent();
    //}
-}
-
-void
-CustomScalarReplacementOfAggregatesPass::check_expandability_and_compute_op_dims(llvm::Function *kernel_function,
-                                                                                 llvm::Module *module,
-                                                                                 std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
-                                                                                 std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
-                                                                                 std::map<llvm::Use *, bool> &operand_expandability_map,
-                                                                                 std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
-                                                                                 std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map) {
-
-   std::vector<llvm::CallInst *> call_inst_vec;
-   call_inst_vec.push_back(nullptr);
-
-   for(unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx) {
-      llvm::CallInst *call_inst = call_inst_vec.at(idx);
-
-      llvm::Function *called_function = nullptr;
-      if (call_inst) {
-         called_function = kernel_function;
-      } else {
-         called_function = call_inst->getCalledFunction();
-      }
-
-      for (llvm::BasicBlock &bb : *called_function) {
-         for (llvm::Instruction &i : bb) {
-            if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i)) {
-               if (alloca_inst->getOperand(0)->getType()->isAggregateType()) {
-                  bool can_exp = check_ptr_expandability(alloca_inst->getOperandUse(0), alloca_inst, operand_expandability_map, point_to_set_map, is_relevant_call);
-                  allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
-               }
-            } else if (llvm::CallInst *call_isnt = llvm::dyn_cast<llvm::CallInst>(&i)) {
-               if (is_relevant_call(call_inst)) {
-                  call_inst_vec.push_back(call_inst);
-               }
-            }
-         }
-      }
-   }
-
-   call_inst_vec.erase(call_inst_vec.begin());
-
-   for (llvm::GlobalVariable &global_var : module->globals()) {
-      for (llvm::Use &use : global_var.uses()) {
-         bool is_in_inner_function = true;
-
-         if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use.getUser())) {
-            for (llvm::CallInst *call_inst : call_inst_vec) {
-               llvm::Function *called_function = call_inst->getCalledFunction();
-
-               if (called_function != user_inst->getFunction()) {
-                  is_in_inner_function = false;
-                  break;
-               }
-            }
-         }
-
-         if (is_in_inner_function) {
-            bool can_exp = check_ptr_expandability(use, &global_var, operand_expandability_map, point_to_set_map, is_relevant_call);
-            globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
-         } else {
-            globals_expandability_map.insert(std::make_pair(&global_var, false));
-         }
-      }
-   }
 }
 
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name)
