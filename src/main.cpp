@@ -1,9 +1,9 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
+#include <GepiCanonicalizationPass.hpp>
 #include <fstream>
 #include <iostream>
 #include <list>
 #include <sys/time.h>
-#include <GepiCanonicalizationPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -68,14 +68,14 @@ int main(int argc, char** argv)
       llvm::errs() << "Error: Null module!\n";
       exit(-1);
    }
-/*
-      char progName[] = "progName";
-      char debug[] = "-debug";
-      char print_after_all[] = "-print-after-all";
+   /*
+         char progName[] = "progName";
+         char debug[] = "-debug";
+         char print_after_all[] = "-print-after-all";
 
-      char* opt_argv[] = {progName, debug, print_after_all};
-      llvm::cl::ParseCommandLineOptions(3, opt_argv, "");
-*/
+         char* opt_argv[] = {progName, debug, print_after_all};
+         llvm::cl::ParseCommandLineOptions(3, opt_argv, "");
+   */
    // Run on module
    {
       llvm::legacy::PassManager* passManager = new llvm::legacy::PassManager();
@@ -90,7 +90,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         ///passManagerBuilder.populateModulePassManager(*passManager);
+         /// passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
@@ -111,7 +111,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         ///passManagerBuilder.populateModulePassManager(*passManager);
+         /// passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createSROADisaggregationPass(args_info.target_function));
@@ -126,23 +126,22 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         ///passManagerBuilder.populateModulePassManager(*passManager);
+         /// passManagerBuilder.populateModulePassManager(*passManager);
       }
-
 
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
       {
-          passManager->add(llvm::createVerifierPass());
-          llvm::PassManagerBuilder passManagerBuilder;
-          passManagerBuilder.OptLevel = 3;
-          passManagerBuilder.DisableUnrollLoops = true;
-          passManagerBuilder.BBVectorize = false;
-          passManagerBuilder.LoopVectorize = false;
-          passManagerBuilder.SLPVectorize = false;
-          passManagerBuilder.populateModulePassManager(*passManager);
+         passManager->add(llvm::createVerifierPass());
+         llvm::PassManagerBuilder passManagerBuilder;
+         passManagerBuilder.OptLevel = 3;
+         passManagerBuilder.DisableUnrollLoops = true;
+         passManagerBuilder.BBVectorize = false;
+         passManagerBuilder.LoopVectorize = false;
+         passManagerBuilder.SLPVectorize = false;
+         passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->run(*module);
