@@ -1496,42 +1496,54 @@ void compute_base_and_offset(llvm::Use *ptr_use, llvm::Value *&base_address, std
 
 template<class I>
 llvm::Value *get_element_at_offset(I *base_address,
+                                   llvm::Use *use,
                                    const std::map<I *, std::vector<I *>> &map,
                                    signed long long offset,
                                    signed long long &next_offset,
                                    unsigned long long accessed_size,
-                                   const std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_size_map,
-                                   const llvm::DataLayout &DL,
-                                   bool check_arg_dim = false) {
+                                   const std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_dims_map,
+                                   const llvm::DataLayout &DL) {
+llvm::errs() << "Use: "; use->get()->dump();
+llvm::errs() << "User: "; use->getUser()->dump();
+llvm::errs() << "Base: "; base_address->dump();
+    if (llvm::Argument *base_arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
 
-    if (check_arg_dim) {
-        if (llvm::Argument *base_arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
-            unsigned long long array_element_size = DL.getTypeAllocSize(base_arg->getType()->getPointerElementType());
+        unsigned long long array_element_size = DL.getTypeAllocSize(base_arg->getType()->getPointerElementType());
 
-            auto exp_it = map.find(base_address);
-            if (exp_it != map.end()) {
-                const std::vector<I *> &subelements = exp_it->second;
+        unsigned long long first_dim = 1;
+        auto dim_it = arg_dims_map.find(base_arg);
+        if (dim_it != arg_dims_map.end() and !dim_it->second.empty()) {
+            first_dim = dim_it->second.front();
+        }
 
-                unsigned long long idx = (unsigned long long) std::floor((double) offset / (double) array_element_size);
+        unsigned long long array_size = array_element_size * first_dim;
 
-                I *subelement = subelements.at(idx);
+        if (array_size == accessed_size) {
+            return base_arg;
+        }
 
-                if (DL.getTypeAllocSize(subelement->getType()->getPointerElementType()) == accessed_size) {
-                    return subelement;
-                } else {
-                    unsigned long long new_offset = offset - array_element_size * idx;
-                    return get_element_at_offset(subelement, map, new_offset, next_offset, accessed_size, arg_size_map, DL);
-                }
+        auto exp_it = map.find(base_address);
+        if (exp_it != map.end()) {
+            const std::vector<I *> &subelements = exp_it->second;
+
+            unsigned long long idx = (unsigned long long) std::floor((double) offset / (double) array_element_size);
+
+            I *subelement = subelements.at(idx);
+
+            if (DL.getTypeAllocSize(subelement->getType()->getPointerElementType()) == accessed_size and false) {
+                return subelement;
             } else {
-                llvm::errs() << "ERR\n";
-                exit(-1);
+                unsigned long long new_offset = offset - array_element_size * idx;
+                return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
             }
         } else {
             llvm::errs() << "ERR\n";
             exit(-1);
         }
     }
-    if (llvm::StructType *struct_type = llvm::dyn_cast<llvm::StructType>(base_address->getType()->getPointerElementType())) {
+
+    if (llvm::StructType *struct_type = llvm::dyn_cast<llvm::StructType>(
+            base_address->getType()->getPointerElementType())) {
         const llvm::StructLayout *SL = DL.getStructLayout(struct_type);
         unsigned long long idx = SL->getElementContainingOffset(offset);
 
@@ -1539,6 +1551,29 @@ llvm::Value *get_element_at_offset(I *base_address,
 
         unsigned long long struct_size = DL.getTypeAllocSize(struct_type);
         if (struct_size == accessed_size) {
+
+            do {
+                if (base_address->getType() == use->get()->getType()) {
+                    base_address->dump();
+                    use->get()->dump();
+                    break;
+                }
+                auto exp_it = map.find(base_address);
+                if (exp_it != map.end()) {
+                    const std::vector<I *> &subelements = exp_it->second;
+
+                    if (subelements.size() == 1) {
+                        I* first_sub = subelements.front();
+
+                        base_address = first_sub;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } while (1);
+
             return base_address;
         } else {
             auto exp_it = map.find(base_address);
@@ -1553,14 +1588,16 @@ llvm::Value *get_element_at_offset(I *base_address,
                     return subelement;
                 } else {
                     unsigned long long new_offset = offset - SL->getElementOffset(idx);
-                    return get_element_at_offset(subelement, map, new_offset, next_offset, accessed_size, arg_size_map, DL);
+                    return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map,
+                                                 DL);
                 }
             } else {
                 llvm::errs() << "ERR\n";
                 exit(-1);
             }
         }
-    } else if (llvm::ArrayType *array_type = llvm::dyn_cast<llvm::ArrayType>(base_address->getType()->getPointerElementType())) {
+    } else if (llvm::ArrayType *array_type = llvm::dyn_cast<llvm::ArrayType>(
+            base_address->getType()->getPointerElementType())) {
         auto exp_it = map.find(base_address);
         if (exp_it != map.end()) {
 
@@ -1569,7 +1606,7 @@ llvm::Value *get_element_at_offset(I *base_address,
             const std::vector<I *> &subelements = exp_it->second;
             unsigned long long array_element_size = DL.getTypeAllocSize(array_type->getArrayElementType());
 
-            unsigned long long idx = (unsigned long long)std::floor((double)offset / (double)array_element_size);
+            unsigned long long idx = (unsigned long long) std::floor((double) offset / (double) array_element_size);
 
             I *subelement = subelements.at(idx);
 
@@ -1577,16 +1614,133 @@ llvm::Value *get_element_at_offset(I *base_address,
                 return subelement;
             } else {
                 unsigned long long new_offset = offset - array_element_size * idx;
-                return get_element_at_offset(subelement, map, new_offset, next_offset, accessed_size, arg_size_map, DL);
+                return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
             }
         } else {
             llvm::errs() << "ERR\n";
             exit(-1);
         }
+    } else {
+        return base_address;
     }
 
     return nullptr;
 }
+
+
+template<class I>
+llvm::Value *get_element_at_offset_iter(I *base_address,
+                                        const std::map<I *, std::vector<I *>> &map,
+                                        signed long long offset,
+                                        signed long long &next_offset,
+                                        unsigned long long accessed_size,
+                                        const std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_size_map,
+                                        const llvm::DataLayout &DL) {
+    I *el_to_exp = base_address;
+    signed long long offset_to_exp = offset;
+    const llvm::StructLayout *struct_layout = nullptr;
+
+    // llvm::errs() << "Offset: " << offset << "\n";
+    // llvm::errs() << "Wanna access: " << accessed_size << "\n";
+    while (offset_to_exp > 0) {
+        auto exp_it = map.find(el_to_exp);
+
+        if (exp_it != map.end()) {
+            const std::vector<I *> &subelements = exp_it->second;
+
+            bool take_next = false;
+
+            for (I *el : subelements) {
+                unsigned long long allocated_size = DL.getTypeAllocSize(el->getType()->getPointerElementType());
+
+                if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(el)) {
+                    allocated_size = DL.getTypeAllocSize(gep_op->getResultElementType());
+                }
+
+                auto arg_size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(el));
+                if (arg_size_it != arg_size_map.end() and !arg_size_it->second.empty()) {
+                    allocated_size *= arg_size_it->second.front();
+                }
+
+                if (offset_to_exp == 0) {
+                    if (take_next) {
+                        el_to_exp = el;
+                    }
+
+                    break;
+                }
+
+                if (offset_to_exp - (signed long long) allocated_size > 0) {
+                    offset_to_exp -= allocated_size;
+                } else if (offset_to_exp - (signed long long) allocated_size == 0) {
+                    offset_to_exp -= allocated_size;
+                    take_next = true;
+                } else {
+                    el_to_exp = el;
+                    break;
+                }
+            }
+        } else {
+            llvm::errs() << "ERR: no expansion found!\n";
+            base_address->dump();
+            el_to_exp->dump();
+            exit(-1);
+        }
+    }
+
+    do {
+        unsigned long long expanded_size = DL.getTypeAllocSize(el_to_exp->getType()->getPointerElementType());
+
+        if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(el_to_exp)) {
+            expanded_size = DL.getTypeAllocSize(gep_op->getResultElementType());
+        }
+
+        auto arg_size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(el_to_exp));
+        if (arg_size_it != arg_size_map.end() and !arg_size_it->second.empty()) {
+            expanded_size *= arg_size_it->second.front();
+        }
+
+        if (accessed_size < expanded_size) {
+            auto exp_it = map.find(el_to_exp);
+
+            if (exp_it != map.end()) {
+                const std::vector<I *> &subelements = exp_it->second;
+
+                el_to_exp = subelements.front();
+            } else {
+                llvm::errs() << "ERR: El not found in map\n";
+                llvm::errs() << "Offset: " << offset << "\nAcc size: " << accessed_size << "\nExp_size: "
+                             << expanded_size << "\n";
+                llvm::errs() << "B: ";
+                base_address->dump();
+                llvm::errs() << "E: ";
+                el_to_exp->dump();
+                exit(-1);
+            }
+        } else if (accessed_size == expanded_size) {
+            break;
+        } else {
+            llvm::errs() << "ERR: bad access size\n";
+            llvm::errs() << "Offset: " << offset << "\nAcc size: " << accessed_size << "\nExp_size: " << expanded_size
+                         << "\n";
+            el_to_exp->dump();
+            exit(-1);
+        }
+    } while (true);
+
+    while (true) {
+        auto exp_it = map.find(el_to_exp);
+
+        if (exp_it != map.end() and exp_it->second.size() == 1) {
+            el_to_exp = exp_it->second.front();
+        } else {
+            break;
+        }
+    }
+
+    return el_to_exp;
+}
+
 
 llvm::Value *get_expanded_value(const std::map<llvm::Argument *, std::vector<llvm::Argument *>> &exp_args_map,
                                 const std::map<llvm::AllocaInst *, std::vector<llvm::AllocaInst *>> &exp_allocas_map,
@@ -1759,22 +1913,24 @@ llvm::Value *get_expanded_value(const std::map<llvm::Argument *, std::vector<llv
         return exp_el;
     }
     else */
+
+
     if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
         // const llvm::DataLayout* DL = &alloca_inst->getModule()->getDataLayout();
-        return get_element_at_offset(alloca_inst, exp_allocas_map, offset, next_offset, accessed_size, arg_size_map, DL);
+        return get_element_at_offset(alloca_inst, use, exp_allocas_map, offset, next_offset, accessed_size,
+                                     arg_size_map, DL);
     } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
         // const llvm::DataLayout* DL = &arg->getParent()->getParent()->getDataLayout();
-        return get_element_at_offset(arg, exp_args_map, offset, next_offset, accessed_size, arg_size_map, DL, true);
+        return get_element_at_offset(arg, use, exp_args_map, offset, next_offset, accessed_size, arg_size_map, DL);
     } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
         // const llvm::DataLayout* DL = &g_var->getParent()->getDataLayout();
-        return get_element_at_offset(g_var, exp_globals_map, offset, next_offset, accessed_size, arg_size_map, DL);
+        return get_element_at_offset(g_var, use, exp_globals_map, offset, next_offset, accessed_size, arg_size_map, DL);
     } else {
         llvm::errs() << "ERR: Neither alloca, argument, nor global as base address\n";
         base_address->dump();
         exit(-1);
     }
 }
-
 
 template<class T>
 void expand_types(T *ptr,
@@ -1876,7 +2032,7 @@ llvm::errs() << "Offset:\n "; for (auto o : offset_chain) { o->dump(); }
                     llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
                                                               arg_size_map, has_expandable_base, DL, base_address,
                                                               constant_sum, next_offset, accessed_size, nullptr, ptr_u);
-
+                    exp_val->dump();
                     ptr_u->set(exp_val);
                 } else { // Non constant offset
 
@@ -2098,7 +2254,8 @@ llvm::errs() << "Offset:\n "; for (auto o : offset_chain) { o->dump(); }
                 }
             } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
                 if (is_constant) {
-                    llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(), ptr_u->getOperandNo());
+                    llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(),
+                                                        ptr_u->getOperandNo());
 
                     auto exp_arg_it = exp_args_map.find(arg_u);
 
@@ -2106,7 +2263,6 @@ llvm::errs() << "Offset:\n "; for (auto o : offset_chain) { o->dump(); }
                     if (exp_arg_it != exp_args_map.end()) {
                         unsigned long long exp_arg_u_idx = 0;
                         for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
-
                             // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
                             unsigned long long accessed_size = DL.getTypeAllocSize(
                                     exp_arg_u->getType()->getPointerElementType());
@@ -2119,7 +2275,9 @@ llvm::errs() << "Offset:\n "; for (auto o : offset_chain) { o->dump(); }
                             llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
                                                                       arg_size_map, has_expandable_base, DL,
                                                                       base_address, arg_offset, arg_offset,
-                                                                      accessed_size, arg_u, ptr_u, &accessed_size);
+                                                                      accessed_size, arg_u,
+                                                                      &call_inst->getOperandUse(exp_arg_u->getArgNo()),
+                                                                      &accessed_size);
 
                             // Take care of array decay now
                             if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
@@ -2836,7 +2994,26 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         for (auto exp_fun_r : exp_fun_map) {
             function_worklist.insert(exp_fun_r.second);
         }
+        for (llvm::Function *f : function_worklist) {
+            llvm::errs() << "FUNCTION: " << f->getName() << "  ";
+            f->getFunctionType()->dump();
 
+            for (llvm::Argument &arg : f->args()) {
+                auto dims_it = arguments_dimensions_map.find(&arg);
+
+                if (dims_it != arguments_dimensions_map.end()) {
+                    std::vector<unsigned long long> &dims = dims_it->second;
+                    for (unsigned long long d : dims) {
+                        llvm::errs() << " " << d;
+                    }
+                } else {
+                    llvm::errs() << " N";
+                }
+
+                llvm::errs() << " _ ";
+                arg.dump();
+            }
+        }
         expand_ptrs(function_worklist,
                     exp_args_map,
                     exp_allocas_map,
@@ -2848,7 +3025,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
 
         function_worklist.erase(kernel_function);
         ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
-
+        module.dump();
         assert(!llvm::verifyModule(module, &llvm::errs()));
 
         return true;
