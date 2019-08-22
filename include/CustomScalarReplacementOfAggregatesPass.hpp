@@ -54,33 +54,33 @@ typedef std::map<llvm::Function*, std::set<llvm::AllocaInst*>> fun_to_alloca_map
 
 enum SROA_phase
 {
-    SROA_functionVersioning,
-    SROA_disaggregation,
-    SROA_wrapperInlining
+   SROA_functionVersioning,
+   SROA_disaggregation,
+   SROA_wrapperInlining
 };
 
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 {
-public:
-    char ID = 0;
+ public:
+   char ID = 0;
 
-private:
-    const unsigned short sroa_phase = 0;
+ private:
+   const unsigned short sroa_phase = 0;
 
-    const std::string kernel_name;
+   const std::string kernel_name;
 
-public:
-    explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, char& _ID, unsigned short _sroa_phase) : llvm::ModulePass(_ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
-    {
-    }
+ public:
+   explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, char& _ID, unsigned short _sroa_phase) : llvm::ModulePass(_ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
+   {
+   }
 
-    explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, unsigned short _sroa_phase) : llvm::ModulePass(ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
-    {
-    }
+   explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, unsigned short _sroa_phase) : llvm::ModulePass(ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
+   {
+   }
 
-    bool runOnModule(llvm::Module& module) override;
+   bool runOnModule(llvm::Module& module) override;
 
-    void getAnalysisUsage(llvm::AnalysisUsage& AU) const override;
+   void getAnalysisUsage(llvm::AnalysisUsage& AU) const override;
 };
 
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name);
