@@ -47,18 +47,20 @@
 
 #include <set>
 
-typedef std::set<llvm::Instruction *> inst_set_ty;
-typedef std::map<llvm::Function *, std::set<llvm::AllocaInst *>> fun_to_alloca_map_ty;
+typedef std::set<llvm::Instruction*> inst_set_ty;
+typedef std::map<llvm::Function*, std::set<llvm::AllocaInst*>> fun_to_alloca_map_ty;
 
 #define wrapper_function_name "__non_const_wrapper__"
 
-enum SROA_phase {
+enum SROA_phase
+{
     SROA_functionVersioning,
     SROA_disaggregation,
     SROA_wrapperInlining
 };
 
-class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass {
+class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
+{
 public:
     char ID = 0;
 
@@ -68,26 +70,23 @@ private:
     const std::string kernel_name;
 
 public:
-    explicit CustomScalarReplacementOfAggregatesPass(const std::string &_kernel_name, char &_ID,
-                                                     unsigned short _sroa_phase) : llvm::ModulePass(_ID),
-                                                                                   sroa_phase(_sroa_phase),
-                                                                                   kernel_name(_kernel_name) {
+    explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, char& _ID, unsigned short _sroa_phase) : llvm::ModulePass(_ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
+    {
     }
 
-    explicit CustomScalarReplacementOfAggregatesPass(const std::string &_kernel_name, unsigned short _sroa_phase)
-            : llvm::ModulePass(ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name) {
+    explicit CustomScalarReplacementOfAggregatesPass(const std::string& _kernel_name, unsigned short _sroa_phase) : llvm::ModulePass(ID), sroa_phase(_sroa_phase), kernel_name(_kernel_name)
+    {
     }
 
-    bool runOnModule(llvm::Module &module) override;
+    bool runOnModule(llvm::Module& module) override;
 
-    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
-
+    void getAnalysisUsage(llvm::AnalysisUsage& AU) const override;
 };
 
-CustomScalarReplacementOfAggregatesPass *createSROAFunctionVersioningPass(std::string kernel_name);
+CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name);
 
-CustomScalarReplacementOfAggregatesPass *createSROADisaggregationPass(std::string kernel_name);
+CustomScalarReplacementOfAggregatesPass* createSROADisaggregationPass(std::string kernel_name);
 
-CustomScalarReplacementOfAggregatesPass *createSROAWrapperInliningPass(std::string kernel_name);
+CustomScalarReplacementOfAggregatesPass* createSROAWrapperInliningPass(std::string kernel_name);
 
 #endif // SCALAR_REPLACEMENT_OF_AGGREGATES_CUSTOMSCALARREPLACEMENTOFAGGREGATESPASS_HPP

@@ -5,26 +5,30 @@
 #ifndef SCALAR_REPLACEMENT_OF_AGGREGATES_GEPICANONICALIZATIONPASS_HPP
 #define SCALAR_REPLACEMENT_OF_AGGREGATES_GEPICANONICALIZATIONPASS_HPP
 
-
-#include <llvm/Pass.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/Pass.h>
 
-class GepiCanonicalizationPass : public llvm::FunctionPass {
+class GepiCanonicalizationPass : public llvm::FunctionPass
+{
 public:
     char ID = 0;
 
 public:
-    explicit GepiCanonicalizationPass(char& _ID) : llvm::FunctionPass(_ID){}
-    explicit GepiCanonicalizationPass() : llvm::FunctionPass(ID) {}
+    explicit GepiCanonicalizationPass(char& _ID) : llvm::FunctionPass(_ID)
+    {
+    }
+    explicit GepiCanonicalizationPass() : llvm::FunctionPass(ID)
+    {
+    }
 
-    bool runOnFunction(llvm::Function &function) override;
+    bool runOnFunction(llvm::Function& function) override;
 
-    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
+    void getAnalysisUsage(llvm::AnalysisUsage& AU) const override
+    {
         AU.setPreservesCFG();
     }
 };
 
-llvm::Pass *createGepiCanonicalizationPass();
+llvm::Pass* createGepiCanonicalizationPass();
 
-
-#endif //SCALAR_REPLACEMENT_OF_AGGREGATES_GEPICANONICALIZATIONPASS_HPP
+#endif // SCALAR_REPLACEMENT_OF_AGGREGATES_GEPICANONICALIZATIONPASS_HPP
