@@ -1056,11 +1056,10 @@ void expand_signatures_and_call_sites(
                                     std::map<unsigned long, ArgObj> &newMockFunctionArgs) {
                         if (llvm::PointerType *ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->type)) {
                             if (!arg->size.empty()) {
-                                unsigned long long elements = arg->size.at(0);
+                                unsigned long long elements = arg->size.front();
 
                                 for (int e_idx = 0; e_idx < elements; ++e_idx) {
-                                    if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
-                                            ptr_ty->getElementType())) {
+                                    /*if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
                                         std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
 
                                         llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(
@@ -1095,7 +1094,20 @@ void expand_signatures_and_call_sites(
                                         exp_args_map_ref[arg].push_back(new_arg);
 
                                         rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
-                                    }
+                                    }*/
+
+                                    llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(ptr_ty->getElementType());
+                                    std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
+                                    auto argNo = newMockFunctionArgs.size();
+                                    auto new_arg = &newMockFunctionArgs[argNo];
+                                    new_arg->index = argNo;
+                                    new_arg->type = new_arg_ty;
+                                    new_arg->arg_name = new_arg_name;
+                                    new_arg->expandable = arg->expandable;
+
+                                    exp_args_map_ref[arg].push_back(new_arg);
+
+                                    rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
                                 }
                             } else if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(
                                     ptr_ty->getElementType())) {
@@ -1503,9 +1515,7 @@ llvm::Value *get_element_at_offset(I *base_address,
                                    unsigned long long accessed_size,
                                    const std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_dims_map,
                                    const llvm::DataLayout &DL) {
-llvm::errs() << "Use: "; use->get()->dump();
-llvm::errs() << "User: "; use->getUser()->dump();
-llvm::errs() << "Base: "; base_address->dump();
+
     if (llvm::Argument *base_arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
 
         unsigned long long array_element_size = DL.getTypeAllocSize(base_arg->getType()->getPointerElementType());
@@ -1519,6 +1529,27 @@ llvm::errs() << "Base: "; base_address->dump();
         unsigned long long array_size = array_element_size * first_dim;
 
         if (array_size == accessed_size) {
+
+            do {
+                if (base_address->getType() == use->get()->getType()) {
+                    break;
+                }
+                auto exp_it = map.find(base_address);
+                if (exp_it != map.end()) {
+                    const std::vector<I *> &subelements = exp_it->second;
+
+                    if (subelements.size() == 1) {
+                        I* first_sub = subelements.front();
+
+                        base_address = first_sub;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } while (1);
+
             return base_arg;
         }
 
@@ -1530,12 +1561,9 @@ llvm::errs() << "Base: "; base_address->dump();
 
             I *subelement = subelements.at(idx);
 
-            if (DL.getTypeAllocSize(subelement->getType()->getPointerElementType()) == accessed_size and false) {
-                return subelement;
-            } else {
-                unsigned long long new_offset = offset - array_element_size * idx;
-                return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
-            }
+            unsigned long long new_offset = offset - array_element_size * idx;
+            return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
+
         } else {
             llvm::errs() << "ERR\n";
             exit(-1);
@@ -1554,8 +1582,6 @@ llvm::errs() << "Base: "; base_address->dump();
 
             do {
                 if (base_address->getType() == use->get()->getType()) {
-                    base_address->dump();
-                    use->get()->dump();
                     break;
                 }
                 auto exp_it = map.find(base_address);
@@ -1584,13 +1610,11 @@ llvm::errs() << "Base: "; base_address->dump();
 
                 unsigned long long subelement_size = DL.getTypeAllocSize(
                         subelement->getType()->getPointerElementType());
-                if (subelement_size == accessed_size) {
-                    return subelement;
-                } else {
-                    unsigned long long new_offset = offset - SL->getElementOffset(idx);
-                    return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map,
-                                                 DL);
-                }
+
+                unsigned long long new_offset = offset - SL->getElementOffset(idx);
+                return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map,
+                                             DL);
+
             } else {
                 llvm::errs() << "ERR\n";
                 exit(-1);
@@ -1598,27 +1622,51 @@ llvm::errs() << "Base: "; base_address->dump();
         }
     } else if (llvm::ArrayType *array_type = llvm::dyn_cast<llvm::ArrayType>(
             base_address->getType()->getPointerElementType())) {
-        auto exp_it = map.find(base_address);
-        if (exp_it != map.end()) {
 
-            next_offset = offset + accessed_size;
+        next_offset = offset + accessed_size;
 
-            const std::vector<I *> &subelements = exp_it->second;
-            unsigned long long array_element_size = DL.getTypeAllocSize(array_type->getArrayElementType());
+        unsigned long long array_size = DL.getTypeAllocSize(array_type);
+        if (array_size == accessed_size) {
 
-            unsigned long long idx = (unsigned long long) std::floor((double) offset / (double) array_element_size);
+            do {
+                if (base_address->getType() == use->get()->getType()) {
+                    break;
+                }
+                auto exp_it = map.find(base_address);
+                if (exp_it != map.end()) {
+                    const std::vector<I *> &subelements = exp_it->second;
 
-            I *subelement = subelements.at(idx);
+                    if (subelements.size() == 1) {
+                        I* first_sub = subelements.front();
 
-            if (DL.getTypeAllocSize(subelement->getType()->getPointerElementType()) == accessed_size) {
-                return subelement;
-            } else {
-                unsigned long long new_offset = offset - array_element_size * idx;
-                return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
-            }
+                        base_address = first_sub;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } while (1);
+
+            return base_address;
         } else {
-            llvm::errs() << "ERR\n";
-            exit(-1);
+            auto exp_it = map.find(base_address);
+            if (exp_it != map.end()) {
+
+                const std::vector<I *> &subelements = exp_it->second;
+                unsigned long long array_element_size = DL.getTypeAllocSize(array_type->getArrayElementType());
+
+                unsigned long long idx = (unsigned long long) std::floor((double) offset / (double) array_element_size);
+
+                I *subelement = subelements.at(idx);
+
+                unsigned long long new_offset = offset - array_element_size * idx;
+                return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map,
+                                             DL);
+            } else {
+                llvm::errs() << "ERR\n";
+                exit(-1);
+            }
         }
     } else {
         return base_address;
@@ -1970,13 +2018,6 @@ void process_pointer(llvm::Use *ptr_u,
 
         compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain, DL);
 
-/*
-llvm::errs() << "\nUse: "; ptr_u->get()->dump();
-llvm::errs() << "User: "; ptr_u->getUser()->dump();
-llvm::errs() << "Base: "; base_address->dump();
-llvm::errs() << "Offset:\n "; for (auto o : offset_chain) { o->dump(); }
-*/
-
         bool has_expandable_base = false;
 
         if (llvm::Argument *arg_base = llvm::dyn_cast<llvm::Argument>(base_address)) {
@@ -2032,7 +2073,6 @@ llvm::errs() << "Offset:\n "; for (auto o : offset_chain) { o->dump(); }
                     llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
                                                               arg_size_map, has_expandable_base, DL, base_address,
                                                               constant_sum, next_offset, accessed_size, nullptr, ptr_u);
-                    exp_val->dump();
                     ptr_u->set(exp_val);
                 } else { // Non constant offset
 
@@ -2994,26 +3034,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         for (auto exp_fun_r : exp_fun_map) {
             function_worklist.insert(exp_fun_r.second);
         }
-        for (llvm::Function *f : function_worklist) {
-            llvm::errs() << "FUNCTION: " << f->getName() << "  ";
-            f->getFunctionType()->dump();
 
-            for (llvm::Argument &arg : f->args()) {
-                auto dims_it = arguments_dimensions_map.find(&arg);
-
-                if (dims_it != arguments_dimensions_map.end()) {
-                    std::vector<unsigned long long> &dims = dims_it->second;
-                    for (unsigned long long d : dims) {
-                        llvm::errs() << " " << d;
-                    }
-                } else {
-                    llvm::errs() << " N";
-                }
-
-                llvm::errs() << " _ ";
-                arg.dump();
-            }
-        }
         expand_ptrs(function_worklist,
                     exp_args_map,
                     exp_allocas_map,
@@ -3024,7 +3045,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
                     DL);
 
         function_worklist.erase(kernel_function);
-        ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
+        cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
         module.dump();
         assert(!llvm::verifyModule(module, &llvm::errs()));
 
@@ -3074,7 +3095,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module &module) 
         std::map<llvm::Function *, llvm::Function *> exp_fun_map;
 
         function_worklist.erase(kernel_function);
-        ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
+        cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
 
         assert(!llvm::verifyModule(module, &llvm::errs()));
 

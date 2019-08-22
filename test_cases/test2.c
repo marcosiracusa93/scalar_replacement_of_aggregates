@@ -11,7 +11,7 @@ struct s1 {
     //int i1;
     //double d2;
     //short s1;
-    int ai1[2];
+    int ai1[2][2];
     //float pf1;
     //struct s2 as2[2];
 };
@@ -27,7 +27,7 @@ int kernel(struct s1 *s11) {
            s11->i1 +
            (int)s11->d2 +
            (int)s11->s1 +*/
-           s11->ai1[0] + s11->ai1[1];// + s11->ai1[1][0] + s11->ai1[1][1];
+           s11->ai1[0][0] + s11->ai1[0][1] + s11->ai1[1][0] + s11->ai1[1][1];
            //(int)s11->pf1;// +
            //s11->as2[0].i1 + s11->as2[0].c1 + s11->as2[1].i1 + s11->as2[1].c1;
 }
@@ -49,7 +49,6 @@ int kernel(struct s1 s11) {
 int main(void) {
 
     struct s1 s11;
-    int a1[2] = {0, 1};
 
 /*
     s11.d1 = 123e+20;
