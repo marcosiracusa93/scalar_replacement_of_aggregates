@@ -3,7 +3,7 @@ source_filename = "test2.c"
 target datalayout = "e-m:o-p:32:32-f64:32:64-f80:128-n8:16:32-S128"
 target triple = "i386-apple-macosx10.13.0"
 
-%struct.s1 = type { [2 x [2 x i32]] }
+%struct.s1 = type { i64, i32, double, i16, float }
 
 ; Function Attrs: noinline nounwind ssp
 define i32 @kernel(%struct.s1* %s11) #0 {
@@ -47,20 +47,7 @@ entry:
   %a1 = alloca [2 x [2 x i32]], align 4
   %s11 = alloca %struct.s1, align 4
   store i32 0, i32* %retval, align 4
-  %arrayidx = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 0
-  %arrayidx1 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx, i32 0, i32 0
-  store i32 0, i32* %arrayidx1, align 4
-  %arrayidx2 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 0
-  %arrayidx3 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx2, i32 0, i32 1
-  store i32 1, i32* %arrayidx3, align 4
-  %arrayidx4 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 1
-  %arrayidx5 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx4, i32 0, i32 0
-  store i32 2, i32* %arrayidx5, align 4
-  %arrayidx6 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 1
-  %arrayidx7 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx6, i32 0, i32 1
-  store i32 3, i32* %arrayidx7, align 4
-  %arraydecay = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 0
-  %call = call i32 @kernel1([2 x i32]* %arraydecay)
+  %call = call i32 @kernel(%struct.s1* %s11)
   ret i32 %call
 }
 
