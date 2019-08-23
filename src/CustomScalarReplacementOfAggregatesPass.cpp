@@ -3327,9 +3327,12 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
    for(auto alloca_it : exp_allocas_map)
    {
       llvm::AllocaInst* alloca_to_del = alloca_it.first;
-      if(alloca_to_del->getNumUses() == 0)
+      if(alloca_to_del->getParent())
       {
-         alloca_to_del->eraseFromParent();
+         if(alloca_to_del->getNumUses() == 0)
+         {
+            alloca_to_del->eraseFromParent();
+         }
       }
    }
 
