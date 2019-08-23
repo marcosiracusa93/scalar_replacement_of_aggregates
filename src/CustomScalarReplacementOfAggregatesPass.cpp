@@ -2997,6 +2997,7 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
    std::map<std::pair<llvm::CallInst*, unsigned long long>, llvm::Argument*, sate_cmp> arg_to_arg;
 
    std::set<llvm::Function*> erase_in_fixed;
+   std::set<llvm::Function*> new_functions_set;
    for(llvm::Function* function : function_worklist)
    {
       // Create the new function type based on the recomputed parameters.
@@ -3109,6 +3110,8 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       new_function->setCallingConv(function->getCallingConv());
 
       new_function->getBasicBlockList().splice(new_function->begin(), function->getBasicBlockList());
+
+      new_functions_set.insert(new_function);
 
       std::set<llvm::Argument*> unused_args;
       std::set<llvm::Argument*> scalar_args;
@@ -3266,12 +3269,6 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       erase_in_fixed.insert(function);
    }
 
-   for(auto r_it = erase_in_fixed.rbegin(); r_it != erase_in_fixed.rend(); ++r_it)
-   {
-      llvm::Function* f = *r_it;
-      f->eraseFromParent();
-   }
-
    for(llvm::GlobalVariable& g_var : module.globals())
    {
       if(!g_var.getType()->isAggregateType())
@@ -3324,25 +3321,38 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       }
    }
 
-   for(auto alloca_it : exp_allocas_map)
+   std::vector<llvm::AllocaInst*> allocas_to_del;
+
+   for(llvm::Function* new_function : new_functions_set)
    {
-      llvm::AllocaInst* alloca_to_del = alloca_it.first;
-      if(alloca_to_del->getParent())
+      for(llvm::BasicBlock& bb : *new_function)
       {
-         if(alloca_to_del->getNumUses() == 0)
+         for(llvm::Instruction& i : bb)
          {
-            alloca_to_del->eraseFromParent();
+            if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i))
+            {
+               if(alloca_inst->getNumUses() == 0)
+               {
+                  allocas_to_del.push_back(alloca_inst);
+               }
+            }
+            else
+            {
+               break;
+            }
          }
       }
    }
 
-   for(auto global_it : exp_globals_map)
+   for(llvm::AllocaInst* alloca_to_del : allocas_to_del)
    {
-      llvm::GlobalVariable* global_to_del = global_it.first;
-      if(global_to_del->getNumUses() == 0)
-      {
-         global_to_del->eraseFromParent();
-      }
+      alloca_to_del->eraseFromParent();
+   }
+
+   for(auto r_it = erase_in_fixed.rbegin(); r_it != erase_in_fixed.rend(); ++r_it)
+   {
+      llvm::Function* f = *r_it;
+      f->eraseFromParent();
    }
 
 } // end cleanup
