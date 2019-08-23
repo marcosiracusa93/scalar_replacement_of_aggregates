@@ -1284,14 +1284,8 @@ void expand_signatures_and_call_sites(llvm::CallInst* call_inst, llvm::CallInst*
                         for(unsigned long long e_idx = 0; e_idx != str_ty->getStructNumElements(); ++e_idx)
                         {
                            llvm::Type* new_arg_ty = nullptr;
-                           if(str_ty->getStructElementType(e_idx)->isArrayTy())
-                           {
-                              new_arg_ty = llvm::PointerType::getUnqual(str_ty->getStructElementType(e_idx)->getArrayElementType());
-                           }
-                           else
-                           {
-                              new_arg_ty = llvm::PointerType::getUnqual(str_ty->getStructElementType(e_idx));
-                           }
+
+                           new_arg_ty = llvm::PointerType::getUnqual(str_ty->getStructElementType(e_idx));
 
                            std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
                            auto argNo = newMockFunctionArgs.size();
@@ -1300,27 +1294,28 @@ void expand_signatures_and_call_sites(llvm::CallInst* call_inst, llvm::CallInst*
                            new_arg->type = new_arg_ty;
                            new_arg->arg_name = new_arg_name;
                            new_arg->expandable = arg->expandable;
+                           /*
+                                                      if(str_ty->getStructElementType(e_idx)->isArrayTy() and false)
+                                                      {
+                                                         llvm::Type* rec_ty = str_ty->getStructElementType(e_idx);
 
-                           if(str_ty->getStructElementType(e_idx)->isArrayTy())
-                           {
-                              llvm::Type* rec_ty = str_ty->getStructElementType(e_idx);
+                                                         std::vector<unsigned long long> tmp_sizes;
+                                                         do
+                                                         {
+                                                            if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+                                                            {
+                                                               tmp_sizes.push_back(arr_ty->getArrayNumElements());
+                                                               rec_ty = arr_ty->getArrayElementType();
+                                                            }
+                                                            else
+                                                            {
+                                                               break;
+                                                            }
+                                                         } while(true);
 
-                              std::vector<unsigned long long> tmp_sizes;
-                              do
-                              {
-                                 if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
-                                 {
-                                    tmp_sizes.push_back(arr_ty->getArrayNumElements());
-                                    rec_ty = arr_ty->getArrayElementType();
-                                 }
-                                 else
-                                 {
-                                    break;
-                                 }
-                              } while(true);
-
-                              new_arg->size = tmp_sizes;
-                           }
+                                                         new_arg->size = tmp_sizes;
+                                                      }
+                           */
 
                            exp_args_map_ref[arg].push_back(new_arg);
 
@@ -2120,7 +2115,8 @@ llvm::Value* get_element_at_offset_iter(I* base_address, const std::map<I*, std:
 
 llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
                                 const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, bool is_expansion_allowed,
-                                const llvm::DataLayout& DL, llvm::Value* base_address, signed long long offset, unsigned long long& actual_accessed_size, unsigned long long accessed_size, llvm::Argument* arg_if_any, llvm::Use* use, unsigned long long* ptr = nullptr)
+                                const llvm::DataLayout& DL, llvm::Value* base_address, signed long long offset, unsigned long long& actual_accessed_size, unsigned long long accessed_size, llvm::Argument* arg_if_any, llvm::Use* use,
+                                unsigned long long* ptr = nullptr)
 {
    /*
    if(!is_expansion_allowed and false) // TODO double check here
@@ -2664,8 +2660,7 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
             if(is_constant)
             {
                llvm::Argument* arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(), ptr_u->getOperandNo());
-               llvm::errs() << "Arg: ";
-               arg_u->dump();
+
                auto exp_arg_it = exp_args_map.find(arg_u);
 
                unsigned long long current_offset = 0;
@@ -2674,8 +2669,6 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
                   unsigned long long exp_arg_u_idx = 0;
                   for(llvm::Argument* exp_arg_u : exp_arg_it->second)
                   {
-                     llvm::errs() << "ExpArg: ";
-                     exp_arg_u->dump();
                      // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
                      unsigned long long accessed_size = DL.getTypeAllocSize(exp_arg_u->getType()->getPointerElementType());
 
@@ -3555,8 +3548,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       expand_ptrs(function_worklist, exp_args_map, exp_allocas_map, exp_globals_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
-return true;
-
       function_worklist.erase(kernel_function);
       cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map, exp_allocas_map);
 
@@ -3567,7 +3558,6 @@ return true;
 
    if(sroa_phase == SROA_wrapperInlining)
    {
-return false;
       std::map<llvm::AllocaInst*, bool> allocas_expandability_map;
       std::map<llvm::GlobalVariable*, bool> globals_expandability_map;
       std::map<llvm::Use*, bool> operands_expandability_map;
