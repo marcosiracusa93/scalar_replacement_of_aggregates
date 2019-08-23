@@ -10,54 +10,57 @@ define i32 @kernel(%struct.s1* %s11) #0 {
 entry:
   %s11.addr = alloca %struct.s1*, align 4
   store %struct.s1* %s11, %struct.s1** %s11.addr, align 4
-  %0 = load %struct.s1*, %struct.s1** %s11.addr, align 4
-  %ai1 = getelementptr inbounds %struct.s1, %struct.s1* %0, i32 0, i32 0
-  %arrayidx = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %ai1, i32 0, i32 0
-  %arrayidx1 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx, i32 0, i32 0
-  %1 = load i32, i32* %arrayidx1, align 4
-  %2 = load %struct.s1*, %struct.s1** %s11.addr, align 4
-  %ai12 = getelementptr inbounds %struct.s1, %struct.s1* %2, i32 0, i32 0
-  %arrayidx3 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %ai12, i32 0, i32 0
-  %arrayidx4 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx3, i32 0, i32 1
-  %3 = load i32, i32* %arrayidx4, align 4
-  %add = add nsw i32 %1, %3
-  %4 = load %struct.s1*, %struct.s1** %s11.addr, align 4
-  %ai15 = getelementptr inbounds %struct.s1, %struct.s1* %4, i32 0, i32 0
-  %arrayidx6 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %ai15, i32 0, i32 1
-  %arrayidx7 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx6, i32 0, i32 0
-  %5 = load i32, i32* %arrayidx7, align 4
-  %add8 = add nsw i32 %add, %5
-  %6 = load %struct.s1*, %struct.s1** %s11.addr, align 4
-  %ai19 = getelementptr inbounds %struct.s1, %struct.s1* %6, i32 0, i32 0
-  %arrayidx10 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %ai19, i32 0, i32 1
-  %arrayidx11 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx10, i32 0, i32 1
-  %7 = load i32, i32* %arrayidx11, align 4
-  %add12 = add nsw i32 %add8, %7
-  ret i32 %add12
+  ret i32 0
 }
 
 ; Function Attrs: noinline nounwind ssp
-define i32 @kernel1(i32* %a1) #0 {
+define i32 @kernel1([2 x i32]* %a1) #0 {
 entry:
-  %a1.addr = alloca i32*, align 4
-  store i32* %a1, i32** %a1.addr, align 4
-  %0 = load i32*, i32** %a1.addr, align 4
-  %arrayidx = getelementptr inbounds i32, i32* %0, i32 0
-  %1 = load i32, i32* %arrayidx, align 4
-  %2 = load i32*, i32** %a1.addr, align 4
-  %arrayidx1 = getelementptr inbounds i32, i32* %2, i32 1
-  %3 = load i32, i32* %arrayidx1, align 4
+  %a1.addr = alloca [2 x i32]*, align 4
+  store [2 x i32]* %a1, [2 x i32]** %a1.addr, align 4
+  %0 = load [2 x i32]*, [2 x i32]** %a1.addr, align 4
+  %arrayidx = getelementptr inbounds [2 x i32], [2 x i32]* %0, i32 0
+  %arrayidx1 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx, i32 0, i32 0
+  %1 = load i32, i32* %arrayidx1, align 4
+  %2 = load [2 x i32]*, [2 x i32]** %a1.addr, align 4
+  %arrayidx2 = getelementptr inbounds [2 x i32], [2 x i32]* %2, i32 0
+  %arrayidx3 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx2, i32 0, i32 1
+  %3 = load i32, i32* %arrayidx3, align 4
   %add = add nsw i32 %1, %3
-  ret i32 %add
+  %4 = load [2 x i32]*, [2 x i32]** %a1.addr, align 4
+  %arrayidx4 = getelementptr inbounds [2 x i32], [2 x i32]* %4, i32 1
+  %arrayidx5 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx4, i32 0, i32 0
+  %5 = load i32, i32* %arrayidx5, align 4
+  %add6 = add nsw i32 %add, %5
+  %6 = load [2 x i32]*, [2 x i32]** %a1.addr, align 4
+  %arrayidx7 = getelementptr inbounds [2 x i32], [2 x i32]* %6, i32 1
+  %arrayidx8 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx7, i32 0, i32 1
+  %7 = load i32, i32* %arrayidx8, align 4
+  %add9 = add nsw i32 %add6, %7
+  ret i32 %add9
 }
 
 ; Function Attrs: noinline nounwind ssp
 define i32 @main() #0 {
 entry:
   %retval = alloca i32, align 4
+  %a1 = alloca [2 x [2 x i32]], align 4
   %s11 = alloca %struct.s1, align 4
   store i32 0, i32* %retval, align 4
-  %call = call i32 @kernel(%struct.s1* %s11)
+  %arrayidx = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 0
+  %arrayidx1 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx, i32 0, i32 0
+  store i32 0, i32* %arrayidx1, align 4
+  %arrayidx2 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 0
+  %arrayidx3 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx2, i32 0, i32 1
+  store i32 1, i32* %arrayidx3, align 4
+  %arrayidx4 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 1
+  %arrayidx5 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx4, i32 0, i32 0
+  store i32 2, i32* %arrayidx5, align 4
+  %arrayidx6 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 1
+  %arrayidx7 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx6, i32 0, i32 1
+  store i32 3, i32* %arrayidx7, align 4
+  %arraydecay = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 0
+  %call = call i32 @kernel1([2 x i32]* %arraydecay)
   ret i32 %call
 }
 

@@ -41,8 +41,6 @@
 #include <llvm/Pass.h>
 
 #include "llvm/Analysis/TargetTransformInfo.h"
-#include <llvm/IR/GetElementPtrTypeIterator.h>
-#include <llvm/IR/IntrinsicInst.h>
 #include "llvm/IR/Verifier.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
@@ -727,7 +725,7 @@ void compute_op_dims(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst
 void perform_function_versioning(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst, std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph, const std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
                                  const std::map<llvm::Use*, bool>& op_expandability_map, const std::map<llvm::AllocaInst*, bool>& allocas_expandability_map, const std::map<llvm::GlobalVariable*, bool>& globals_expandability_map,
                                  const std::map<llvm::Use*, std::vector<unsigned long long>>& op_dims_map, std::map<llvm::Argument*, bool>& arg_exp_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map,
-                                 std::map<FunctionDimKey, llvm::Function*, CmpFunDim>& function_dim_map, bool just_check_versioning = false)
+                                 std::map<FunctionDimKey, llvm::Function*, CmpFunDim>& function_dim_map, std::set<llvm::Function*>& fun_to_remove, bool just_check_versioning = false)
 {
    auto call_it = compact_callgraph.find(call_inst);
 
@@ -735,7 +733,8 @@ void perform_function_versioning(llvm::CallInst* call_inst, llvm::CallInst* pare
    {
       for(llvm::CallInst* inner_call_inst : call_it->second)
       {
-         perform_function_versioning(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map);
+         perform_function_versioning(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map, fun_to_remove,
+                                     just_check_versioning);
       }
    }
 
@@ -840,6 +839,9 @@ void perform_function_versioning(llvm::CallInst* call_inst, llvm::CallInst* pare
                   new_name = new_name + s;
                }
 #endif
+
+               fun_to_remove.insert(called_function);
+
                cloned_function->setName(new_name);
 
                synthesized_function = cloned_function;
@@ -925,7 +927,14 @@ void check_function_versioning(llvm::CallInst* call_inst, llvm::CallInst* parent
                                const std::map<llvm::Use*, std::vector<unsigned long long>>& op_dims_map, std::map<llvm::Argument*, bool>& arg_exp_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map,
                                std::map<FunctionDimKey, llvm::Function*, CmpFunDim>& function_dim_map)
 {
-   perform_function_versioning(call_inst, parent_call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map, true);
+   std::set<llvm::Function*> fun_to_remove;
+   perform_function_versioning(call_inst, parent_call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map, fun_to_remove, true);
+
+   if(!fun_to_remove.empty())
+   {
+      llvm::errs() << "ERR\n";
+      exit(-1);
+   }
 }
 
 void propagate_constant_arguments(const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph)
@@ -1218,7 +1227,8 @@ void expand_signatures_and_call_sites(llvm::CallInst* call_inst, llvm::CallInst*
 
                         for(int e_idx = 0; e_idx < elements; ++e_idx)
                         {
-                           /*if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
+                           /*
+                           if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
                                std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
 
                                llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(
@@ -1348,7 +1358,7 @@ void expand_signatures_and_call_sites(llvm::CallInst* call_inst, llvm::CallInst*
                               }
                            } while(true);
 
-                           new_arg->size = tmp_sizes;
+                           // new_arg->size = tmp_sizes;
 
                            rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
                         }
@@ -1724,70 +1734,94 @@ void compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std
 
 template <class I>
 llvm::Value* get_element_at_offset(I* base_address, llvm::Use* use, const std::map<I*, std::vector<I*>>& map, signed long long offset, signed long long& next_offset, unsigned long long accessed_size,
-                                   const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map, const llvm::DataLayout& DL)
+                                   const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map, const llvm::DataLayout& DL, bool no_decay = true)
 {
-   if(llvm::Argument* base_arg = llvm::dyn_cast<llvm::Argument>(base_address))
+   if(!no_decay)
    {
-      unsigned long long array_element_size = DL.getTypeAllocSize(base_arg->getType()->getPointerElementType());
-
-      unsigned long long first_dim = 1;
-      auto dim_it = arg_dims_map.find(base_arg);
-      if(dim_it != arg_dims_map.end() and !dim_it->second.empty())
+      if(llvm::Argument* base_arg = llvm::dyn_cast<llvm::Argument>(base_address))
       {
-         first_dim = dim_it->second.front();
-      }
+         unsigned long long array_element_size = DL.getTypeAllocSize(base_arg->getType()->getPointerElementType());
 
-      unsigned long long array_size = array_element_size * first_dim;
-
-      if(array_size == accessed_size)
-      {
-         do
+         unsigned long long first_dim = 1;
+         auto dim_it = arg_dims_map.find(base_arg);
+         if(dim_it != arg_dims_map.end() and !dim_it->second.empty())
          {
-            if(base_address->getType() == use->get()->getType())
-            {
-               break;
-            }
+            first_dim = dim_it->second.front();
+
             auto exp_it = map.find(base_address);
             if(exp_it != map.end())
             {
                const std::vector<I*>& subelements = exp_it->second;
 
-               if(subelements.size() == 1)
-               {
-                  I* first_sub = subelements.front();
+               unsigned long long idx = (unsigned long long)std::floor(((double)offset) / (double)array_element_size);
 
-                  base_address = first_sub;
-               }
-               else
-               {
-                  break;
-               }
+               I* subelement = subelements.at(idx);
+
+               next_offset = offset + array_element_size;
+
+               unsigned long long new_offset = offset - array_element_size * idx;
+               return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
             }
             else
             {
-               break;
+               llvm::errs() << "ERR\n";
+               llvm::errs() << "Base arg: ";
+               base_arg->dump();
+               exit(-1);
             }
-         } while(1);
+         }
+         /*else {
 
-         return base_arg;
-      }
 
-      auto exp_it = map.find(base_address);
-      if(exp_it != map.end())
-      {
-         const std::vector<I*>& subelements = exp_it->second;
 
-         unsigned long long idx = (unsigned long long)std::floor((double)offset / (double)array_element_size);
 
-         I* subelement = subelements.at(idx);
+             unsigned long long array_size = array_element_size * first_dim;
 
-         unsigned long long new_offset = offset - array_element_size * idx;
-         return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size, arg_dims_map, DL);
-      }
-      else
-      {
-         llvm::errs() << "ERR\n";
-         exit(-1);
+             if (array_size == accessed_size) {
+                 do {
+                     if (base_address->getType() == use->get()->getType()) {
+                         break;
+                     }
+                     auto exp_it = map.find(base_address);
+                     if (exp_it != map.end()) {
+                         const std::vector<I *> &subelements = exp_it->second;
+
+                         if (subelements.size() == 1) {
+                             I *first_sub = subelements.front();
+
+                             base_address = first_sub;
+                         } else {
+                             break;
+                         }
+                     } else {
+                         break;
+                     }
+                 } while (1);
+
+                 return base_address;
+             } else {
+                 auto exp_it = map.find(base_address);
+                 if (exp_it != map.end()) {
+                     const std::vector<I *> &subelements = exp_it->second;
+
+                     unsigned long long idx = (unsigned long long) std::floor(
+                             ((double) offset) / (double) array_element_size);
+
+                     I *subelement = subelements.at(idx);
+
+                     unsigned long long new_offset = offset - array_element_size * idx;
+                     return get_element_at_offset(subelement, use, map, new_offset, next_offset, accessed_size,
+                                                  arg_dims_map,
+                                                  DL);
+                 } else {
+                     llvm::errs() << "ERR\n";
+                     base_address->dump();
+                     llvm::errs() << "A: " << accessed_size << " O: " << offset << "\n";
+                     exit(-1);
+                 }
+             }
+         }
+          */
       }
    }
 
@@ -1913,6 +1947,35 @@ llvm::Value* get_element_at_offset(I* base_address, llvm::Use* use, const std::m
    }
    else
    {
+      next_offset = offset + accessed_size;
+      do
+      {
+         if(base_address->getType() == use->get()->getType())
+         {
+            break;
+         }
+         auto exp_it = map.find(base_address);
+         if(exp_it != map.end())
+         {
+            const std::vector<I*>& subelements = exp_it->second;
+
+            if(subelements.size() == 1)
+            {
+               I* first_sub = subelements.front();
+
+               base_address = first_sub;
+            }
+            else
+            {
+               break;
+            }
+         }
+         else
+         {
+            break;
+         }
+      } while(1);
+
       return base_address;
    }
 
@@ -2221,17 +2284,17 @@ llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm
    if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
    {
       // const llvm::DataLayout* DL = &alloca_inst->getModule()->getDataLayout();
-      return get_element_at_offset(alloca_inst, use, exp_allocas_map, offset, next_offset, accessed_size, arg_size_map, DL);
+      return get_element_at_offset(alloca_inst, use, exp_allocas_map, offset, next_offset, accessed_size, arg_size_map, DL, false);
    }
    else if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(base_address))
    {
       // const llvm::DataLayout* DL = &arg->getParent()->getParent()->getDataLayout();
-      return get_element_at_offset(arg, use, exp_args_map, offset, next_offset, accessed_size, arg_size_map, DL);
+      return get_element_at_offset(arg, use, exp_args_map, offset, next_offset, accessed_size, arg_size_map, DL, false);
    }
    else if(llvm::GlobalVariable* g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address))
    {
       // const llvm::DataLayout* DL = &g_var->getParent()->getDataLayout();
-      return get_element_at_offset(g_var, use, exp_globals_map, offset, next_offset, accessed_size, arg_size_map, DL);
+      return get_element_at_offset(g_var, use, exp_globals_map, offset, next_offset, accessed_size, arg_size_map, DL, false);
    }
    else
    {
@@ -2601,7 +2664,8 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
             if(is_constant)
             {
                llvm::Argument* arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(), ptr_u->getOperandNo());
-
+               llvm::errs() << "Arg: ";
+               arg_u->dump();
                auto exp_arg_it = exp_args_map.find(arg_u);
 
                signed long long arg_offset = constant_sum;
@@ -2610,6 +2674,8 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
                   unsigned long long exp_arg_u_idx = 0;
                   for(llvm::Argument* exp_arg_u : exp_arg_it->second)
                   {
+                     llvm::errs() << "ExpArg: ";
+                     exp_arg_u->dump();
                      // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
                      unsigned long long accessed_size = DL.getTypeAllocSize(exp_arg_u->getType()->getPointerElementType());
 
@@ -2747,7 +2813,8 @@ void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::m
 }
 
 void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Function*>& exp_fun_map, const std::set<llvm::Function*>& function_worklist, const std::set<llvm::Instruction*>& inst_to_remove,
-             const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map)
+             const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
+             const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map)
 {
    // Map specifying the expanded arguments for each function
    // std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
@@ -2758,7 +2825,7 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       i->eraseFromParent();
    }
 
-   // Delete all the functions which has been expanded in something else and have no uses
+   // Delete all the functions which have been expanded in something else and have no uses
    for(auto exp_it = exp_fun_map.begin(); exp_it != exp_fun_map.end(); ++exp_it)
    {
       llvm::Function* function = exp_it->first;
@@ -3261,11 +3328,29 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       }
    }
 
+   for(auto alloca_it : exp_allocas_map)
+   {
+      llvm::AllocaInst* alloca_to_del = alloca_it.first;
+      if(alloca_to_del->getNumUses() == 0)
+      {
+         alloca_to_del->eraseFromParent();
+      }
+   }
+
+   for(auto global_it : exp_globals_map)
+   {
+      llvm::GlobalVariable* global_to_del = global_it.first;
+      if(global_to_del->getNumUses() == 0)
+      {
+         global_to_del->eraseFromParent();
+      }
+   }
+
 } // end cleanup
 
 void inline_wrappers(llvm::Function* kernel_function, std::set<llvm::Function*>& inner_functions, llvm::ModulePass* modulePass)
 {
-   std::set<llvm::Function*> fun_to_del;
+   std::set<llvm::Function*> fun_to_remove;
 
    for(llvm::Function* f : inner_functions)
    {
@@ -3299,7 +3384,7 @@ void inline_wrappers(llvm::Function* kernel_function, std::set<llvm::Function*>&
                // llvm::errs()<<cf->getName().str() << " number of users: "<< nusers << " Caller: " << nStmtsCaller << " Callee: " << nStmtsCallee << "\n";
                auto inlineCost = nStmtsCaller + nusers * nStmtsCallee;
                bool is_wrapper = strncmp(cf->getName().str().c_str(), std::string(wrapper_function_name).c_str(), std::string(wrapper_function_name).size()) == 0;
-               if(is_wrapper || (nusers<5 && inlineCost<CSROAInlineThreshold))
+               if(is_wrapper || (nusers < 5 && inlineCost < CSROAInlineThreshold))
                {
                   // llvm::errs()<<cf->getName().str() << " Inlined!\n";
                   cf->removeFnAttr(llvm::Attribute::NoInline);
@@ -3311,7 +3396,7 @@ void inline_wrappers(llvm::Function* kernel_function, std::set<llvm::Function*>&
                      exit(-1);
                   }
 
-                  fun_to_del.insert(cf);
+                  fun_to_remove.insert(cf);
                   doOpt = true;
 
                   goto process_function;
@@ -3363,7 +3448,7 @@ void inline_wrappers(llvm::Function* kernel_function, std::set<llvm::Function*>&
       }
    }
 
-   // for(auto f_it = fun_to_del.rbegin(); f_it != fun_to_del.rend(); ++f_it)
+   // for(auto f_it = fun_to_remove.rbegin(); f_it != fun_to_remove.rend(); ++f_it)
    //{
    //   llvm::Function* f = *f_it;
    //   f->eraseFromParent();
@@ -3395,8 +3480,17 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<FunctionDimKey, llvm::Function*, CmpFunDim> function_dim_map;
       std::map<llvm::Argument*, bool> arg_exp_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arg_dims_map;
+      std::set<llvm::Function*> fun_to_remove;
 
-      perform_function_versioning(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map);
+      perform_function_versioning(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map, fun_to_remove);
+
+      for(auto f_it : fun_to_remove)
+      {
+         if(f_it->getNumUses() == 0)
+         {
+            f_it->eraseFromParent();
+         }
+      }
 
       propagate_constant_arguments(compact_callgraph);
 
@@ -3412,6 +3506,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::Use*, bool> operands_expandability_map;
       std::map<llvm::CallInst*, std::vector<llvm::CallInst*>> compact_callgraph;
       std::set<llvm::Instruction*> inst_to_remove;
+      std::set<llvm::Function*> fun_to_remove;
 
       std::map<llvm::Value*, llvm::Value*> point_to_set_map;
 
@@ -3458,8 +3553,8 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       expand_ptrs(function_worklist, exp_args_map, exp_allocas_map, exp_globals_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
-      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
-      module.dump();
+      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map, exp_allocas_map);
+
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
       return true;
@@ -3499,14 +3594,14 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       }
 
       inline_wrappers(kernel_function, function_worklist, this);
-
+      return false;
       std::map<llvm::Argument*, std::vector<llvm::Argument*>> exp_args_map;
       std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
       std::map<llvm::Function*, llvm::Function*> exp_fun_map;
 
       function_worklist.erase(kernel_function);
-      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map);
+      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map, exp_allocas_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
