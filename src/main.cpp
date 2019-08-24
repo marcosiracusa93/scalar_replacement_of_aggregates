@@ -106,7 +106,7 @@ int main(int argc, char** argv)
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 1;
+         passManagerBuilder.OptLevel = 3;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
@@ -128,22 +128,22 @@ int main(int argc, char** argv)
          passManagerBuilder.SLPVectorize = false;
          /// passManagerBuilder.populateModulePassManager(*passManager);
       }
-      /*
-            passManager->add(createSROAWrapperInliningPass(args_info.target_function));
-            passManager->add(llvm::createVerifierPass());
 
-            // Insert -O3 in chain
-            {
-               passManager->add(llvm::createVerifierPass());
-               llvm::PassManagerBuilder passManagerBuilder;
-               passManagerBuilder.OptLevel = 3;
-               passManagerBuilder.DisableUnrollLoops = true;
-               passManagerBuilder.BBVectorize = false;
-               passManagerBuilder.LoopVectorize = false;
-               passManagerBuilder.SLPVectorize = false;
-               ///passManagerBuilder.populateModulePassManager(*passManager);
-            }
-      */
+      passManager->add(createSROAWrapperInliningPass(args_info.target_function));
+      passManager->add(llvm::createVerifierPass());
+
+      // Insert -O3 in chain
+      {
+         passManager->add(llvm::createVerifierPass());
+         llvm::PassManagerBuilder passManagerBuilder;
+         passManagerBuilder.OptLevel = 3;
+         passManagerBuilder.DisableUnrollLoops = true;
+         passManagerBuilder.BBVectorize = false;
+         passManagerBuilder.LoopVectorize = false;
+         passManagerBuilder.SLPVectorize = false;
+         passManagerBuilder.populateModulePassManager(*passManager);
+      }
+
       passManager->run(*module);
    }
 

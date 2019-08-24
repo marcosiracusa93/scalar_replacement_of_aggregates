@@ -37,6 +37,10 @@ int kernel1(int a1[2][2]) {
     return a1[0][0] + a1[0][1] + a1[1][0] + a1[1][1];
 }
 
+int kernel2(int *i1) {
+    return *i1;
+}
+
 /*
 int kernel(struct s1 s11) {
 
@@ -87,5 +91,6 @@ int main(void) {
            (int)s11.pf1 +
            s11.as2[0].i1 + s11.as2[0].c1 + s11.as2[1].i1 + s11.as2[1].c1;
 */
-    return kernel(&s11) + kernel1(a1);
+    int k;
+    return kernel(&s11) + kernel1(a1) + kernel2(&s11.i1);
 }

@@ -2663,7 +2663,7 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
 
                auto exp_arg_it = exp_args_map.find(arg_u);
 
-               unsigned long long current_offset = 0;
+               unsigned long long current_offset = constant_sum;
                if(exp_arg_it != exp_args_map.end())
                {
                   unsigned long long exp_arg_u_idx = 0;
