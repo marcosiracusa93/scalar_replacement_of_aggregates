@@ -1,5 +1,4 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
-#include <GepiCanonicalizationPass.hpp>
 #include <fstream>
 #include <iostream>
 #include <list>
@@ -68,14 +67,14 @@ int main(int argc, char** argv)
       llvm::errs() << "Error: Null module!\n";
       exit(-1);
    }
-   /*
+/*
          char progName[] = "progName";
          char debug[] = "-debug";
          char print_after_all[] = "-print-after-all";
 
          char* opt_argv[] = {progName, debug, print_after_all};
          llvm::cl::ParseCommandLineOptions(3, opt_argv, "");
-   */
+*/
    // Run on module
    {
       llvm::legacy::PassManager* passManager = new llvm::legacy::PassManager();
@@ -94,7 +93,7 @@ int main(int argc, char** argv)
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
-      passManager->add(createGepiCanonicalizationPass());
+      //passManager->add(createGepiCanonicalizationPass());
       passManager->add(llvm::createVerifierPass());
 
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
@@ -141,7 +140,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         passManagerBuilder.populateModulePassManager(*passManager);
+         ///passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->run(*module);
