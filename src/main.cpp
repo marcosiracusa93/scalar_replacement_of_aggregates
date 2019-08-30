@@ -68,14 +68,14 @@ int main(int argc, char** argv)
       exit(-1);
    }
 
-/*
-    char progName[] = "progName";
-    char debug[] = "-debug";
-    char print_after_all[] = "-print-after-all";
+   /*
+       char progName[] = "progName";
+       char debug[] = "-debug";
+       char print_after_all[] = "-print-after-all";
 
-    char* opt_argv[] = {progName, debug, print_after_all};
-    llvm::cl::ParseCommandLineOptions(3, opt_argv, "");
-*/
+       char* opt_argv[] = {progName, debug, print_after_all};
+       llvm::cl::ParseCommandLineOptions(3, opt_argv, "");
+   */
 
    // Run on module
    {
@@ -95,7 +95,7 @@ int main(int argc, char** argv)
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
-      //passManager->add(createGepiCanonicalizationPass());
+      // passManager->add(createGepiCanonicalizationPass());
       passManager->add(llvm::createVerifierPass());
 
       passManager->add(new llvm::ScalarEvolutionWrapperPass());

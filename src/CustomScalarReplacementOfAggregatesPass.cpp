@@ -61,34 +61,49 @@ static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl:
 
 static llvm::cl::opt<uint32_t> CSROAInlineThreshold("csroa-inline-threshold", llvm::cl::Hidden, llvm::cl::init(200), llvm::cl::desc("number of maximum statements of the single called function after the inline is applied"));
 
-class Utilities {
-public:
-    static void print_cfg(const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>> &compact_callgraph) {
-       llvm::errs() << "\n*********************************************";
-       llvm::errs() << "\n******************** CFG ********************";
-       llvm::errs() << "\n*********************************************\n";
-       print_cfg_rec(compact_callgraph, nullptr, 0);
-       llvm::errs() << "\n*********************************************\n";
-    }
+class Utilities
+{
+ public:
+   static void print_cfg(const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph)
+   {
+      llvm::errs() << "\n*********************************************";
+      llvm::errs() << "\n******************** CFG ********************";
+      llvm::errs() << "\n*********************************************\n";
+      print_cfg_rec(compact_callgraph, nullptr, 0);
+      llvm::errs() << "\n*********************************************\n";
+   }
 
-private:
-    static void print_cfg_rec(const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>> &compact_callgraph, llvm::CallInst *call_inst, unsigned long long depth) {
-       for (unsigned long long d = 0; d < depth; ++d) { llvm::errs() << "  "; }
+ private:
+   static void print_cfg_rec(const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph, llvm::CallInst* call_inst, unsigned long long depth)
+   {
+      for(unsigned long long d = 0; d < depth; ++d)
+      {
+         llvm::errs() << "  ";
+      }
 
-       llvm::errs() << "  " << call_inst << "  ";
-       if (call_inst) { call_inst->dump(); } else { llvm::errs() << "KERNEL\n"; }
+      llvm::errs() << "  " << call_inst << "  ";
+      if(call_inst)
+      {
+         call_inst->dump();
+      }
+      else
+      {
+         llvm::errs() << "KERNEL\n";
+      }
 
-       auto call_it = compact_callgraph.find(call_inst);
-       depth++;
+      auto call_it = compact_callgraph.find(call_inst);
+      depth++;
 
-       if (call_it != compact_callgraph.end()) {
-          auto &call_vec = call_it->second;
+      if(call_it != compact_callgraph.end())
+      {
+         auto& call_vec = call_it->second;
 
-          for (auto c : call_vec) {
-             print_cfg_rec(compact_callgraph, c, depth);
-          }
-       }
-    }
+         for(auto c : call_vec)
+         {
+            print_cfg_rec(compact_callgraph, c, depth);
+         }
+      }
+   }
 };
 
 class FunctionDimKey
@@ -430,7 +445,9 @@ void compute_expandability(llvm::Function* kernel_function, llvm::Module* module
                      can_exp = can_exp and check_ptr_expandability(use, alloca_inst, operand_expandability_map, point_to_set_map, is_relevant_call, true);
                   }
                   allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
-               } else {
+               }
+               else
+               {
                   allocas_expandability_map.insert(std::make_pair(alloca_inst, false));
                }
             }
@@ -478,7 +495,9 @@ void compute_expandability(llvm::Function* kernel_function, llvm::Module* module
                   can_exp = can_exp and check_ptr_expandability(use, &global_var, operand_expandability_map, point_to_set_map, is_relevant_call, true);
                }
                globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
-            } else {
+            }
+            else
+            {
                globals_expandability_map.insert(std::make_pair(&global_var, false));
             }
          }
@@ -744,7 +763,9 @@ void compute_op_dims(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst
                {
                   dims = get_op_dims(&op_use, parent_call_inst, op_dims_map);
                }
-            } else {
+            }
+            else
+            {
                op_expandability_map.insert(std::make_pair(&op_use, false));
             }
 
@@ -764,25 +785,15 @@ void compute_op_dims(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst
    }
 }
 
-void perform_function_versioning(llvm::CallInst *call_inst, llvm::CallInst *parent_call_inst,
-                                 llvm::Function *kernel_function,
-                                 std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> &compact_callgraph,
-                                 const std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
-                                 const std::map<llvm::Use *, bool> &op_expandability_map,
-                                 const std::map<llvm::AllocaInst *, bool> &allocas_expandability_map,
-                                 const std::map<llvm::GlobalVariable *, bool> &globals_expandability_map,
-                                 const std::map<llvm::Use *, std::vector<unsigned long long>> &op_dims_map,
-                                 std::map<llvm::Argument *, bool> &arg_exp_map,
-                                 std::map<llvm::Argument *, std::vector<unsigned long long>> &arg_dims_map,
-                                 std::map<FunctionDimKey, llvm::Function *, CmpFunDim> &function_dim_map,
-                                 std::set<llvm::Function *> &fun_to_remove,
-                                 std::map<llvm::CallInst *, llvm::Function *> &call_updates,
-                                 bool just_check_versioning = false)
+void perform_function_versioning(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst, llvm::Function* kernel_function, std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph,
+                                 const std::map<llvm::Value*, llvm::Value*>& point_to_set_map, const std::map<llvm::Use*, bool>& op_expandability_map, const std::map<llvm::AllocaInst*, bool>& allocas_expandability_map,
+                                 const std::map<llvm::GlobalVariable*, bool>& globals_expandability_map, const std::map<llvm::Use*, std::vector<unsigned long long>>& op_dims_map, std::map<llvm::Argument*, bool>& arg_exp_map,
+                                 std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map, std::map<FunctionDimKey, llvm::Function*, CmpFunDim>& function_dim_map, std::set<llvm::Function*>& fun_to_remove,
+                                 std::map<llvm::CallInst*, llvm::Function*>& call_updates, bool just_check_versioning = false)
 {
-
    llvm::Function* synthesized_function = nullptr;
 
-   std::map<llvm::CallInst *, llvm::Function*> inner_call_updates;
+   std::map<llvm::CallInst*, llvm::Function*> inner_call_updates;
 
    auto call_it = compact_callgraph.find(call_inst);
 
@@ -792,12 +803,9 @@ void perform_function_versioning(llvm::CallInst *call_inst, llvm::CallInst *pare
 
       for(unsigned long long idx = 0; idx < call_inst_vec.size(); ++idx)
       {
-         llvm::CallInst *inner_call_inst = call_inst_vec.at(idx);
-         perform_function_versioning(inner_call_inst, call_inst, kernel_function, compact_callgraph, point_to_set_map,
-                                     op_expandability_map, allocas_expandability_map, globals_expandability_map,
-                                     op_dims_map, arg_exp_map, arg_dims_map, function_dim_map, fun_to_remove,
-                                     inner_call_updates,
-                                     just_check_versioning);
+         llvm::CallInst* inner_call_inst = call_inst_vec.at(idx);
+         perform_function_versioning(inner_call_inst, call_inst, kernel_function, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map,
+                                     fun_to_remove, inner_call_updates, just_check_versioning);
       }
    }
 
@@ -844,14 +852,16 @@ void perform_function_versioning(llvm::CallInst *call_inst, llvm::CallInst *pare
 
          FunctionDimKey search_key = FunctionDimKey(called_function, dimensions, can_exp);
          std::map<std::string, std::set<std::string>> used_names;
-/*
-llvm::errs() << "SEARCHING: " << search_key.function_ptr << " " << search_key.function_ptr->getName() << " "; for (auto c : can_exp) { llvm::errs() << " " << c; } for (auto d : dimensions) { for (auto dd : d) { llvm::errs() << " " << dd; } llvm::errs() << "\n"; }
-for (auto f : function_dim_map) {
-   FunctionDimKey search_key = f.first;
-   llvm::errs() << search_key.function_ptr  << " " << search_key.function_ptr->getName() << " "; for (auto c : can_exp) { llvm::errs() << " " << c; } for (auto d : dimensions) { for (auto dd : d) { llvm::errs() << " " << dd; } llvm::errs() << "\n"; }
-}
-llvm::errs() << "_____________________________\n";
-*/
+         /*
+         llvm::errs() << "SEARCHING: " << search_key.function_ptr << " " << search_key.function_ptr->getName() << " "; for (auto c : can_exp) { llvm::errs() << " " << c; } for (auto d : dimensions) { for (auto dd : d) { llvm::errs() << " " << dd; }
+         llvm::errs() << "\n"; }
+         for (auto f : function_dim_map) {
+            FunctionDimKey search_key = f.first;
+            llvm::errs() << search_key.function_ptr  << " " << search_key.function_ptr->getName() << " "; for (auto c : can_exp) { llvm::errs() << " " << c; } for (auto d : dimensions) { for (auto dd : d) { llvm::errs() << " " << dd; } llvm::errs() <<
+         "\n"; }
+         }
+         llvm::errs() << "_____________________________\n";
+         */
 
          auto fd_it = function_dim_map.find(search_key);
          if(fd_it != function_dim_map.end())
@@ -957,49 +967,53 @@ llvm::errs() << "_____________________________\n";
 
          if(!just_check_versioning)
          {
-
-            //call_inst->setCalledFunction(synthesized_function);
+            // call_inst->setCalledFunction(synthesized_function);
             call_updates.insert(std::make_pair(call_inst, synthesized_function));
 
-            std::vector<llvm::CallInst *> call_inst_vec;
+            std::vector<llvm::CallInst*> call_inst_vec;
 
-            for (llvm::BasicBlock &bb : *synthesized_function) {
-               for (llvm::Instruction &i : bb) {
-                  if (llvm::CallInst *inner_call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
-                     if (is_relevant_call(inner_call_inst)) {
+            for(llvm::BasicBlock& bb : *synthesized_function)
+            {
+               for(llvm::Instruction& i : bb)
+               {
+                  if(llvm::CallInst* inner_call_inst = llvm::dyn_cast<llvm::CallInst>(&i))
+                  {
+                     if(is_relevant_call(inner_call_inst))
+                     {
                         call_inst_vec.push_back(inner_call_inst);
                      }
                   }
                }
             }
 
-            //compact_callgraph[call_inst] = call_inst_vec;
+            // compact_callgraph[call_inst] = call_inst_vec;
             // TODO improve with caching as below
-/*
-            if(synthesized_function->getNumUses() > 0)
-            {
-               llvm::CallInst* first_call_use = llvm::dyn_cast<llvm::CallInst>(synthesized_function->use_begin()->getUser());
+            /*
+                        if(synthesized_function->getNumUses() > 0)
+                        {
+                           llvm::CallInst* first_call_use = llvm::dyn_cast<llvm::CallInst>(synthesized_function->use_begin()->getUser());
 
-               if(first_call_use)
-               {
-                  auto first_call_use_it = compact_callgraph.find(first_call_use);
-                  if(first_call_use_it != compact_callgraph.end())
-                  {
-                     compact_callgraph[call_inst] = first_call_use_it->second;
-                  }
-               }
-               else
-               {
-                  llvm::errs() << "ERR: first use not found\n";
-                  exit(-1);
-               }
-            }
-*/
+                           if(first_call_use)
+                           {
+                              auto first_call_use_it = compact_callgraph.find(first_call_use);
+                              if(first_call_use_it != compact_callgraph.end())
+                              {
+                                 compact_callgraph[call_inst] = first_call_use_it->second;
+                              }
+                           }
+                           else
+                           {
+                              llvm::errs() << "ERR: first use not found\n";
+                              exit(-1);
+                           }
+                        }
+            */
          }
 
-         for (auto update_it : inner_call_updates) {
-            llvm::CallInst *call_inst_to_replace = update_it.first;
-            llvm::Function *inner_synthesized_function = update_it.second;
+         for(auto update_it : inner_call_updates)
+         {
+            llvm::CallInst* call_inst_to_replace = update_it.first;
+            llvm::Function* inner_synthesized_function = update_it.second;
 
             auto bb_iter = call_inst_to_replace->getParent()->getIterator();
             auto call_iter = call_inst_to_replace->getIterator();
@@ -1010,21 +1024,25 @@ llvm::errs() << "_____________________________\n";
             auto new_bb_iter = std::next(synthesized_function->begin(), bb_dist);
             auto new_call_iter = std::next(new_bb_iter->begin(), call_dist);
 
-            if (llvm::CallInst *new_call_inst = llvm::dyn_cast<llvm::CallInst>(&*new_call_iter)) {
+            if(llvm::CallInst* new_call_inst = llvm::dyn_cast<llvm::CallInst>(&*new_call_iter))
+            {
                new_call_inst->setCalledFunction(inner_synthesized_function);
                compact_callgraph[call_inst].push_back(new_call_inst);
-            } else {
+            }
+            else
+            {
                llvm::errs() << "ERR\n";
                exit(-1);
             }
          }
-
       }
-   } else {
-
-      for (auto update_it : inner_call_updates) {
-         llvm::CallInst *call_inst_to_replace = update_it.first;
-         llvm::Function *inner_synthesized_function = update_it.second;
+   }
+   else
+   {
+      for(auto update_it : inner_call_updates)
+      {
+         llvm::CallInst* call_inst_to_replace = update_it.first;
+         llvm::Function* inner_synthesized_function = update_it.second;
 
          auto bb_iter = call_inst_to_replace->getParent()->getIterator();
          auto call_iter = call_inst_to_replace->getIterator();
@@ -1035,10 +1053,13 @@ llvm::errs() << "_____________________________\n";
          auto new_bb_iter = std::next(kernel_function->begin(), bb_dist);
          auto new_call_iter = std::next(new_bb_iter->begin(), call_dist);
 
-         if (llvm::CallInst *new_call_inst = llvm::dyn_cast<llvm::CallInst>(&*new_call_iter)) {
+         if(llvm::CallInst* new_call_inst = llvm::dyn_cast<llvm::CallInst>(&*new_call_iter))
+         {
             new_call_inst->setCalledFunction(inner_synthesized_function);
             compact_callgraph[call_inst].push_back(new_call_inst);
-         } else {
+         }
+         else
+         {
             llvm::errs() << "ERR\n";
             exit(-1);
          }
@@ -1046,39 +1067,50 @@ llvm::errs() << "_____________________________\n";
    }
 }
 
-bool check_function_versioning(const std::set<llvm::Function*> &function_worklist, const std::map<llvm::Use*, bool>& op_expandability_map, const std::map<llvm::Use*, std::vector<unsigned long long>>& op_dimensions_map,
+bool check_function_versioning(const std::set<llvm::Function*>& function_worklist, const std::map<llvm::Use*, bool>& op_expandability_map, const std::map<llvm::Use*, std::vector<unsigned long long>>& op_dimensions_map,
                                std::map<llvm::Argument*, bool>& arg_exp_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map)
 {
-
-   for (llvm::Function *function : function_worklist) {
+   for(llvm::Function* function : function_worklist)
+   {
       std::vector<bool> first_arg_exp;
       std::vector<std::vector<unsigned long long>> first_arg_dim;
 
       unsigned long long user_idx = 0;
-      for (llvm::User *user : function->users()) {
-         if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
-            if (user_idx == 0) {
-               for (llvm::Use &op : call_inst->arg_operands()) {
+      for(llvm::User* user : function->users())
+      {
+         if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(user))
+         {
+            if(user_idx == 0)
+            {
+               for(llvm::Use& op : call_inst->arg_operands())
+               {
                   first_arg_exp.push_back(op_expandability_map.at(&op));
                   first_arg_dim.push_back(op_dimensions_map.at(&op));
                }
-            } else {
+            }
+            else
+            {
                std::vector<bool> nth_arg_exp;
                std::vector<std::vector<unsigned long long>> nth_arg_dim;
-               for (llvm::Use &op : call_inst->arg_operands()) {
+               for(llvm::Use& op : call_inst->arg_operands())
+               {
                   nth_arg_exp.push_back(op_expandability_map.at(&op));
                   nth_arg_dim.push_back(op_dimensions_map.at(&op));
                }
 
-               if (first_arg_exp != nth_arg_exp) {
+               if(first_arg_exp != nth_arg_exp)
+               {
                   return false;
                }
 
-               if (first_arg_dim != nth_arg_dim) {
+               if(first_arg_dim != nth_arg_dim)
+               {
                   return false;
                }
             }
-         } else {
+         }
+         else
+         {
             llvm::errs() << "ERR\n";
             exit(-1);
          }
@@ -1086,7 +1118,8 @@ bool check_function_versioning(const std::set<llvm::Function*> &function_worklis
          ++user_idx;
       }
 
-      for (llvm::Argument &arg : function->args()) {
+      for(llvm::Argument& arg : function->args())
+      {
          arg_exp_map.insert(std::make_pair(&arg, first_arg_exp.at(arg.getArgNo())));
          arg_dims_map.insert(std::make_pair(&arg, first_arg_dim.at(arg.getArgNo())));
       }
@@ -1169,11 +1202,9 @@ void propagate_constant_arguments(const std::map<llvm::CallInst*, std::vector<ll
    }
 }
 
-void expand_allocas(const std::set<llvm::Function *> &function_worklist, const llvm::DataLayout& DL,
-                    std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map)
+void expand_allocas(const std::set<llvm::Function*>& function_worklist, const llvm::DataLayout& DL, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map)
 {
-
-   for (llvm::Function *function : function_worklist)
+   for(llvm::Function* function : function_worklist)
    {
       // Global alloca set so to avoid loops in analysis
       std::set<llvm::AllocaInst*> alloca_vec = std::set<llvm::AllocaInst*>();
@@ -1323,168 +1354,169 @@ void expand_globals(llvm::Module* module, const llvm::DataLayout& DL, std::map<l
    }
 }
 
-void expand_signatures_and_call_sites(std::set<llvm::Function *> &function_worklist, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::map<llvm::Argument*, bool>& arg_expandability_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dimensions_map, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& expanded_arguments_map, std::set<llvm::Instruction*>& inst_to_remove, std::set<llvm::Function *> &fun_to_remove)
+void expand_signatures_and_call_sites(std::set<llvm::Function*>& function_worklist, std::map<llvm::Function*, llvm::Function*>& exp_fun_map, std::map<llvm::Argument*, bool>& arg_expandability_map,
+                                      std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dimensions_map, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& expanded_arguments_map, std::set<llvm::Instruction*>& inst_to_remove,
+                                      std::set<llvm::Function*>& fun_to_remove)
 {
-
    struct ArgObj
    {
-       unsigned long index = {0};
-       llvm::Type* type = {nullptr};
-       std::string arg_name;
-       bool expandable;
-       std::vector<unsigned long long> size;
+      unsigned long index = {0};
+      llvm::Type* type = {nullptr};
+      std::string arg_name;
+      bool expandable;
+      std::vector<unsigned long long> size;
    };
 
    class ExpArgs
    {
-   public:
-       static void rec(ArgObj* arg, std::map<ArgObj*, std::vector<ArgObj*>>& exp_args_map_ref, std::map<unsigned long, ArgObj>& newMockFunctionArgs)
-       {
-          if(llvm::PointerType* ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->type))
-          {
-             if(!arg->size.empty())
-             {
-                unsigned long long elements = arg->size.front();
+    public:
+      static void rec(ArgObj* arg, std::map<ArgObj*, std::vector<ArgObj*>>& exp_args_map_ref, std::map<unsigned long, ArgObj>& newMockFunctionArgs)
+      {
+         if(llvm::PointerType* ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->type))
+         {
+            if(!arg->size.empty())
+            {
+               unsigned long long elements = arg->size.front();
 
-                for(int e_idx = 0; e_idx < elements; ++e_idx)
-                {
-                   /*
-                   if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
-                       std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
+               for(int e_idx = 0; e_idx < elements; ++e_idx)
+               {
+                  /*
+                  if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType())) {
+                      std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
 
-                       llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(
-                               arr_ty->getArrayElementType());
-                       auto argNo = newMockFunctionArgs.size();
-                       auto new_arg = &newMockFunctionArgs[argNo];
-                       new_arg->index = argNo;
-                       new_arg->type = new_arg_ty;
-                       new_arg->arg_name = new_arg_name;
-                       new_arg->expandable = arg->expandable;
+                      llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(
+                              arr_ty->getArrayElementType());
+                      auto argNo = newMockFunctionArgs.size();
+                      auto new_arg = &newMockFunctionArgs[argNo];
+                      new_arg->index = argNo;
+                      new_arg->type = new_arg_ty;
+                      new_arg->arg_name = new_arg_name;
+                      new_arg->expandable = arg->expandable;
 
-                       if (arg->size.size() > 1) {
-                           new_arg->size = std::vector<unsigned long long>(arg->size.begin() + 1,
-                                                                           arg->size.end());
-                       } else {
-                           new_arg->size = std::vector<unsigned long long>(1, 1);
-                       }
-
-                       exp_args_map_ref[arg].push_back(new_arg);
-
-                       rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
-                   } else {
-                       llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(ptr_ty->getElementType());
-                       std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
-                       auto argNo = newMockFunctionArgs.size();
-                       auto new_arg = &newMockFunctionArgs[argNo];
-                       new_arg->index = argNo;
-                       new_arg->type = new_arg_ty;
-                       new_arg->arg_name = new_arg_name;
-                       new_arg->expandable = arg->expandable;
-
-                       exp_args_map_ref[arg].push_back(new_arg);
-
-                       rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
-                   }*/
-
-                   llvm::Type* new_arg_ty = llvm::PointerType::getUnqual(ptr_ty->getElementType());
-                   std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
-                   auto argNo = newMockFunctionArgs.size();
-                   auto new_arg = &newMockFunctionArgs[argNo];
-                   new_arg->index = argNo;
-                   new_arg->type = new_arg_ty;
-                   new_arg->arg_name = new_arg_name;
-                   new_arg->expandable = arg->expandable;
-
-                   exp_args_map_ref[arg].push_back(new_arg);
-
-                   rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
-                }
-             }
-             else if(llvm::StructType* str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType()))
-             {
-                for(unsigned long long e_idx = 0; e_idx != str_ty->getStructNumElements(); ++e_idx)
-                {
-                   llvm::Type* new_arg_ty = nullptr;
-
-                   new_arg_ty = llvm::PointerType::getUnqual(str_ty->getStructElementType(e_idx));
-
-                   std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
-                   auto argNo = newMockFunctionArgs.size();
-                   auto new_arg = &newMockFunctionArgs[argNo];
-                   new_arg->index = argNo;
-                   new_arg->type = new_arg_ty;
-                   new_arg->arg_name = new_arg_name;
-                   new_arg->expandable = arg->expandable;
-                   /*
-                                              if(str_ty->getStructElementType(e_idx)->isArrayTy() and false)
-                                              {
-                                                 llvm::Type* rec_ty = str_ty->getStructElementType(e_idx);
-
-                                                 std::vector<unsigned long long> tmp_sizes;
-                                                 do
-                                                 {
-                                                    if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
-                                                    {
-                                                       tmp_sizes.push_back(arr_ty->getArrayNumElements());
-                                                       rec_ty = arr_ty->getArrayElementType();
-                                                    }
-                                                    else
-                                                    {
-                                                       break;
-                                                    }
-                                                 } while(true);
-
-                                                 new_arg->size = tmp_sizes;
-                                              }
-                   */
-
-                   exp_args_map_ref[arg].push_back(new_arg);
-
-                   rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
-                }
-             }
-             else if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType()))
-             {
-                for(unsigned long long e_idx = 0; e_idx != arr_ty->getArrayNumElements(); ++e_idx)
-                {
-                   llvm::Type* new_arg_ty = llvm::PointerType::getUnqual(arr_ty->getArrayElementType());
-                   std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
-                   auto argNo = newMockFunctionArgs.size();
-                   auto new_arg = &newMockFunctionArgs[argNo];
-                   new_arg->index = argNo;
-                   new_arg->type = new_arg_ty;
-                   new_arg->arg_name = new_arg_name;
-                   new_arg->expandable = arg->expandable;
-
-                   exp_args_map_ref[arg].push_back(new_arg);
-
-                   llvm::Type* rec_ty = arr_ty;
-
-                   std::vector<unsigned long long> tmp_sizes;
-                   do
-                   {
-                      if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
-                      {
-                         tmp_sizes.push_back(arr_ty->getArrayNumElements());
-                         rec_ty = arr_ty->getArrayElementType();
+                      if (arg->size.size() > 1) {
+                          new_arg->size = std::vector<unsigned long long>(arg->size.begin() + 1,
+                                                                          arg->size.end());
+                      } else {
+                          new_arg->size = std::vector<unsigned long long>(1, 1);
                       }
-                      else
-                      {
-                         break;
-                      }
-                   } while(true);
 
-                   // new_arg->size = tmp_sizes;
+                      exp_args_map_ref[arg].push_back(new_arg);
 
-                   rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
-                }
-             }
-          }
-       }
+                      rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
+                  } else {
+                      llvm::Type *new_arg_ty = llvm::PointerType::getUnqual(ptr_ty->getElementType());
+                      std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
+                      auto argNo = newMockFunctionArgs.size();
+                      auto new_arg = &newMockFunctionArgs[argNo];
+                      new_arg->index = argNo;
+                      new_arg->type = new_arg_ty;
+                      new_arg->arg_name = new_arg_name;
+                      new_arg->expandable = arg->expandable;
+
+                      exp_args_map_ref[arg].push_back(new_arg);
+
+                      rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
+                  }*/
+
+                  llvm::Type* new_arg_ty = llvm::PointerType::getUnqual(ptr_ty->getElementType());
+                  std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
+                  auto argNo = newMockFunctionArgs.size();
+                  auto new_arg = &newMockFunctionArgs[argNo];
+                  new_arg->index = argNo;
+                  new_arg->type = new_arg_ty;
+                  new_arg->arg_name = new_arg_name;
+                  new_arg->expandable = arg->expandable;
+
+                  exp_args_map_ref[arg].push_back(new_arg);
+
+                  rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
+               }
+            }
+            else if(llvm::StructType* str_ty = llvm::dyn_cast<llvm::StructType>(ptr_ty->getElementType()))
+            {
+               for(unsigned long long e_idx = 0; e_idx != str_ty->getStructNumElements(); ++e_idx)
+               {
+                  llvm::Type* new_arg_ty = nullptr;
+
+                  new_arg_ty = llvm::PointerType::getUnqual(str_ty->getStructElementType(e_idx));
+
+                  std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
+                  auto argNo = newMockFunctionArgs.size();
+                  auto new_arg = &newMockFunctionArgs[argNo];
+                  new_arg->index = argNo;
+                  new_arg->type = new_arg_ty;
+                  new_arg->arg_name = new_arg_name;
+                  new_arg->expandable = arg->expandable;
+                  /*
+                                             if(str_ty->getStructElementType(e_idx)->isArrayTy() and false)
+                                             {
+                                                llvm::Type* rec_ty = str_ty->getStructElementType(e_idx);
+
+                                                std::vector<unsigned long long> tmp_sizes;
+                                                do
+                                                {
+                                                   if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+                                                   {
+                                                      tmp_sizes.push_back(arr_ty->getArrayNumElements());
+                                                      rec_ty = arr_ty->getArrayElementType();
+                                                   }
+                                                   else
+                                                   {
+                                                      break;
+                                                   }
+                                                } while(true);
+
+                                                new_arg->size = tmp_sizes;
+                                             }
+                  */
+
+                  exp_args_map_ref[arg].push_back(new_arg);
+
+                  rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
+               }
+            }
+            else if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(ptr_ty->getElementType()))
+            {
+               for(unsigned long long e_idx = 0; e_idx != arr_ty->getArrayNumElements(); ++e_idx)
+               {
+                  llvm::Type* new_arg_ty = llvm::PointerType::getUnqual(arr_ty->getArrayElementType());
+                  std::string new_arg_name = arg->arg_name + "." + std::to_string(e_idx);
+                  auto argNo = newMockFunctionArgs.size();
+                  auto new_arg = &newMockFunctionArgs[argNo];
+                  new_arg->index = argNo;
+                  new_arg->type = new_arg_ty;
+                  new_arg->arg_name = new_arg_name;
+                  new_arg->expandable = arg->expandable;
+
+                  exp_args_map_ref[arg].push_back(new_arg);
+
+                  llvm::Type* rec_ty = arr_ty;
+
+                  std::vector<unsigned long long> tmp_sizes;
+                  do
+                  {
+                     if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(rec_ty))
+                     {
+                        tmp_sizes.push_back(arr_ty->getArrayNumElements());
+                        rec_ty = arr_ty->getArrayElementType();
+                     }
+                     else
+                     {
+                        break;
+                     }
+                  } while(true);
+
+                  // new_arg->size = tmp_sizes;
+
+                  rec(new_arg, exp_args_map_ref, newMockFunctionArgs);
+               }
+            }
+         }
+      }
    };
 
-   for (llvm::Function *called_function : function_worklist) {
-
+   for(llvm::Function* called_function : function_worklist)
+   {
       std::vector<llvm::Type*> new_arg_ty_vec = std::vector<llvm::Type*>();
       std::map<unsigned long long, llvm::Argument*> idxs_of_expanded_args;
       std::map<ArgObj*, std::vector<ArgObj*>> mock_exp_args_map;
@@ -1604,35 +1636,36 @@ void expand_signatures_and_call_sites(std::set<llvm::Function *> &function_workl
       // Track the function mapping (old->new)
       exp_fun_map[called_function] = expanded_function;
 
-      for (llvm::User *user : called_function->users()) {
-         if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user)) {
-
+      for(llvm::User* user : called_function->users())
+      {
+         if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(user))
+         {
             // Class used to recursively expand operands in call sites
             class op_rec
             {
-            public:
-                static void rec(llvm::Argument* arg, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map_ref, std::vector<llvm::Value*>& ops, bool is_called_operand = false)
-                {
-                   if(llvm::PointerType* ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType()))
-                   {
-                      if(!is_called_operand)
-                      {
-                         ops.push_back(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(ptr_ty->getElementType())));
-                      }
+             public:
+               static void rec(llvm::Argument* arg, std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map_ref, std::vector<llvm::Value*>& ops, bool is_called_operand = false)
+               {
+                  if(llvm::PointerType* ptr_ty = llvm::dyn_cast<llvm::PointerType>(arg->getType()))
+                  {
+                     if(!is_called_operand)
+                     {
+                        ops.push_back(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(ptr_ty->getElementType())));
+                     }
 
-                      auto exp_arg_it = exp_args_map_ref.find(arg);
+                     auto exp_arg_it = exp_args_map_ref.find(arg);
 
-                      if(exp_arg_it != exp_args_map_ref.end())
-                      {
-                         std::vector<llvm::Argument*>& exp_args_vec_ref = exp_arg_it->second;
+                     if(exp_arg_it != exp_args_map_ref.end())
+                     {
+                        std::vector<llvm::Argument*>& exp_args_vec_ref = exp_arg_it->second;
 
-                         for(auto& a : exp_args_vec_ref)
-                         {
-                            rec(a, exp_args_map_ref, ops);
-                         }
-                      }
-                   }
-                }
+                        for(auto& a : exp_args_vec_ref)
+                        {
+                           rec(a, exp_args_map_ref, ops);
+                        }
+                     }
+                  }
+               }
             };
 
             // Recursively populate the operand vector, expanding with null pointers
@@ -1670,16 +1703,19 @@ void expand_signatures_and_call_sites(std::set<llvm::Function *> &function_workl
       }
    }
 
-   std::set<llvm::Function *> support_function_worklist = function_worklist;
+   std::set<llvm::Function*> support_function_worklist = function_worklist;
    function_worklist.clear();
 
-   for (llvm::Function *function : support_function_worklist) {
-
+   for(llvm::Function* function : support_function_worklist)
+   {
       auto exp_it = exp_fun_map.find(function);
 
-      if (exp_it != exp_fun_map.end()) {
+      if(exp_it != exp_fun_map.end())
+      {
          function_worklist.insert(exp_it->second);
-      } else {
+      }
+      else
+      {
          function_worklist.insert(function);
       }
    }
@@ -2921,7 +2957,6 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       i->eraseFromParent();
    }
 
-
    class CheckArg
    {
     private:
@@ -3554,9 +3589,10 @@ void inline_wrappers(llvm::Function* kernel_function, std::set<llvm::Function*>&
    //}
 }
 
-void delete_functions_recursively(std::set<llvm::Function *> &fun_to_remove) {
-   do {
-
+void delete_functions_recursively(std::set<llvm::Function*>& fun_to_remove)
+{
+   do
+   {
       bool some_deletion = false;
       for(auto f_it : fun_to_remove)
       {
@@ -3569,17 +3605,17 @@ void delete_functions_recursively(std::set<llvm::Function *> &fun_to_remove) {
          }
       }
 
-      if (!some_deletion) {
+      if(!some_deletion)
+      {
          break;
       }
-   } while (1);
+   } while(1);
 
    fun_to_remove.clear();
 }
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 {
-
    llvm::Function* kernel_function = module.getFunction(kernel_name);
 
    assert(kernel_function != nullptr && "Unknown kernel function!");
@@ -3607,11 +3643,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::CallInst*, std::vector<llvm::CallInst*>> versioned_compact_callgraph;
 
-      std::map<llvm::CallInst *, llvm::Function *> update_calls;
-      perform_function_versioning(nullptr, nullptr, kernel_function, compact_callgraph, point_to_set_map,
-                                  operands_expandability_map,
-                                  allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map,
-                                  arg_dims_map, function_dim_map, fun_to_remove, update_calls);
+      std::map<llvm::CallInst*, llvm::Function*> update_calls;
+      perform_function_versioning(nullptr, nullptr, kernel_function, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, arg_exp_map, arg_dims_map, function_dim_map,
+                                  fun_to_remove, update_calls);
 
       delete_functions_recursively(fun_to_remove);
 
@@ -3639,17 +3673,19 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map);
 
-      std::set<llvm::Function *> function_worklist;
+      std::set<llvm::Function*> function_worklist;
       for(auto cc_it : compact_callgraph)
       {
-         for (llvm::CallInst *call_inst : cc_it.second) {
+         for(llvm::CallInst* call_inst : cc_it.second)
+         {
             function_worklist.insert(call_inst->getCalledFunction());
          }
       }
 
       std::map<llvm::Argument*, bool> arguments_expandability_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
-      if (!check_function_versioning(function_worklist, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map)) {
+      if(!check_function_versioning(function_worklist, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map))
+      {
          llvm::errs() << "ERR Wrong versioning\n";
          exit(-1);
       }
@@ -3664,17 +3700,17 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       expand_signatures_and_call_sites(function_worklist, exp_fun_map, arguments_expandability_map, arguments_dimensions_map, exp_args_map, inst_to_remove, fun_to_remove);
 
-       // Map specifying how allocas have been expanded
-       std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
-       function_worklist.insert(kernel_function);
-       expand_allocas(function_worklist, DL, exp_allocas_map);
-       function_worklist.erase(kernel_function);
+      // Map specifying how allocas have been expanded
+      std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
+      function_worklist.insert(kernel_function);
+      expand_allocas(function_worklist, DL, exp_allocas_map);
+      function_worklist.erase(kernel_function);
 
-       // Map specifying how global variables have been expanded
-       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
-       expand_globals(&module, DL, exp_globals_map);
+      // Map specifying how global variables have been expanded
+      std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
+      expand_globals(&module, DL, exp_globals_map);
 
-       delete_functions_recursively(fun_to_remove);
+      delete_functions_recursively(fun_to_remove);
 
       function_worklist.insert(kernel_function);
 
@@ -3705,17 +3741,19 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map);
 
-      std::set<llvm::Function *> function_worklist;
+      std::set<llvm::Function*> function_worklist;
       for(auto cc_it : compact_callgraph)
       {
-         for (llvm::CallInst *call_inst : cc_it.second) {
+         for(llvm::CallInst* call_inst : cc_it.second)
+         {
             function_worklist.insert(call_inst->getCalledFunction());
          }
       }
 
       std::map<llvm::Argument*, bool> arguments_expandability_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
-      if (!check_function_versioning(function_worklist, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map)) {
+      if(!check_function_versioning(function_worklist, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map))
+      {
          llvm::errs() << "ERR Wrong versioning\n";
          exit(-1);
       }
