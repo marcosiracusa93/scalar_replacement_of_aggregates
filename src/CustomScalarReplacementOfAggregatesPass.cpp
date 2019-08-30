@@ -263,12 +263,11 @@ bool is_allowed_intrinsic_call(llvm::CallInst* call_inst)
    return false;
 }
 
-bool has_expandable_size(llvm::Value* aggregate, const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout& DL)
+bool has_expandable_size(llvm::Value* aggregate, const llvm::DataLayout& DL, unsigned long long dimension)
 {
    if(aggregate->getType()->isPointerTy())
    {
-      auto arg_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
-      bool is_array_arg = arg_it != arg_size_map.end() and !arg_it->second.empty() and arg_it->second.front() > 1;
+      bool is_array_arg = dimension > 1;
       bool is_aggregate_type = aggregate->getType()->getPointerElementType()->isAggregateType();
       bool is_gvar_aggregate = llvm::isa<llvm::GlobalVariable>(aggregate) and llvm::dyn_cast<llvm::GlobalVariable>(aggregate)->getValueType()->isAggregateType();
 
@@ -277,19 +276,12 @@ bool has_expandable_size(llvm::Value* aggregate, const std::map<llvm::Argument*,
          std::vector<llvm::Type*> contained_types;
 
          llvm::Type* ptr_ty = llvm::isa<llvm::GlobalVariable>(aggregate) ? llvm::dyn_cast<llvm::GlobalVariable>(aggregate)->getValueType() : aggregate->getType()->getPointerElementType();
-         if(is_array_arg)
-         {
-            for(unsigned long long e_idx = 0; e_idx < arg_it->second.front(); e_idx++)
-            {
-               contained_types.push_back(ptr_ty);
-            }
-         }
-         else
+         for(unsigned long long e_idx = 0; e_idx < dimension; e_idx++)
          {
             contained_types.push_back(ptr_ty);
          }
 
-         unsigned long long non_aggregates_types = 0;
+         unsigned long long non_aggregate_types = 0;
 
          for(auto c_idx = 0u; c_idx < contained_types.size(); c_idx++)
          {
@@ -314,20 +306,15 @@ bool has_expandable_size(llvm::Value* aggregate, const std::map<llvm::Argument*,
             }
             else
             {
-               ++non_aggregates_types;
+               ++non_aggregate_types;
             }
          }
 
          unsigned long long allocated_size = DL.getTypeAllocSize(ptr_ty);
 
-         auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(aggregate));
-         if(size_it != arg_size_map.end() and !size_it->second.empty())
-         {
-            // non_aggregates_types *= size_it->second.front();
-            allocated_size *= size_it->second.front();
-         }
+         allocated_size *= dimension;
 
-         return non_aggregates_types <= MaxNumScalarTypes and allocated_size <= MaxTypeByteSize;
+         return non_aggregate_types <= MaxNumScalarTypes and allocated_size <= MaxTypeByteSize;
       }
       else
       {
@@ -412,7 +399,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
 }
 
 void compute_expandability(llvm::Function* kernel_function, llvm::Module* module, std::map<llvm::AllocaInst*, bool>& allocas_expandability_map, std::map<llvm::GlobalVariable*, bool>& globals_expandability_map,
-                           std::map<llvm::Use*, bool>& operand_expandability_map, std::map<llvm::Value*, llvm::Value*>& point_to_set_map, std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph)
+                           std::map<llvm::Use*, bool>& operand_expandability_map, std::map<llvm::Value*, llvm::Value*>& point_to_set_map, std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph, const llvm::DataLayout &DL)
 {
    std::vector<llvm::CallInst*> call_inst_vec;
    call_inst_vec.push_back(nullptr);
@@ -439,12 +426,16 @@ void compute_expandability(llvm::Function* kernel_function, llvm::Module* module
             {
                if(alloca_inst->getType()->getPointerElementType()->isAggregateType())
                {
-                  bool can_exp = true;
-                  for(llvm::Use& use : alloca_inst->uses())
-                  {
-                     can_exp = can_exp and check_ptr_expandability(use, alloca_inst, operand_expandability_map, point_to_set_map, is_relevant_call, true);
+                  if (has_expandable_size(alloca_inst, DL, 1)) {
+                      bool can_exp = true;
+                      for (llvm::Use &use : alloca_inst->uses()) {
+                          can_exp = can_exp and check_ptr_expandability(use, alloca_inst, operand_expandability_map,
+                                                                        point_to_set_map, is_relevant_call, true);
+                      }
+                      allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
+                  } else {
+                      allocas_expandability_map.insert(std::make_pair(alloca_inst, false));
                   }
-                  allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
                }
                else
                {
@@ -489,12 +480,17 @@ void compute_expandability(llvm::Function* kernel_function, llvm::Module* module
          {
             if(global_var.getType()->getPointerElementType()->isAggregateType())
             {
-               bool can_exp = true;
-               for(llvm::Use& use : global_var.uses())
-               {
-                  can_exp = can_exp and check_ptr_expandability(use, &global_var, operand_expandability_map, point_to_set_map, is_relevant_call, true);
-               }
-               globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
+                if (has_expandable_size(&global_var, DL, 1)) {
+                    bool can_exp = true;
+                    for (llvm::Use &use : global_var.uses()) {
+                        can_exp = can_exp and
+                                  check_ptr_expandability(use, &global_var, operand_expandability_map, point_to_set_map,
+                                                          is_relevant_call, true);
+                    }
+                    globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
+                } else {
+                    globals_expandability_map.insert(std::make_pair(&global_var, false));
+                }
             }
             else
             {
@@ -1202,7 +1198,7 @@ void propagate_constant_arguments(const std::map<llvm::CallInst*, std::vector<ll
    }
 }
 
-void expand_allocas(const std::set<llvm::Function*>& function_worklist, const llvm::DataLayout& DL, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map)
+void expand_allocas(const std::set<llvm::Function*>& function_worklist, const llvm::DataLayout& DL, std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, const std::map<llvm::AllocaInst*, bool> &allocas_expandability_map)
 {
    for(llvm::Function* function : function_worklist)
    {
@@ -1221,24 +1217,23 @@ void expand_allocas(const std::set<llvm::Function*>& function_worklist, const ll
             {
                if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i))
                {
-                  // Whether allocating struct or array
-                  if(llvm::StructType* str_ty = llvm::dyn_cast<llvm::StructType>(alloca_inst->getAllocatedType()))
-                  {
-                     // Not analyzed yet
-                     if(alloca_vec.count(alloca_inst) == 0)
-                     {
-                        i_alloca_vec.insert(alloca_inst);
-                        alloca_vec.insert(alloca_inst);
-                     }
-                  }
-                  else if(llvm::ArrayType* arr_ty = llvm::dyn_cast<llvm::ArrayType>(alloca_inst->getAllocatedType()))
-                  {
-                     if(alloca_vec.count(alloca_inst) == 0)
-                     {
-                        i_alloca_vec.insert(alloca_inst);
-                        alloca_vec.insert(alloca_inst);
-                     }
-                  }
+                   if (allocas_expandability_map.at(alloca_inst)) {
+                       // Whether allocating struct or array
+                       if (llvm::StructType *str_ty = llvm::dyn_cast<llvm::StructType>(
+                               alloca_inst->getAllocatedType())) {
+                           // Not analyzed yet
+                           if (alloca_vec.count(alloca_inst) == 0) {
+                               i_alloca_vec.insert(alloca_inst);
+                               alloca_vec.insert(alloca_inst);
+                           }
+                       } else if (llvm::ArrayType *arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                               alloca_inst->getAllocatedType())) {
+                           if (alloca_vec.count(alloca_inst) == 0) {
+                               i_alloca_vec.insert(alloca_inst);
+                               alloca_vec.insert(alloca_inst);
+                           }
+                       }
+                   }
                }
                else
                {
@@ -1296,14 +1291,16 @@ void expand_allocas(const std::set<llvm::Function*>& function_worklist, const ll
    }
 }
 
-void expand_globals(llvm::Module* module, const llvm::DataLayout& DL, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map)
+void expand_globals(llvm::Module* module, const llvm::DataLayout& DL, std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, const std::map<llvm::GlobalVariable*, bool> &globals_expandability_map)
 {
    // Global vector containing globals to be expanded yet
    std::vector<llvm::GlobalVariable*> globals_to_exp = std::vector<llvm::GlobalVariable*>();
 
    for(llvm::GlobalVariable& g_var : module->globals())
    {
-      globals_to_exp.push_back(&g_var);
+       if (globals_expandability_map.at(&g_var)) {
+           globals_to_exp.push_back(&g_var);
+       }
    }
 
    for(unsigned long long g_idx = 0; g_idx < globals_to_exp.size(); g_idx++)
@@ -1719,6 +1716,35 @@ void expand_signatures_and_call_sites(std::set<llvm::Function*>& function_workli
          function_worklist.insert(function);
       }
    }
+}
+
+void update_allocas_expandability_map(std::map<llvm::AllocaInst*, bool> &allocas_expandability_map, const std::map<llvm::Function*, llvm::Function*> &exp_fun_map) {
+    std::map<llvm::AllocaInst*, bool> support_allocas_expandability_map = allocas_expandability_map;
+    allocas_expandability_map.clear();
+
+    for (auto alloca_it : support_allocas_expandability_map) {
+        llvm::AllocaInst *alloca_inst = alloca_it.first;
+        bool expandability = alloca_it.second;
+
+        auto bb_iter = alloca_inst->getParent()->getIterator();
+        auto alloca_iter = alloca_inst->getIterator();
+
+        signed long long bb_dist = std::distance(alloca_inst->getFunction()->begin(), bb_iter);
+        signed long long call_dist = std::distance(alloca_inst->getParent()->begin(), alloca_iter);
+
+        auto new_bb_iter = std::next(exp_fun_map.at(alloca_inst->getFunction())->begin(), bb_dist);
+        auto new_alloca_iter = std::next(new_bb_iter->begin(), call_dist);
+
+        if(llvm::AllocaInst* new_alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&*new_alloca_iter))
+        {
+            allocas_expandability_map.insert(std::make_pair(new_alloca_inst, expandability));
+        }
+        else
+        {
+            llvm::errs() << "ERR\n";
+            exit(-1);
+        }
+    }
 }
 
 void compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<llvm::Value*>& offset_chain, std::vector<llvm::Instruction*>& inst_chain, const llvm::DataLayout& DL)
@@ -3630,7 +3656,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::Value*, llvm::Value*> point_to_set_map;
 
-      compute_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph);
+      const llvm::DataLayout DL = module.getDataLayout();
+
+      compute_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL);
 
       std::map<llvm::Use*, std::vector<unsigned long long>> op_dims_map;
 
@@ -3658,6 +3686,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
    if(sroa_phase == SROA_disaggregation)
    {
+module.dump();
       std::map<llvm::AllocaInst*, bool> allocas_expandability_map;
       std::map<llvm::GlobalVariable*, bool> globals_expandability_map;
       std::map<llvm::Use*, bool> operands_expandability_map;
@@ -3667,7 +3696,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::Value*, llvm::Value*> point_to_set_map;
 
-      compute_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph);
+      const llvm::DataLayout DL = module.getDataLayout();
+
+      compute_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL);
 
       std::map<llvm::Use*, std::vector<unsigned long long>> operands_dimensions_map;
 
@@ -3690,8 +3721,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
          exit(-1);
       }
 
-      const llvm::DataLayout DL = module.getDataLayout();
-
       // Map linking any function with its modified version
       std::map<llvm::Function*, llvm::Function*> exp_fun_map;
 
@@ -3700,15 +3729,17 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       expand_signatures_and_call_sites(function_worklist, exp_fun_map, arguments_expandability_map, arguments_dimensions_map, exp_args_map, inst_to_remove, fun_to_remove);
 
+      update_allocas_expandability_map(allocas_expandability_map, exp_fun_map);
+
       // Map specifying how allocas have been expanded
       std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
       function_worklist.insert(kernel_function);
-      expand_allocas(function_worklist, DL, exp_allocas_map);
+      expand_allocas(function_worklist, DL, exp_allocas_map, allocas_expandability_map);
       function_worklist.erase(kernel_function);
 
       // Map specifying how global variables have been expanded
       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
-      expand_globals(&module, DL, exp_globals_map);
+      expand_globals(&module, DL, exp_globals_map, globals_expandability_map);
 
       delete_functions_recursively(fun_to_remove);
 
@@ -3735,7 +3766,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::Value*, llvm::Value*> point_to_set_map;
 
-      compute_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph);
+      const llvm::DataLayout DL = module.getDataLayout();
+
+      compute_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL);
 
       std::map<llvm::Use*, std::vector<unsigned long long>> operands_dimensions_map;
 

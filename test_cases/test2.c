@@ -97,5 +97,8 @@ int main(void) {
            s11.as2[0].i1 + s11.as2[0].c1 + s11.as2[1].i1 + s11.as2[1].c1;
 */
     int k;
-    return kernel(&s11, 1) + kernel(&s11, 2) /*+ kernel1(a1)*/ + kernel2(&s11.i1) + kernel3(a1[1], 1);
+
+    int a2[2];
+    int a3[3];
+    return kernel3(a2, 1) + kernel3(a3, 0) + kernel(&s11, 1) + kernel(&s11, 2) /*+ kernel1(a1)*/ + kernel2(&s11.i1) + kernel3(a1[1], 1);
 }
