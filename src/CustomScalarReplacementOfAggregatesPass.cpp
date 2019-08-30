@@ -1169,24 +1169,11 @@ void propagate_constant_arguments(const std::map<llvm::CallInst*, std::vector<ll
    }
 }
 
-void expand_allocas(llvm::CallInst* call_inst, llvm::Function* kernel_function, const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph, const llvm::DataLayout& DL,
+void expand_allocas(const std::set<llvm::Function *> &function_worklist, const llvm::DataLayout& DL,
                     std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map)
 {
-   auto call_it = compact_callgraph.find(call_inst);
 
-   if(call_it != compact_callgraph.end())
-   {
-      const std::vector<llvm::CallInst*>& call_vec = call_it->second;
-
-      for(llvm::CallInst* internal_call_inst : call_vec)
-      {
-         expand_allocas(internal_call_inst, kernel_function, compact_callgraph, DL, exp_allocas_map);
-      }
-   }
-
-   llvm::Function* called_function = (call_inst ? call_inst->getCalledFunction() : kernel_function);
-
-   if(called_function)
+   for (llvm::Function *function : function_worklist)
    {
       // Global alloca set so to avoid loops in analysis
       std::set<llvm::AllocaInst*> alloca_vec = std::set<llvm::AllocaInst*>();
@@ -1197,7 +1184,7 @@ void expand_allocas(llvm::CallInst* call_inst, llvm::Function* kernel_function, 
          std::set<llvm::AllocaInst*> i_alloca_vec = std::set<llvm::AllocaInst*>();
 
          // Go through all the instructions looking for allocas
-         for(auto& bb : *called_function)
+         for(auto& bb : *function)
          {
             for(auto& i : bb)
             {
@@ -3669,16 +3656,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       const llvm::DataLayout DL = module.getDataLayout();
 
-      // Map specifying how allocas have been expanded
-      std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
-
-      expand_allocas(nullptr, kernel_function, compact_callgraph, DL, exp_allocas_map);
-
-      // Map specifying how global variables have been expanded
-      std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
-
-      expand_globals(&module, DL, exp_globals_map);
-
       // Map linking any function with its modified version
       std::map<llvm::Function*, llvm::Function*> exp_fun_map;
 
@@ -3687,7 +3664,17 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       expand_signatures_and_call_sites(function_worklist, exp_fun_map, arguments_expandability_map, arguments_dimensions_map, exp_args_map, inst_to_remove, fun_to_remove);
 
-      delete_functions_recursively(fun_to_remove);
+       // Map specifying how allocas have been expanded
+       std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>> exp_allocas_map;
+       function_worklist.insert(kernel_function);
+       expand_allocas(function_worklist, DL, exp_allocas_map);
+       function_worklist.erase(kernel_function);
+
+       // Map specifying how global variables have been expanded
+       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
+       expand_globals(&module, DL, exp_globals_map);
+
+       delete_functions_recursively(fun_to_remove);
 
       function_worklist.insert(kernel_function);
 
