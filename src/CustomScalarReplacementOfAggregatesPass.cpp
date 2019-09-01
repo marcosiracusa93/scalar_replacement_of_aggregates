@@ -265,7 +265,6 @@ bool is_allowed_intrinsic_call(llvm::CallInst* call_inst)
 
 bool has_expandable_size(llvm::Value* aggregate, const llvm::DataLayout& DL, unsigned long long dimension)
 {
-   return false;
    if(aggregate->getType()->isPointerTy())
    {
       bool is_array_arg = dimension > 1;
@@ -789,12 +788,13 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use, llvm::CallInst* p
 
 void compute_op_dims(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst, const std::map<llvm::CallInst*, std::vector<llvm::CallInst*>>& compact_callgraph, const std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
                      std::map<llvm::Use*, bool>& op_expandability_map, const std::map<llvm::AllocaInst*, bool>& allocas_expandability_map, const std::map<llvm::GlobalVariable*, bool>& globals_expandability_map,
-                     std::map<llvm::Use*, std::vector<unsigned long long>>& op_dims_map)
+                     std::map<llvm::Use*, std::vector<unsigned long long>>& op_dims_map, const llvm::DataLayout &DL)
 {
    if(call_inst)
    {
       if(llvm::Function* called_function = call_inst->getCalledFunction())
       {
+
          for(auto idx = 0; idx < call_inst->getNumArgOperands(); ++idx)
          {
             llvm::Use& op_use = call_inst->getOperandUse(idx);
@@ -803,9 +803,22 @@ void compute_op_dims(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst
             auto exp_it = op_expandability_map.find(&op_use);
             if(exp_it != op_expandability_map.end())
             {
-               if(exp_it->second)
-               {
-                  dims = get_op_dims(&op_use, parent_call_inst, op_dims_map);
+               if(exp_it->second) {
+                   dims = get_op_dims(&op_use, parent_call_inst, op_dims_map);
+
+                   bool expandable_size = has_expandable_size(op_use.get(), DL, dims.front());
+                   if (!expandable_size) {
+                       op_expandability_map[&op_use] = false;
+
+                       std::string user_str;
+                       llvm::raw_string_ostream user_rso(user_str);
+                       op_use.getUser()->print(user_rso);
+                       std::string use_str;
+                       llvm::raw_string_ostream use_rso(use_str);
+                       op_use.get()->print(use_rso);
+                       llvm::errs() << "WAR: " << use_str << " in " << user_str
+                                    << "  cannot expand because of its size\n";
+                   }
                }
             }
             else
@@ -824,7 +837,7 @@ void compute_op_dims(llvm::CallInst* call_inst, llvm::CallInst* parent_call_inst
    {
       for(llvm::CallInst* inner_call_inst : call_it->second)
       {
-         compute_op_dims(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map);
+         compute_op_dims(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, op_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, DL);
       }
    }
 }
@@ -2323,8 +2336,8 @@ llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm
                                 const llvm::DataLayout& DL, llvm::Value* base_address, signed long long offset, unsigned long long& actual_accessed_size, unsigned long long accessed_size, llvm::Argument* arg_if_any, llvm::Use* use,
                                 unsigned long long* ptr = nullptr)
 {
-   /*
-   if(!is_expansion_allowed and false) // TODO double check here
+
+   if(!is_expansion_allowed)
    {
        std::map<llvm::Value*, std::vector<llvm::Value*>> gepi_map;
 
@@ -2336,7 +2349,7 @@ llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm
                                     llvm::Use* use,
                                     std::map<llvm::Value*, std::vector<llvm::Value*>>& gepi_map,
                                     const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& arg_map,
-                                    std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                                    const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
                                     std::string gepi_name)
            {
                auto arg_it = arg_map.find(arg);
@@ -2444,7 +2457,7 @@ llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm
 
        GenGepiMap::gen_gepi_map(base_address, arg_if_any, use, gepi_map, exp_args_map, arg_size_map, gepi_name);
 
-       llvm::Value* exp_el = get_element_at_offset(base_address, gepi_map, offset, accessed_size, arg_size_map, DL);
+       llvm::Value* exp_el = get_element_at_offset(base_address, use, gepi_map, offset, actual_accessed_size, accessed_size, arg_size_map, DL);
 
        bool some_deletion = false;
        do
@@ -2480,9 +2493,7 @@ llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm
 
        return exp_el;
    }
-   else */
-
-   if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
+   else if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
    {
       // const llvm::DataLayout* DL = &alloca_inst->getModule()->getDataLayout();
       return get_element_at_offset(alloca_inst, use, exp_allocas_map, offset, actual_accessed_size, accessed_size, arg_size_map, DL, false);
@@ -2544,7 +2555,7 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
 
       bool has_expandable_base = compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain, DL);
 
-      if(has_expandable_base)
+      if(base_address != nullptr)
       {
          if(llvm::Argument* arg_base = llvm::dyn_cast<llvm::Argument>(base_address))
          {
@@ -2558,387 +2569,349 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
          {
             has_expandable_base = exp_globals_map.count(global_base) > 0;
          }
-      }
 
-      if(has_expandable_base)
-      {
-         for(llvm::Instruction* i : inst_chain)
-         {
-            inst_to_remove.insert(i);
-         }
+          if (has_expandable_base or llvm::isa<llvm::CallInst>(ptr_u->getUser())) {
+              for (llvm::Instruction *i : inst_chain) {
+                  inst_to_remove.insert(i);
+              }
 
-         signed long long constant_sum = 0;
-         bool is_constant = true;
+              signed long long constant_sum = 0;
+              bool is_constant = true;
 
-         // Check whether the offset is constant
-         for(llvm::Value* offset : offset_chain)
-         {
-            if(llvm::ConstantInt* c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset))
-            {
-               constant_sum += c_offset->getSExtValue();
-            }
-            else
-            {
-               is_constant = false;
-               break;
-            }
-         }
-
-         if(llvm::isa<llvm::StoreInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser()))
-         {
-            if(!has_expandable_base)
-            {
-               return;
-            }
-
-            if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser()))
-            {
-               if(load_inst->getPointerOperand() != ptr_u->get())
-               {
-                  llvm::errs() << "ERR: Bad load inst usage\n";
-                  load_inst->dump();
-                  exit(-1);
-               }
-            }
-            else if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_u->getUser()))
-            {
-               if(store_inst->getPointerOperand() != ptr_u->get())
-               {
-                  llvm::errs() << "ERR: Bad store inst usage\n";
-                  store_inst->dump();
-                  exit(-1);
-               }
-            }
-
-            if(is_constant)
-            {
-               // const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
-               unsigned long long accessed_size = DL.getTypeAllocSize(ptr_u->get()->getType()->getPointerElementType());
-               unsigned long long actual_accessed_size; // useless here
-               llvm::Value* exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, has_expandable_base, DL, base_address, constant_sum, actual_accessed_size, accessed_size, nullptr, ptr_u);
-               ptr_u->set(exp_val);
-            }
-            else
-            { // Non constant offset
-
-               std::vector<llvm::Type*> expanded_types;
-
-               if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address))
-               {
-                  expand_types(alloca_inst, exp_allocas_map, expanded_types);
-               }
-               else if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(base_address))
-               {
-                  expand_types(arg, exp_args_map, expanded_types);
-               }
-               else if(llvm::GlobalVariable* g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address))
-               {
-                  expand_types(g_var, exp_globals_map, expanded_types);
-               }
-               else
-               {
-                  llvm::errs() << "ERR: Unknown base\n";
-                  base_address->dump();
-                  exit(-1);
-               }
-
-               llvm::APInt zero_ai = llvm::APInt((unsigned int)32, 0, false);
-               llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
-
-               llvm::Value* bytes_sum = zero_c;
-
-               // Build the chain of adders for computing the offset
-               for(llvm::Value* offset : offset_chain)
-               {
-                  std::string name = ptr_u->getUser()->getName().str() + ".add";
-                  bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, bytes_sum, offset, name, user_inst);
-               }
-
-               llvm::Function* wrapper_function = nullptr;
-               llvm::CallInst* wrapper_call = nullptr;
-               llvm::ReturnInst* ret = nullptr;
-               bool wrap_non_const = true;
-               bool isStore = false;
-               if(wrap_non_const)
-               {
-                  unsigned long long type_count = 0;
-                  llvm::Type* return_type = nullptr;
-                  llvm::Type* ptr_type = nullptr;
-                  std::vector<llvm::Type*> param_tys;
-                  llvm::Type* offset_ty = bytes_sum->getType();
-                  std::vector<llvm::Value*> args;
-                  if(llvm::StoreInst* SI = llvm::dyn_cast<llvm::StoreInst>(user_inst))
-                  {
-                     param_tys.push_back(SI->getValueOperand()->getType());
-                     args.push_back(SI->getValueOperand());
+              // Check whether the offset is constant
+              for (llvm::Value *offset : offset_chain) {
+                  if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
+                      constant_sum += c_offset->getSExtValue();
+                  } else {
+                      is_constant = false;
+                      break;
                   }
-                  param_tys.push_back(offset_ty);
-                  args.push_back(bytes_sum);
+              }
 
-                  if(llvm::LoadInst* inst = llvm::dyn_cast<llvm::LoadInst>(user_inst))
-                  {
-                     return_type = inst->getPointerOperand()->getType()->getPointerElementType();
-                     ptr_type = inst->getPointerOperand()->getType();
-                  }
-                  else if(llvm::StoreInst* inst = llvm::dyn_cast<llvm::StoreInst>(user_inst))
-                  {
-                     return_type = llvm::Type::getVoidTy(inst->getContext());
-                     ptr_type = inst->getPointerOperand()->getType();
-                     isStore = true;
+              if (llvm::isa<llvm::StoreInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
+                  if (!has_expandable_base) {
+                      return;
                   }
 
-                  for(llvm::Type* exp_ty : expanded_types)
-                  {
-                     // llvm::Type *bitcast_type = nullptr;
-                     llvm::Type* ty1 = exp_ty;
-                     llvm::Type* ty2 = ptr_u->get()->getType()->getPointerElementType();
-                     if(ty1->getTypeID() == ty2->getTypeID() and DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2))
-                     {
-                        // bitcast_type = ty2;
-                        llvm::errs() << "ERR: bitcast broke everything";
-                     }
-                     else if(ty1 != ty2)
-                     {
-                        continue;
-                     }
-
-                     ++type_count;
-                     param_tys.push_back(ptr_type);
-                     args.push_back(llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
+                  if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
+                      if (load_inst->getPointerOperand() != ptr_u->get()) {
+                          llvm::errs() << "ERR: Bad load inst usage\n";
+                          load_inst->dump();
+                          exit(-1);
+                      }
+                  } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_u->getUser())) {
+                      if (store_inst->getPointerOperand() != ptr_u->get()) {
+                          llvm::errs() << "ERR: Bad store inst usage\n";
+                          store_inst->dump();
+                          exit(-1);
+                      }
                   }
 
-                  llvm::FunctionType* function_ty = llvm::FunctionType::get(return_type, param_tys, false);
-                  wrapper_function = llvm::Function::Create(function_ty, llvm::GlobalValue::LinkageTypes::InternalLinkage, wrapper_function_name, user_inst->getModule());
-                  wrapper_function->addFnAttr(llvm::Attribute::NoInline);
-                  wrapper_function->addFnAttr(llvm::Attribute::OptimizeNone);
+                  if (is_constant) {
+                      // const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
+                      unsigned long long accessed_size = DL.getTypeAllocSize(
+                              ptr_u->get()->getType()->getPointerElementType());
+                      unsigned long long actual_accessed_size; // useless here
+                      llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                                arg_size_map, has_expandable_base, DL, base_address,
+                                                                constant_sum, actual_accessed_size, accessed_size,
+                                                                nullptr, ptr_u);
+                      ptr_u->set(exp_val);
+                  } else { // Non constant offset
 
-                  llvm::BasicBlock* bb = llvm::BasicBlock::Create(user_inst->getContext(), "", wrapper_function);
-                  if(return_type->isVoidTy())
-                  {
-                     ret = llvm::ReturnInst::Create(user_inst->getContext(), bb);
+                      std::vector<llvm::Type *> expanded_types;
+
+                      if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+                          expand_types(alloca_inst, exp_allocas_map, expanded_types);
+                      } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
+                          expand_types(arg, exp_args_map, expanded_types);
+                      } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
+                          expand_types(g_var, exp_globals_map, expanded_types);
+                      } else {
+                          llvm::errs() << "ERR: Unknown base\n";
+                          base_address->dump();
+                          exit(-1);
+                      }
+
+                      llvm::APInt zero_ai = llvm::APInt((unsigned int) 32, 0, false);
+                      llvm::ConstantInt *zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
+
+                      llvm::Value *bytes_sum = zero_c;
+
+                      // Build the chain of adders for computing the offset
+                      for (llvm::Value *offset : offset_chain) {
+                          std::string name = ptr_u->getUser()->getName().str() + ".add";
+                          bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, bytes_sum, offset,
+                                                                   name, user_inst);
+                      }
+
+                      llvm::Function *wrapper_function = nullptr;
+                      llvm::CallInst *wrapper_call = nullptr;
+                      llvm::ReturnInst *ret = nullptr;
+                      bool wrap_non_const = true;
+                      bool isStore = false;
+                      if (wrap_non_const) {
+                          unsigned long long type_count = 0;
+                          llvm::Type *return_type = nullptr;
+                          llvm::Type *ptr_type = nullptr;
+                          std::vector<llvm::Type *> param_tys;
+                          llvm::Type *offset_ty = bytes_sum->getType();
+                          std::vector<llvm::Value *> args;
+                          if (llvm::StoreInst *SI = llvm::dyn_cast<llvm::StoreInst>(user_inst)) {
+                              param_tys.push_back(SI->getValueOperand()->getType());
+                              args.push_back(SI->getValueOperand());
+                          }
+                          param_tys.push_back(offset_ty);
+                          args.push_back(bytes_sum);
+
+                          if (llvm::LoadInst *inst = llvm::dyn_cast<llvm::LoadInst>(user_inst)) {
+                              return_type = inst->getPointerOperand()->getType()->getPointerElementType();
+                              ptr_type = inst->getPointerOperand()->getType();
+                          } else if (llvm::StoreInst *inst = llvm::dyn_cast<llvm::StoreInst>(user_inst)) {
+                              return_type = llvm::Type::getVoidTy(inst->getContext());
+                              ptr_type = inst->getPointerOperand()->getType();
+                              isStore = true;
+                          }
+
+                          for (llvm::Type *exp_ty : expanded_types) {
+                              // llvm::Type *bitcast_type = nullptr;
+                              llvm::Type *ty1 = exp_ty;
+                              llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
+                              if (ty1->getTypeID() == ty2->getTypeID() and
+                                  DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2)) {
+                                  // bitcast_type = ty2;
+                                  llvm::errs() << "ERR: bitcast broke everything";
+                              } else if (ty1 != ty2) {
+                                  continue;
+                              }
+
+                              ++type_count;
+                              param_tys.push_back(ptr_type);
+                              args.push_back(
+                                      llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
+                          }
+
+                          llvm::FunctionType *function_ty = llvm::FunctionType::get(return_type, param_tys, false);
+                          wrapper_function = llvm::Function::Create(function_ty,
+                                                                    llvm::GlobalValue::LinkageTypes::InternalLinkage,
+                                                                    wrapper_function_name, user_inst->getModule());
+                          wrapper_function->addFnAttr(llvm::Attribute::NoInline);
+                          wrapper_function->addFnAttr(llvm::Attribute::OptimizeNone);
+
+                          llvm::BasicBlock *bb = llvm::BasicBlock::Create(user_inst->getContext(), "",
+                                                                          wrapper_function);
+                          if (return_type->isVoidTy()) {
+                              ret = llvm::ReturnInst::Create(user_inst->getContext(), bb);
+                          } else {
+                              ret = llvm::ReturnInst::Create(user_inst->getContext(),
+                                                             llvm::UndefValue::get(return_type), bb);
+                          }
+                          llvm::Instruction *new_inst = user_inst->clone();
+                          new_inst->insertBefore(ret);
+
+                          wrapper_call = llvm::CallInst::Create(wrapper_function, args,
+                                                                (return_type->isVoidTy() ? "" : "wrapper_call"),
+                                                                user_inst);
+
+                          if (!return_type->isVoidTy()) {
+                              user_inst->replaceAllUsesWith(wrapper_call);
+                          }
+                          inst_to_remove.insert(user_inst);
+
+                          user_inst = new_inst;
+                      }
+
+                      // Keep track on where to split
+                      llvm::Instruction *split_before = user_inst;
+
+                      unsigned long long bytes_acc = 0;
+
+                      llvm::PHINode *last_phi_set = nullptr;
+
+                      // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
+
+                      llvm::Function::arg_iterator arg_it = wrapper_function->arg_begin();
+                      llvm::Instruction::op_iterator op_it = wrapper_call->op_begin();
+                      llvm::Function::arg_iterator arg_offset_it = wrapper_function->arg_begin();
+                      llvm::Function::arg_iterator arg_value_it = wrapper_function->arg_begin();
+                      if (wrapper_function != nullptr) {
+                          if (isStore) {
+                              arg_it->setName("value");
+                              arg_value_it = arg_it;
+                              ++arg_it;
+                              ++op_it;
+                          }
+                          arg_it->setName("offset");
+                          arg_offset_it = arg_it;
+                          ++arg_it;
+                          ++op_it;
+                      }
+                      // Create the if-then-else chain
+                      for (llvm::Type *exp_ty : expanded_types) {
+                          unsigned long long type_size = DL.getTypeAllocSize(exp_ty);
+                          llvm::APInt bytes_ai = llvm::APInt((unsigned int) 32, bytes_acc, false);
+
+                          bytes_acc += type_size;
+
+                          // llvm::Type *bitcast_type = nullptr;
+                          llvm::Type *ty1 = exp_ty;
+                          llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
+                          if (ty1->getTypeID() == ty2->getTypeID() and
+                              DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2)) {
+                              // bitcast_type = ty2;
+                              llvm::errs() << "ERR: bitcast broke anything";
+                          } else if (ty1 != ty2) {
+                              continue;
+                          }
+
+                          llvm::ConstantInt *bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
+                          std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
+                          llvm::Value *offset = (wrap_non_const ? &*arg_offset_it : bytes_sum);
+                          llvm::CmpInst *cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp,
+                                                                      llvm::CmpInst::Predicate::ICMP_EQ, offset,
+                                                                      bytes_c, cmp_name, split_before);
+
+                          llvm::TerminatorInst *then_term;
+                          llvm::TerminatorInst *else_term;
+                          llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
+                          then_term->getParent()->setName("csroa.if.then");
+                          else_term->getParent()->setName("csroa.if.else");
+                          split_before->getParent()->setName("csroa.if.end");
+
+                          if (new_bb == nullptr) {
+                              new_bb = split_before->getParent();
+                          }
+
+                          llvm::Instruction *new_inst = user_inst->clone();
+                          new_inst->insertBefore(then_term);
+
+                          if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
+                              llvm::PHINode *phi_node = llvm::PHINode::Create(
+                                      ptr_u->get()->getType()->getPointerElementType(), expanded_types.size(),
+                                      ptr_u->getUser()->getName().str() + ".phi", split_before);
+
+                              if (ret != nullptr) {
+                                  if (!ret->getReturnValue()->getType()->isVoidTy()) {
+                                      if (llvm::isa<llvm::UndefValue>(ret->getReturnValue())) {
+                                          ret->setOperand(0, phi_node);
+                                      }
+                                  }
+                              }
+
+                              phi_node->addIncoming(new_inst, then_term->getParent());
+                              phi_node->addIncoming(llvm::UndefValue::get(new_inst->getType()), else_term->getParent());
+
+                              if (last_phi_set) {
+                                  last_phi_set->setIncomingValue(1, phi_node);
+                              } else {
+                                  user_inst->replaceAllUsesWith(phi_node);
+                              }
+
+                              last_phi_set = phi_node;
+                          }
+
+                          unsigned long long actual_accessed_size;
+                          llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                                    arg_size_map, has_expandable_base, DL, base_address,
+                                                                    bytes_acc - type_size, actual_accessed_size,
+                                                                    type_size, nullptr, ptr_u);
+
+                          if (wrap_non_const) {
+                              std::string arg_name = "arg" + std::to_string(arg_it->getArgNo());
+                              arg_it->setName(arg_name);
+                              wrapper_call->setOperand(op_it->getOperandNo(), exp_val);
+                              if (isStore)
+                                  new_inst->setOperand(0, &*arg_value_it);
+
+                              new_inst->setOperand(ptr_u->getOperandNo(), &*arg_it);
+                              ++arg_it;
+                              ++op_it;
+                          } else {
+                              new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
+                          }
+
+                          split_before = else_term;
+                      }
+
+                      // TODO Fix it
+                      user_inst->replaceAllUsesWith(llvm::UndefValue::get(user_inst->getType()));
+                      user_inst->eraseFromParent();
                   }
-                  else
-                  {
-                     ret = llvm::ReturnInst::Create(user_inst->getContext(), llvm::UndefValue::get(return_type), bb);
+              } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
+                  if (is_constant) {
+                      llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(),
+                                                          ptr_u->getOperandNo());
+
+                      auto exp_arg_it = exp_args_map.find(arg_u);
+
+                      unsigned long long current_offset = constant_sum;
+                      if (exp_arg_it != exp_args_map.end()) {
+                          unsigned long long exp_arg_u_idx = 0;
+                          for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
+                              // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
+                              unsigned long long accessed_size = DL.getTypeAllocSize(
+                                      exp_arg_u->getType()->getPointerElementType());
+
+                              auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
+                              if (exp_arg_size_it != arg_size_map.end() and !exp_arg_size_it->second.empty()) {
+                                  accessed_size *= exp_arg_size_it->second.front();
+                              }
+
+                              unsigned long long actual_accessed_size = 0;
+                              llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                                        arg_size_map, has_expandable_base, DL,
+                                                                        base_address, current_offset,
+                                                                        actual_accessed_size, accessed_size, arg_u,
+                                                                        &call_inst->getOperandUse(
+                                                                                exp_arg_u->getArgNo()), &accessed_size);
+
+                              current_offset += actual_accessed_size;
+
+                              // Take care of array decay now
+                              if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
+                                  if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
+                                      exp_arg_u->getType()->getPointerElementType()) {
+                                      if (!llvm::isa<llvm::Argument>(exp_val)) {
+                                          std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+                                          llvm::Type *op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                          llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                                          gepi_ops.push_back(op1);
+                                          llvm::Type *op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                          llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
+                                          gepi_ops.push_back(op2);
+
+                                          std::string gepi_name = exp_val->getName().str() + ".decay";
+                                          llvm::Type *gepi_type = exp_val->getType()->getPointerElementType();
+
+                                          llvm::GetElementPtrInst *decay_gep_inst = llvm::GetElementPtrInst::Create(
+                                                  gepi_type, exp_val, gepi_ops, gepi_name, call_inst);
+
+                                          exp_val = decay_gep_inst;
+                                      }
+                                  } else {
+                                      // llvm::errs() << "ERR: Malformed decay!\n";
+                                      // call_inst->dump();
+                                      // exp_arg_u->dump();
+                                      // exp_val->dump();
+                                      // exit(-1);
+                                      // TODO Review this
+                                  }
+                              }
+
+                              call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
+
+                              // arg_offset += accessed_size;
+                              exp_arg_u_idx++;
+                          }
+                      }
+                  } else {
+                      llvm::errs() << "ERR: Non constant access in function call operand\n";
+                      ptr_u->get()->dump();
+                      call_inst->dump();
+                      exit(-1);
                   }
-                  llvm::Instruction* new_inst = user_inst->clone();
-                  new_inst->insertBefore(ret);
-
-                  wrapper_call = llvm::CallInst::Create(wrapper_function, args, (return_type->isVoidTy() ? "" : "wrapper_call"), user_inst);
-
-                  if(!return_type->isVoidTy())
-                  {
-                     user_inst->replaceAllUsesWith(wrapper_call);
-                  }
-                  inst_to_remove.insert(user_inst);
-
-                  user_inst = new_inst;
-               }
-
-               // Keep track on where to split
-               llvm::Instruction* split_before = user_inst;
-
-               unsigned long long bytes_acc = 0;
-
-               llvm::PHINode* last_phi_set = nullptr;
-
-               // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
-
-               llvm::Function::arg_iterator arg_it = wrapper_function->arg_begin();
-               llvm::Instruction::op_iterator op_it = wrapper_call->op_begin();
-               llvm::Function::arg_iterator arg_offset_it = wrapper_function->arg_begin();
-               llvm::Function::arg_iterator arg_value_it = wrapper_function->arg_begin();
-               if(wrapper_function != nullptr)
-               {
-                  if(isStore)
-                  {
-                     arg_it->setName("value");
-                     arg_value_it = arg_it;
-                     ++arg_it;
-                     ++op_it;
-                  }
-                  arg_it->setName("offset");
-                  arg_offset_it = arg_it;
-                  ++arg_it;
-                  ++op_it;
-               }
-               // Create the if-then-else chain
-               for(llvm::Type* exp_ty : expanded_types)
-               {
-                  unsigned long long type_size = DL.getTypeAllocSize(exp_ty);
-                  llvm::APInt bytes_ai = llvm::APInt((unsigned int)32, bytes_acc, false);
-
-                  bytes_acc += type_size;
-
-                  // llvm::Type *bitcast_type = nullptr;
-                  llvm::Type* ty1 = exp_ty;
-                  llvm::Type* ty2 = ptr_u->get()->getType()->getPointerElementType();
-                  if(ty1->getTypeID() == ty2->getTypeID() and DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2))
-                  {
-                     // bitcast_type = ty2;
-                     llvm::errs() << "ERR: bitcast broke anything";
-                  }
-                  else if(ty1 != ty2)
-                  {
-                     continue;
-                  }
-
-                  llvm::ConstantInt* bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
-                  std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
-                  llvm::Value* offset = (wrap_non_const ? &*arg_offset_it : bytes_sum);
-                  llvm::CmpInst* cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp, llvm::CmpInst::Predicate::ICMP_EQ, offset, bytes_c, cmp_name, split_before);
-
-                  llvm::TerminatorInst* then_term;
-                  llvm::TerminatorInst* else_term;
-                  llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
-                  then_term->getParent()->setName("csroa.if.then");
-                  else_term->getParent()->setName("csroa.if.else");
-                  split_before->getParent()->setName("csroa.if.end");
-
-                  if(new_bb == nullptr)
-                  {
-                     new_bb = split_before->getParent();
-                  }
-
-                  llvm::Instruction* new_inst = user_inst->clone();
-                  new_inst->insertBefore(then_term);
-
-                  if(llvm::LoadInst* load_isnt = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser()))
-                  {
-                     llvm::PHINode* phi_node = llvm::PHINode::Create(ptr_u->get()->getType()->getPointerElementType(), expanded_types.size(), ptr_u->getUser()->getName().str() + ".phi", split_before);
-
-                     if(ret != nullptr)
-                     {
-                        if(!ret->getReturnValue()->getType()->isVoidTy())
-                        {
-                           if(llvm::isa<llvm::UndefValue>(ret->getReturnValue()))
-                           {
-                              ret->setOperand(0, phi_node);
-                           }
-                        }
-                     }
-
-                     phi_node->addIncoming(new_inst, then_term->getParent());
-                     phi_node->addIncoming(llvm::UndefValue::get(new_inst->getType()), else_term->getParent());
-
-                     if(last_phi_set)
-                     {
-                        last_phi_set->setIncomingValue(1, phi_node);
-                     }
-                     else
-                     {
-                        user_inst->replaceAllUsesWith(phi_node);
-                     }
-
-                     last_phi_set = phi_node;
-                  }
-
-                  unsigned long long actual_accessed_size;
-                  llvm::Value* exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, has_expandable_base, DL, base_address, bytes_acc - type_size, actual_accessed_size, type_size, nullptr, ptr_u);
-
-                  if(wrap_non_const)
-                  {
-                     std::string arg_name = "arg" + std::to_string(arg_it->getArgNo());
-                     arg_it->setName(arg_name);
-                     wrapper_call->setOperand(op_it->getOperandNo(), exp_val);
-                     if(isStore)
-                        new_inst->setOperand(0, &*arg_value_it);
-
-                     new_inst->setOperand(ptr_u->getOperandNo(), &*arg_it);
-                     ++arg_it;
-                     ++op_it;
-                  }
-                  else
-                  {
-                     new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
-                  }
-
-                  split_before = else_term;
-               }
-
-               // TODO Fix it
-               user_inst->replaceAllUsesWith(llvm::UndefValue::get(user_inst->getType()));
-               user_inst->eraseFromParent();
-            }
-         }
-         else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser()))
-         {
-            if(is_constant)
-            {
-               llvm::Argument* arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(), ptr_u->getOperandNo());
-
-               auto exp_arg_it = exp_args_map.find(arg_u);
-
-               unsigned long long current_offset = constant_sum;
-               if(exp_arg_it != exp_args_map.end())
-               {
-                  unsigned long long exp_arg_u_idx = 0;
-                  for(llvm::Argument* exp_arg_u : exp_arg_it->second)
-                  {
-                     // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
-                     unsigned long long accessed_size = DL.getTypeAllocSize(exp_arg_u->getType()->getPointerElementType());
-
-                     auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
-                     if(exp_arg_size_it != arg_size_map.end() and !exp_arg_size_it->second.empty())
-                     {
-                        accessed_size *= exp_arg_size_it->second.front();
-                     }
-
-                     unsigned long long actual_accessed_size = 0;
-                     llvm::Value* exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map, arg_size_map, has_expandable_base, DL, base_address, current_offset, actual_accessed_size, accessed_size, arg_u,
-                                                               &call_inst->getOperandUse(exp_arg_u->getArgNo()), &accessed_size);
-
-                     current_offset += actual_accessed_size;
-
-                     // Take care of array decay now
-                     if(exp_val->getType()->getPointerElementType()->isArrayTy())
-                     {
-                        if(exp_val->getType()->getPointerElementType()->getArrayElementType() == exp_arg_u->getType()->getPointerElementType())
-                        {
-                           if(!llvm::isa<llvm::Argument>(exp_val))
-                           {
-                              std::vector<llvm::Value*> gepi_ops = std::vector<llvm::Value*>();
-                              llvm::Type* op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
-                              llvm::Constant* op1 = llvm::ConstantInt::get(op1_ty, 0, false);
-                              gepi_ops.push_back(op1);
-                              llvm::Type* op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
-                              llvm::Constant* op2 = llvm::ConstantInt::get(op2_ty, 0, false);
-                              gepi_ops.push_back(op2);
-
-                              std::string gepi_name = exp_val->getName().str() + ".decay";
-                              llvm::Type* gepi_type = exp_val->getType()->getPointerElementType();
-
-                              llvm::GetElementPtrInst* decay_gep_inst = llvm::GetElementPtrInst::Create(gepi_type, exp_val, gepi_ops, gepi_name, call_inst);
-
-                              exp_val = decay_gep_inst;
-                           }
-                        }
-                        else
-                        {
-                           // llvm::errs() << "ERR: Malformed decay!\n";
-                           // call_inst->dump();
-                           // exp_arg_u->dump();
-                           // exp_val->dump();
-                           // exit(-1);
-                           // TODO Review this
-                        }
-                     }
-
-                     call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
-
-                     // arg_offset += accessed_size;
-                     exp_arg_u_idx++;
-                  }
-               }
-            }
-            else
-            {
-               llvm::errs() << "ERR: Non constant access in function call operand\n";
-               ptr_u->get()->dump();
-               call_inst->dump();
-               exit(-1);
-            }
-         }
+              }
+          }
       }
    }
    else
@@ -3713,7 +3686,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::Use*, std::vector<unsigned long long>> op_dims_map;
 
-      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map);
+      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, op_dims_map, DL);
 
       std::map<FunctionDimKey, llvm::Function*, CmpFunDim> function_dim_map;
       std::map<llvm::Argument*, bool> arg_exp_map;
@@ -3752,7 +3725,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::Use*, std::vector<unsigned long long>> operands_dimensions_map;
 
-      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map);
+      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL);
 
       std::set<llvm::Function*> function_worklist;
       for(auto cc_it : compact_callgraph)
@@ -3808,6 +3781,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
    if(sroa_phase == SROA_wrapperInlining)
    {
+return true;
       std::map<llvm::AllocaInst*, bool> allocas_expandability_map;
       std::map<llvm::GlobalVariable*, bool> globals_expandability_map;
       std::map<llvm::Use*, bool> operands_expandability_map;
@@ -3823,7 +3797,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       std::map<llvm::Use*, std::vector<unsigned long long>> operands_dimensions_map;
 
-      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map);
+      compute_op_dims(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL);
 
       std::set<llvm::Function*> function_worklist;
       for(auto cc_it : compact_callgraph)
