@@ -2572,7 +2572,9 @@ void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm:
 
           if (has_expandable_base or llvm::isa<llvm::CallInst>(ptr_u->getUser())) {
               for (llvm::Instruction *i : inst_chain) {
-                  inst_to_remove.insert(i);
+                  if (has_expandable_base) {
+                      inst_to_remove.insert(i);
+                  }
               }
 
               signed long long constant_sum = 0;
@@ -3772,7 +3774,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       expand_ptrs(function_worklist, exp_args_map, exp_allocas_map, exp_globals_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
-      ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map, exp_allocas_map);
+      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map, exp_allocas_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
@@ -3781,7 +3783,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
    if(sroa_phase == SROA_wrapperInlining)
    {
-return true;
       std::map<llvm::AllocaInst*, bool> allocas_expandability_map;
       std::map<llvm::GlobalVariable*, bool> globals_expandability_map;
       std::map<llvm::Use*, bool> operands_expandability_map;
