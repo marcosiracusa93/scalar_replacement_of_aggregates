@@ -112,7 +112,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         passManagerBuilder.populateModulePassManager(*passManager);
+         ///passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createSROADisaggregationPass(args_info.target_function));
@@ -142,7 +142,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         passManagerBuilder.populateModulePassManager(*passManager);
+         ///passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->run(*module);

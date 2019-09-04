@@ -76,37 +76,65 @@ entry:
 }
 
 ; Function Attrs: noinline nounwind ssp
-define i32 @f1(i32* %v) #0 {
+define i32 @f1(i32* %v, i32 %i1) #0 {
 entry:
   %v.addr = alloca i32*, align 4
+  %i1.addr = alloca i32, align 4
   store i32* %v, i32** %v.addr, align 4
+  store i32 %i1, i32* %i1.addr, align 4
   %0 = load i32*, i32** %v.addr, align 4
   %arrayidx = getelementptr inbounds i32, i32* %0, i32 0
   %1 = load i32, i32* %arrayidx, align 4
-  ret i32 %1
-}
-
-; Function Attrs: noinline nounwind ssp
-define i32 @f2(i32* %v) #0 {
-entry:
-  %v.addr = alloca i32*, align 4
-  store i32* %v, i32** %v.addr, align 4
-  %0 = load i32*, i32** %v.addr, align 4
-  %call = call i32 @f1(i32* %0)
-  ret i32 %call
-}
-
-; Function Attrs: noinline nounwind ssp
-define i32 @f3(i32* %v) #0 {
-entry:
-  %v.addr = alloca i32*, align 4
-  store i32* %v, i32** %v.addr, align 4
-  %0 = load i32*, i32** %v.addr, align 4
-  %call = call i32 @f2(i32* %0)
-  %1 = load i32*, i32** %v.addr, align 4
-  %call1 = call i32 @f1(i32* %1)
-  %add = add nsw i32 %call, %call1
+  %2 = load i32, i32* %i1.addr, align 4
+  %add = add nsw i32 %1, %2
   ret i32 %add
+}
+
+; Function Attrs: noinline nounwind ssp
+define i32 @f2(i32* %v, i32 %i1, i32 %i2) #0 {
+entry:
+  %v.addr = alloca i32*, align 4
+  %i1.addr = alloca i32, align 4
+  %i2.addr = alloca i32, align 4
+  store i32* %v, i32** %v.addr, align 4
+  store i32 %i1, i32* %i1.addr, align 4
+  store i32 %i2, i32* %i2.addr, align 4
+  %0 = load i32*, i32** %v.addr, align 4
+  %1 = load i32, i32* %i1.addr, align 4
+  %call = call i32 @f1(i32* %0, i32 %1)
+  %2 = load i32, i32* %i1.addr, align 4
+  %add = add nsw i32 %call, %2
+  %3 = load i32, i32* %i2.addr, align 4
+  %add1 = add nsw i32 %add, %3
+  ret i32 %add1
+}
+
+; Function Attrs: noinline nounwind ssp
+define i32 @f3(i32* %v, i32 %i1, i32 %i2, i32 %i3) #0 {
+entry:
+  %v.addr = alloca i32*, align 4
+  %i1.addr = alloca i32, align 4
+  %i2.addr = alloca i32, align 4
+  %i3.addr = alloca i32, align 4
+  store i32* %v, i32** %v.addr, align 4
+  store i32 %i1, i32* %i1.addr, align 4
+  store i32 %i2, i32* %i2.addr, align 4
+  store i32 %i3, i32* %i3.addr, align 4
+  %0 = load i32*, i32** %v.addr, align 4
+  %1 = load i32, i32* %i1.addr, align 4
+  %2 = load i32, i32* %i2.addr, align 4
+  %call = call i32 @f2(i32* %0, i32 %1, i32 %2)
+  %3 = load i32*, i32** %v.addr, align 4
+  %4 = load i32, i32* %i1.addr, align 4
+  %call1 = call i32 @f1(i32* %3, i32 %4)
+  %add = add nsw i32 %call, %call1
+  %5 = load i32, i32* %i1.addr, align 4
+  %add2 = add nsw i32 %add, %5
+  %6 = load i32, i32* %i2.addr, align 4
+  %add3 = add nsw i32 %add2, %6
+  %7 = load i32, i32* %i3.addr, align 4
+  %add4 = add nsw i32 %add3, %7
+  ret i32 %add4
 }
 
 ; Function Attrs: noinline nounwind ssp
@@ -158,18 +186,10 @@ entry:
   store i32 3, i32* %arrayidx18, align 4
   %pf1 = getelementptr inbounds %struct.s1, %struct.s1* %s11, i32 0, i32 5
   store float 0x3FF19999A0000000, float* %pf1, align 4
-  %arraydecay = getelementptr inbounds [2 x i32], [2 x i32]* %a2, i32 0, i32 0
-  %call = call i32 @f2(i32* %arraydecay)
-  %arraydecay19 = getelementptr inbounds [3 x i32], [3 x i32]* %a3, i32 0, i32 0
-  %call20 = call i32 @f2(i32* %arraydecay19)
-  %add = add nsw i32 %call, %call20
-  %arraydecay21 = getelementptr inbounds [2 x i32], [2 x i32]* %a2, i32 0, i32 0
-  %call22 = call i32 @f3(i32* %arraydecay21)
-  %add23 = add nsw i32 %add, %call22
-  %arraydecay24 = getelementptr inbounds [3 x i32], [3 x i32]* %a3, i32 0, i32 0
-  %call25 = call i32 @f3(i32* %arraydecay24)
-  %add26 = add nsw i32 %add23, %call25
-  ret i32 %add26
+  %call = call i32 @kernel(%struct.s1* %s11, i32 1)
+  %call19 = call i32 @kernel(%struct.s1* %s11, i32 2)
+  %add = add nsw i32 %call, %call19
+  ret i32 %add
 }
 
 attributes #0 = { noinline nounwind ssp "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }

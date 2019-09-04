@@ -57,16 +57,16 @@ int kernel(struct s1 s11) {
 }
 */
 
-int f1(int v[]) {
-    return v[0];
+int f1(int v[], int i1) {
+    return v[0] + i1;
 }
 
-int f2(int v[]) {
-    return f1(v);
+int f2(int v[], int i1, int i2) {
+    return f1(v, i1) + i1 + i2;
 }
 
-int f3(int v[]) {
-    return f2(v) + f1(v);
+int f3(int v[], int i1, int i2, int i3) {
+    return f2(v, i1, i2) + f1(v, i1) + i1 + i2 + i3;
 }
 
 int main(void) {
@@ -113,5 +113,15 @@ int main(void) {
     int a2[2];
     int a3[3];
     int a4[100];
-    return f2(a2) + f2(a3) +f3(a2) + f3(a3);//kernel3(a2, 1) + kernel3(a3, 0) + kernel3(a4, 2) + kernel(&s11, 1) + kernel(&s11, 2) /*+ kernel1(a1)*/ + kernel2(&s11.i1) + kernel3(a1[1], 1);
+    return /*f2(a2, 1, 2) +
+            f2(a3, 3, 4) +
+            f3(a2, 5, 6, 7) +
+            f3(a3, 8, 9, 10) +
+            kernel3(a2, 1) +
+            kernel3(a3, 0) +
+            kernel3(a4, 2) +*/
+            kernel(&s11, 1) +
+            kernel(&s11, 2)/* +
+            kernel2(&s11.i1) +
+            kernel3(a1[1], 1)*/;
 }
