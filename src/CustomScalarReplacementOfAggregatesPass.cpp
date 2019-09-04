@@ -155,83 +155,6 @@ class Utilities
    }
 };
 
-class FunctionDimKey
-{
- public:
-   llvm::Function* const function_ptr = nullptr;
-   std::vector<std::vector<unsigned long long>> arg_dims = std::vector<std::vector<unsigned long long>>();
-   std::vector<bool> arg_can_exp = std::vector<bool>();
-
-   FunctionDimKey(llvm::Function* const function_ptr, std::vector<std::vector<unsigned long long>> arg_dims, std::vector<bool> arg_can_exp) : function_ptr(function_ptr), arg_dims(arg_dims), arg_can_exp(arg_can_exp)
-   {
-   }
-
-   bool operator<(const FunctionDimKey& oth) const
-   {
-      if(function_ptr != oth.function_ptr)
-      {
-         return function_ptr < oth.function_ptr;
-      }
-      else
-      {
-         // Can expand same arguments
-         if(arg_can_exp.size() != oth.arg_can_exp.size())
-         {
-            llvm::errs() << "ERR: different number of can_exp arguments (" << arg_can_exp.size() << " vs. " << oth.arg_can_exp.size() << ") for function implementation for \n";
-            llvm::errs() << function_ptr->getName() << " ";
-            function_ptr->getFunctionType()->dump();
-            llvm::errs() << oth.function_ptr->getName() << " ";
-            oth.function_ptr->getFunctionType()->dump();
-            exit(-1);
-         }
-         auto this_c_it = arg_can_exp.begin();
-         auto oth_c_it = oth.arg_can_exp.begin();
-
-         for(; this_c_it != arg_can_exp.end() or oth_c_it != oth.arg_can_exp.end(); ++this_c_it, ++oth_c_it)
-         {
-            if(!*this_c_it and *oth_c_it)
-            {
-               return true;
-            }
-         }
-
-         if(arg_dims.size() != oth.arg_dims.size())
-         {
-            llvm::errs() << "ERR: different number of dim arguments (" << arg_dims.size() << " vs. " << oth.arg_dims.size() << ") for function implementation for \n";
-            llvm::errs() << function_ptr->getName() << " ";
-            function_ptr->getFunctionType()->dump();
-            llvm::errs() << oth.function_ptr->getName() << " ";
-            oth.function_ptr->getFunctionType()->dump();
-            exit(-1);
-         }
-
-         auto this_a_it = arg_dims.begin();
-         auto oth_a_it = oth.arg_dims.begin();
-
-         for(; this_a_it != arg_dims.end() or oth_a_it != oth.arg_dims.end(); ++this_a_it, ++oth_a_it)
-         {
-            if(this_a_it->size() != oth_a_it->size())
-            {
-               return this_a_it->size() < oth_a_it->size();
-            }
-
-            auto this_d_it = this_a_it->begin();
-            auto oth_d_it = oth_a_it->begin();
-
-            for(; this_d_it != this_a_it->end() or oth_d_it != oth_a_it->end(); ++this_d_it, ++oth_d_it)
-            {
-               if(*this_d_it != *oth_d_it)
-               {
-                  return *this_d_it < *oth_d_it;
-               }
-            }
-         }
-
-         return false;
-      }
-   }
-};
-
 void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsage& AU) const
 {
    AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
@@ -240,14 +163,6 @@ void CustomScalarReplacementOfAggregatesPass::getAnalysisUsage(llvm::AnalysisUsa
    AU.addRequiredTransitive<llvm::DominatorTreeWrapperPass>();
    AU.addRequiredTransitive<llvm::AssumptionCacheTracker>();
 }
-
-struct CmpFunDim
-{
-   bool operator()(const FunctionDimKey& lhs, const FunctionDimKey& rhs) const
-   {
-      return lhs < rhs;
-   }
-};
 
 bool is_relevant_function(llvm::Function* called_function)
 {
@@ -1087,8 +1002,8 @@ void update_calls_rec(llvm::CallInst *call_inst,
                       std::vector<llvm::CallInst *> &call_trace,
                       const std::map<llvm::CallInst *, std::vector<llvm::CallInst *>> &compact_callgraph,
                       const std::map<llvm::CallInst *, std::map<std::vector<llvm::CallInst *>, std::vector<std::pair<bool, std::vector<unsigned long long>>>>> &op_exp_and_dim_by_callsite,
-                      const std::map<FunctionDimKey, llvm::Function *> &versioned_functions_map,
-                      std::set<FunctionDimKey> &processed_versioned_functions) {
+                      const std::map<std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>>, llvm::Function *> &versioned_functions_map,
+                      std::set<std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>>> &processed_versioned_functions) {
 
     llvm::Function *next_parent = nullptr;
     if(call_inst)
@@ -1106,30 +1021,13 @@ void update_calls_rec(llvm::CallInst *call_inst,
                 dim_vec.push_back(pair.second);
             }
 
-            FunctionDimKey fdk = FunctionDimKey(called_function, dim_vec, exp_vec);
+            std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>> vfun_key = std::make_tuple(called_function, exp_vec, dim_vec);
 
-            if (processed_versioned_functions.count(fdk) > 0) {
+            if (processed_versioned_functions.count(vfun_key) > 0) {
                 return;
             }
-llvm::errs() << "\nSEARCHING :\n";
-llvm::errs() << "F: " << called_function << " " << called_function->getName() << "\n";
-for (unsigned long long idx = 0; idx < fdk.arg_can_exp.size(); ++idx) {
-    llvm::errs() << "Op" << idx << " " << fdk.arg_can_exp.at(idx) << "    "; for (unsigned long long d : fdk.arg_dims.at(idx)) { llvm::errs() << " " << d; } llvm::errs() << "\n";
-}
-llvm::errs() << "\nINTO\n";
-for (auto it : versioned_functions_map) {
-    FunctionDimKey fdk = it.first;
-    llvm::Function *called_function = it.first.function_ptr;
-    llvm::errs() << "F: " << called_function << " " << called_function->getName() << "\n";
-    for (unsigned long long idx = 0; idx < fdk.arg_can_exp.size(); ++idx) {
-        llvm::errs() << "Op" << idx << " " << fdk.arg_can_exp.at(idx) << "    "; for (unsigned long long d : fdk.arg_dims.at(idx)) { llvm::errs() << " " << d; } llvm::errs() << "\n";
-    }
-    if (fdk.arg_can_exp.size() != fdk.arg_dims.size()) {
-        llvm::errs() << "ERR\n"; exit(-1);
-    }
-}
-llvm::errs() << "\n********************\n";
-            llvm::Function *versioned_function = versioned_functions_map.at(fdk);
+
+            llvm::Function *versioned_function = versioned_functions_map.at(vfun_key);
 
             llvm::CallInst *versioned_parent_call_inst = get_related_inst<llvm::CallInst>(call_inst, parent_versioned_function);
 
@@ -1213,11 +1111,11 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
         }
     }
 
-    std::map<FunctionDimKey, llvm::Function*> versioned_function_map;
+    std::map<std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>>, llvm::Function*> versioned_function_map;
 
     for(llvm::Function* function : function_worklist)
     {
-        std::map<FunctionDimKey, llvm::Function*> local_versioned_function_map;
+        std::map<std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>>, llvm::Function*> local_versioned_function_map;
 
         for(llvm::User* user : function->users())
         {
@@ -1239,9 +1137,9 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
                             ops_dim.push_back(pair.second);
                         }
 
-                        FunctionDimKey fdk = FunctionDimKey(function, ops_dim, ops_exp);
+                        std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>> vfun_key = std::make_tuple(function, ops_exp, ops_dim);
 
-                        local_versioned_function_map.insert(std::make_pair(fdk, nullptr));
+                        local_versioned_function_map.insert(std::make_pair(vfun_key, nullptr));
                     }
                 }
             }
@@ -1254,7 +1152,7 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
 
         unsigned long long version_id = 0;
         for (auto ver_it : local_versioned_function_map) {
-            const FunctionDimKey &fdk = ver_it.first;
+            const std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>> &vfun_key = ver_it.first;
 
             // Clone the function
             llvm::ValueToValueMapTy VMap;
@@ -1270,15 +1168,19 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
             std::string new_name = function->getName().str() + ".v" + std::to_string(version_id);
             cloned_function->setName(new_name);
 
-            versioned_function_map.insert(std::make_pair(fdk, cloned_function));
+            versioned_function_map.insert(std::make_pair(vfun_key, cloned_function));
 
             llvm::errs() << "INFO: Function " << function->getName() << " (" << function << " ver #" << version_id << ") versioned as " << cloned_function->getName() << " with arguments \n";
             for(auto& arg : cloned_function->args())
             {
-                arg_exp_map.insert(std::make_pair(&arg, fdk.arg_can_exp.at(arg.getArgNo())));
-                arg_dims_map.insert(std::make_pair(&arg, fdk.arg_dims.at(arg.getArgNo())));
+                llvm::Function *function;
+                std::vector<bool> ops_exp_vec;
+                std::vector<std::vector<unsigned long long>> ops_dim_vec;
+                std::tie(function, ops_exp_vec, ops_dim_vec) = vfun_key;
+                arg_exp_map.insert(std::make_pair(&arg, ops_exp_vec.at(arg.getArgNo())));
+                arg_dims_map.insert(std::make_pair(&arg, ops_dim_vec.at(arg.getArgNo())));
 
-                llvm::errs() << "   Arg" << arg.getArgNo() << ":  E( " << fdk.arg_can_exp.at(arg.getArgNo()) <<" )  D( "; for (unsigned long long d : fdk.arg_dims.at(arg.getArgNo())) { llvm::errs() << d << " "; } llvm::errs() << ")\n";
+                llvm::errs() << "   Arg" << arg.getArgNo() << ":  E( " << ops_exp_vec.at(arg.getArgNo()) <<" )  D( "; for (unsigned long long d : ops_dim_vec.at(arg.getArgNo())) { llvm::errs() << d << " "; } llvm::errs() << ")\n";
             }
 
             ++version_id;
@@ -1289,13 +1191,13 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
     std::set<llvm::Function*> fun_to_del;
 
     for (const auto &ver_it : versioned_function_map) {
-        fun_to_del.insert(ver_it.first.function_ptr);
+        fun_to_del.insert(std::get<0>(ver_it.first));
         versioned_function_worklist.insert(ver_it.second);
     }
 
     {
         std::vector<llvm::CallInst *> call_trace;
-        std::set<FunctionDimKey> processed_versioned_functions;
+        std::set<std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>>> processed_versioned_functions;
         update_calls_rec(nullptr, kernel_function, call_trace, compact_callgraph, op_exp_and_dim_by_callsite,
                          versioned_function_map, processed_versioned_functions);
     }
@@ -1409,7 +1311,10 @@ bool check_function_versioning(const std::map<llvm::CallInst *, std::vector<llvm
                             const std::vector<std::pair<bool, std::vector<unsigned long long>>> &exp_dim_vec = callsite_map_it.second;
 
                             llvm::errs() << "   Call: "; call_inst->dump();
-                            // TODO add calltrace
+                            llvm::errs() << "      Call trace:  ";
+                            for (llvm::CallInst * c : callsite_map_it.first) {
+                                llvm::errs() << " " << c << "=" << (c ? c->getCalledFunction()->getName() : "KERNEL") << "  ";
+                            }
                             unsigned long long idx = 0;
                             for (const auto &exp_it : exp_dim_vec) {
                                 llvm::errs() << "      Op" << idx++ << ":  E( "
@@ -3915,7 +3820,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       propagate_constant_arguments(function_worklist);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
-
+module.dump();
       return true;
    }
 
@@ -3965,6 +3870,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
            if(!check_function_versioning(compact_callgraph, kernel_function, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map))
            {
                llvm::errs() << "ERR: Wrong versioning!\n";
+               module.dump(); // TODO remove this line
                exit(-1);
            }
        }

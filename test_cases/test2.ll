@@ -76,6 +76,40 @@ entry:
 }
 
 ; Function Attrs: noinline nounwind ssp
+define i32 @f1(i32* %v) #0 {
+entry:
+  %v.addr = alloca i32*, align 4
+  store i32* %v, i32** %v.addr, align 4
+  %0 = load i32*, i32** %v.addr, align 4
+  %arrayidx = getelementptr inbounds i32, i32* %0, i32 0
+  %1 = load i32, i32* %arrayidx, align 4
+  ret i32 %1
+}
+
+; Function Attrs: noinline nounwind ssp
+define i32 @f2(i32* %v) #0 {
+entry:
+  %v.addr = alloca i32*, align 4
+  store i32* %v, i32** %v.addr, align 4
+  %0 = load i32*, i32** %v.addr, align 4
+  %call = call i32 @f1(i32* %0)
+  ret i32 %call
+}
+
+; Function Attrs: noinline nounwind ssp
+define i32 @f3(i32* %v) #0 {
+entry:
+  %v.addr = alloca i32*, align 4
+  store i32* %v, i32** %v.addr, align 4
+  %0 = load i32*, i32** %v.addr, align 4
+  %call = call i32 @f2(i32* %0)
+  %1 = load i32*, i32** %v.addr, align 4
+  %call1 = call i32 @f1(i32* %1)
+  %add = add nsw i32 %call, %call1
+  ret i32 %add
+}
+
+; Function Attrs: noinline nounwind ssp
 define i32 @main() #0 {
 entry:
   %retval = alloca i32, align 4
@@ -125,25 +159,17 @@ entry:
   %pf1 = getelementptr inbounds %struct.s1, %struct.s1* %s11, i32 0, i32 5
   store float 0x3FF19999A0000000, float* %pf1, align 4
   %arraydecay = getelementptr inbounds [2 x i32], [2 x i32]* %a2, i32 0, i32 0
-  %call = call i32 @kernel3(i32* %arraydecay, i32 1)
+  %call = call i32 @f2(i32* %arraydecay)
   %arraydecay19 = getelementptr inbounds [3 x i32], [3 x i32]* %a3, i32 0, i32 0
-  %call20 = call i32 @kernel3(i32* %arraydecay19, i32 0)
+  %call20 = call i32 @f2(i32* %arraydecay19)
   %add = add nsw i32 %call, %call20
-  %arraydecay21 = getelementptr inbounds [100 x i32], [100 x i32]* %a4, i32 0, i32 0
-  %call22 = call i32 @kernel3(i32* %arraydecay21, i32 2)
+  %arraydecay21 = getelementptr inbounds [2 x i32], [2 x i32]* %a2, i32 0, i32 0
+  %call22 = call i32 @f3(i32* %arraydecay21)
   %add23 = add nsw i32 %add, %call22
-  %call24 = call i32 @kernel(%struct.s1* %s11, i32 1)
-  %add25 = add nsw i32 %add23, %call24
-  %call26 = call i32 @kernel(%struct.s1* %s11, i32 2)
-  %add27 = add nsw i32 %add25, %call26
-  %i128 = getelementptr inbounds %struct.s1, %struct.s1* %s11, i32 0, i32 1
-  %call29 = call i32 @kernel2(i32* %i128)
-  %add30 = add nsw i32 %add27, %call29
-  %arrayidx31 = getelementptr inbounds [2 x [2 x i32]], [2 x [2 x i32]]* %a1, i32 0, i32 1
-  %arraydecay32 = getelementptr inbounds [2 x i32], [2 x i32]* %arrayidx31, i32 0, i32 0
-  %call33 = call i32 @kernel3(i32* %arraydecay32, i32 1)
-  %add34 = add nsw i32 %add30, %call33
-  ret i32 %add34
+  %arraydecay24 = getelementptr inbounds [3 x i32], [3 x i32]* %a3, i32 0, i32 0
+  %call25 = call i32 @f3(i32* %arraydecay24)
+  %add26 = add nsw i32 %add23, %call25
+  ret i32 %add26
 }
 
 attributes #0 = { noinline nounwind ssp "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
