@@ -130,7 +130,7 @@ int main(int argc, char** argv)
          /// passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      passManager->add(createSROAWrapperInliningPass(args_info.target_function));
+      //passManager->add(createSROAWrapperInliningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain

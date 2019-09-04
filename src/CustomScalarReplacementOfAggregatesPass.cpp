@@ -358,7 +358,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
       if(!constant_access)
       {
          if (!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), false)).second) {
-             llvm::errs() << "ERR\n";
+             llvm::errs() << "ERR Operand expandability inserted twice in map\n";
              exit(-1);
          }
 
@@ -372,7 +372,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
       else if(is_allowed_intrinsic_call(call_inst))
       {
          if (!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), true)).second) {
-             llvm::errs() << "ERR\n";
+             llvm::errs() << "ERR Operand expandability inserted twice in map\n";
              exit(-1);
          }
          return true;
@@ -402,7 +402,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
           call_trace.pop_back();
 
          if (!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), ret)).second) {
-             llvm::errs() << "ERR\n";
+             llvm::errs() << "ERR Operand expandability inserted twice in map\n";
              exit(-1);
          }
 
@@ -411,7 +411,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
       else
       {
          if (!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), false)).second) {
-             llvm::errs() << "ERR\n";
+             llvm::errs() << "ERR Operand expandability inserted twice in map\n";
              exit(-1);
          }
          return false;
@@ -650,7 +650,7 @@ void compute_callgraph_rec(llvm::CallInst *call_inst, llvm::Function *kernel_fun
 
     if (!compact_callgraph.insert(std::make_pair(call_inst, call_inst_vec)).second)
     {
-        llvm::errs() << "ERR\n";
+        llvm::errs() << "ERR call inst reinserted twice in callgraph\n";
         exit(-1);
     }
 
@@ -1012,12 +1012,11 @@ I* get_original_inst(I* inst, const std::map<llvm::Function *, llvm::Function*> 
    }
    else
    {
-      llvm::errs() << "ERR\n";
+       llvm::errs() << "ERR Wrong related instruction type\n";
       exit(-1);
    }
 
 }
-
 
 template<class I>
 I* get_related_inst(I* inst, llvm::Function* new_function) {
@@ -1037,7 +1036,7 @@ I* get_related_inst(I* inst, llvm::Function* new_function) {
     }
     else
     {
-        llvm::errs() << "ERR\n";
+        llvm::errs() << "ERR Wrong related instruction type\n";
         exit(-1);
     }
 }
@@ -2195,7 +2194,7 @@ llvm::Value* get_element_at_offset(I* base_address, llvm::Use* use, const std::m
             }
             else
             {
-               llvm::errs() << "ERR\n";
+               llvm::errs() << "ERR arg exp not found\n";
                llvm::errs() << "Base arg: ";
                base_arg->dump();
                exit(-1);
@@ -2312,7 +2311,9 @@ llvm::Value* get_element_at_offset(I* base_address, llvm::Use* use, const std::m
          }
          else
          {
-            llvm::errs() << "ERR\n";
+            llvm::errs() << "ERR struct exp not found\n";
+             llvm::errs() << "Base arg: ";
+             base_address->dump();
             exit(-1);
          }
       }
@@ -2371,7 +2372,9 @@ llvm::Value* get_element_at_offset(I* base_address, llvm::Use* use, const std::m
          }
          else
          {
-            llvm::errs() << "ERR\n";
+            llvm::errs() << "ERR Array exp not found\n";
+             llvm::errs() << "Base arg: ";
+             base_address->dump();
             exit(-1);
          }
       }
@@ -2549,6 +2552,115 @@ llvm::Value* get_element_at_offset_iter(I* base_address, const std::map<I*, std:
    return el_to_exp;
 }
 
+static void gen_gepi_map(llvm::Value* gepi_base,
+                         llvm::Argument* arg,
+                         llvm::Use* use,
+                         std::map<llvm::Value*, std::vector<llvm::Value*>>& gepi_map,
+                         const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& arg_map,
+                         const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
+                         std::string gepi_name)
+{
+    auto arg_it = arg_map.find(arg);
+
+    if(arg_it != arg_map.end())
+    {
+        std::vector<llvm::Type*> type_vec;
+
+        auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(gepi_base));
+        bool already_decay = false;
+        if(size_it != arg_size_map.end())
+        {
+            if(!size_it->second.empty())
+            {
+                if(size_it->second.front() > 1)
+                {
+                    for(unsigned long long idx = 0; idx < size_it->second.front(); idx++)
+                    {
+                        already_decay = true;
+                        type_vec.push_back(gepi_base->getType()->getPointerElementType());
+                    }
+                }
+            }
+        }
+
+        if(!already_decay)
+        {
+            llvm::Type* ptd_ty;
+            if(gepi_base->getType()->isPointerTy())
+            {
+                ptd_ty = gepi_base->getType()->getPointerElementType();
+            }
+            else
+            {
+                ptd_ty = gepi_base->getType();
+            }
+
+            if(ptd_ty->isAggregateType())
+            {
+                if(ptd_ty->isArrayTy())
+                {
+                    for(unsigned long long idx = 0; idx < ptd_ty->getArrayNumElements(); idx++)
+                    {
+                        type_vec.push_back(ptd_ty->getArrayElementType());
+                    }
+                }
+                else if(ptd_ty->isStructTy())
+                {
+                    for(unsigned long long idx = 0; idx < ptd_ty->getStructNumElements(); idx++)
+                    {
+                        type_vec.push_back(ptd_ty->getStructElementType(idx)); // TODO check it out
+                    }
+                }
+                else if(ptd_ty->isVectorTy())
+                {
+                    for(unsigned long long idx = 0; idx < ptd_ty->getVectorNumElements(); idx++)
+                    {
+                        type_vec.push_back(ptd_ty->getVectorElementType());
+                    }
+                }
+                else
+                {
+                    llvm::errs() << "ERR: Unknown aggregate\n";
+                    exit(-1);
+                }
+            }
+        }
+
+        unsigned long long idx = 0;
+        for(llvm::Type* ty : type_vec)
+        {
+            std::vector<llvm::Value*> gepi_ops = std::vector<llvm::Value*>();
+
+            llvm::Type* gepi_type = llvm::cast<llvm::PointerType>(gepi_base->getType()->getScalarType())->getElementType();
+
+            if(!already_decay)
+            {
+                llvm::Type* op1_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
+                llvm::Constant* op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                gepi_ops.push_back(op1);
+            }
+
+            llvm::Type* op2_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
+            llvm::Constant* op2 = llvm::ConstantInt::get(op2_ty, idx, false);
+            gepi_ops.push_back(op2);
+
+            std::string new_gepi_name = gepi_name + "." + std::to_string(idx);
+
+            llvm::GetElementPtrInst* new_gepi = llvm::GetElementPtrInst::Create(gepi_type, gepi_base, gepi_ops, new_gepi_name, llvm::dyn_cast<llvm::CallInst>(use->getUser()));
+            gepi_map[gepi_base].push_back(new_gepi);
+            gen_gepi_map(new_gepi, arg, use, gepi_map, arg_map, arg_size_map, new_gepi_name);
+
+            ++idx;
+        }
+    }
+    else
+    {
+        // llvm::errs() << "ERR: arg not found\n";
+        // arg->dump();
+        // exit(-1);
+    }
+}
+
 llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
                                 const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map, const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, bool is_expansion_allowed,
                                 const llvm::DataLayout& DL, llvm::Value* base_address, signed long long offset, unsigned long long& actual_accessed_size, unsigned long long accessed_size, llvm::Argument* arg_if_any, llvm::Use* use,
@@ -2559,121 +2671,9 @@ llvm::Value* get_expanded_value(const std::map<llvm::Argument*, std::vector<llvm
    {
        std::map<llvm::Value*, std::vector<llvm::Value*>> gepi_map;
 
-       class GenGepiMap
-       {
-       public:
-           static void gen_gepi_map(llvm::Value* gepi_base,
-                                    llvm::Argument* arg,
-                                    llvm::Use* use,
-                                    std::map<llvm::Value*, std::vector<llvm::Value*>>& gepi_map,
-                                    const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& arg_map,
-                                    const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map,
-                                    std::string gepi_name)
-           {
-               auto arg_it = arg_map.find(arg);
-
-               if(arg_it != arg_map.end())
-               {
-                   std::vector<llvm::Type*> type_vec;
-
-                   auto size_it = arg_size_map.find(llvm::dyn_cast<llvm::Argument>(gepi_base));
-                   bool is_array = false;
-                   if(size_it != arg_size_map.end())
-                   {
-                       if(!size_it->second.empty())
-                       {
-                           if(size_it->second.front() > 1)
-                           {
-                               for(unsigned long long idx = 0; idx < size_it->second.front(); idx++)
-                               {
-                                   is_array = true;
-                                   type_vec.push_back(gepi_base->getType()->getPointerElementType());
-                               }
-                           }
-                       }
-                   }
-
-                   if(!is_array)
-                   {
-                       llvm::Type* ptd_ty;
-                       if(gepi_base->getType()->isPointerTy())
-                       {
-                           ptd_ty = gepi_base->getType()->getPointerElementType();
-                       }
-                       else
-                       {
-                           ptd_ty = gepi_base->getType();
-                       }
-
-                       if(ptd_ty->isAggregateType())
-                       {
-                           if(ptd_ty->isArrayTy())
-                           {
-                               for(unsigned long long idx = 0; idx < ptd_ty->getArrayNumElements(); idx++)
-                               {
-                                   type_vec.push_back(ptd_ty->getArrayElementType());
-                               }
-                           }
-                           else if(ptd_ty->isStructTy())
-                           {
-                               for(unsigned long long idx = 0; idx < ptd_ty->getStructNumElements(); idx++)
-                               {
-                                   type_vec.push_back(ptd_ty->getContainedType(idx));
-                               }
-                           }
-                           else if(ptd_ty->isVectorTy())
-                           {
-                               for(unsigned long long idx = 0; idx < ptd_ty->getVectorNumElements(); idx++)
-                               {
-                                   type_vec.push_back(ptd_ty->getVectorElementType());
-                               }
-                           }
-                           else
-                           {
-                               llvm::errs() << "ERR: Unknown aggregate\n";
-                               exit(-1);
-                           }
-                       }
-                   }
-
-                   unsigned long long idx = 0;
-                   for(llvm::Type* ty : type_vec)
-                   {
-                       std::vector<llvm::Value*> gepi_ops = std::vector<llvm::Value*>();
-
-                       llvm::Type* gepi_type = llvm::cast<llvm::PointerType>(gepi_base->getType()->getScalarType())->getElementType();
-
-                       if(!is_array)
-                       {
-                           llvm::Type* op1_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
-                           llvm::Constant* op1 = llvm::ConstantInt::get(op1_ty, 0, false);
-                           gepi_ops.push_back(op1);
-                       }
-
-                       llvm::Type* op2_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
-                       llvm::Constant* op2 = llvm::ConstantInt::get(op2_ty, idx, false);
-                       gepi_ops.push_back(op2);
-
-                       std::string new_gepi_name = gepi_name + "." + std::to_string(idx);
-
-                       llvm::GetElementPtrInst* new_gepi = llvm::GetElementPtrInst::Create(gepi_type, gepi_base, gepi_ops, new_gepi_name, llvm::dyn_cast<llvm::CallInst>(use->getUser()));
-                       gepi_map[gepi_base].push_back(new_gepi);
-                       gen_gepi_map(new_gepi, arg, use, gepi_map, arg_map, arg_size_map, new_gepi_name);
-
-                       ++idx;
-                   }
-               }
-               else
-               {
-                   // llvm::errs() << "ERR: arg not found\n";
-                   // arg->dump();
-                   // exit(-1);
-               }
-           }
-       };
        std::string gepi_name = arg_if_any->getName().str() + ".gepi";
 
-       GenGepiMap::gen_gepi_map(base_address, arg_if_any, use, gepi_map, exp_args_map, arg_size_map, gepi_name);
+       gen_gepi_map(base_address, arg_if_any, use, gepi_map, exp_args_map, arg_size_map, gepi_name);
 
        llvm::Value* exp_el = get_element_at_offset(base_address, use, gepi_map, offset, actual_accessed_size, accessed_size, arg_size_map, DL);
 
@@ -2755,395 +2755,430 @@ void expand_types(T* ptr, const std::map<T*, std::vector<T*>>& exp_map_ref, std:
    }
 }
 
-void process_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm::Instruction*>& inst_to_remove, const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm::Instruction*>& inst_to_remove, const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
                      const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
-                     const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout& DL)
+                     const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout& DL, bool should_be_constant)
 {
-   llvm::Value* base_address = nullptr;
-   std::vector<llvm::Value*> offset_chain;
+    llvm::Value* base_address = nullptr;
+    std::vector<llvm::Value*> offset_chain;
 
-   if(llvm::isa<llvm::ConstantPointerNull>(ptr_u->get()))
-   {
-      return;
-   }
+    if(llvm::isa<llvm::ConstantPointerNull>(ptr_u->get()))
+    {
+        return;
+    }
 
-   if(llvm::Instruction* user_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser()))
-   {
-      std::vector<llvm::Instruction*> inst_chain;
+    if(llvm::Instruction* user_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser()))
+    {
+        std::vector<llvm::Instruction*> inst_chain;
 
-      bool has_expandable_base = compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain, DL);
+        bool has_expandable_base = compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain, DL);
 
-      if(base_address != nullptr)
-      {
-         if(llvm::Argument* arg_base = llvm::dyn_cast<llvm::Argument>(base_address))
-         {
-            has_expandable_base = exp_args_map.count(arg_base) > 0;
-         }
-         else if(llvm::AllocaInst* alloca_base = llvm::dyn_cast<llvm::AllocaInst>(base_address))
-         {
-            has_expandable_base = exp_allocas_map.count(alloca_base) > 0;
-         }
-         else if(llvm::GlobalVariable* global_base = llvm::dyn_cast<llvm::GlobalVariable>(base_address))
-         {
-            has_expandable_base = exp_globals_map.count(global_base) > 0;
-         }
+        if(base_address != nullptr) {
+            if (llvm::Argument *arg_base = llvm::dyn_cast<llvm::Argument>(base_address)) {
+                has_expandable_base = exp_args_map.count(arg_base) > 0;
+            } else if (llvm::AllocaInst *alloca_base = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+                has_expandable_base = exp_allocas_map.count(alloca_base) > 0;
+            } else if (llvm::GlobalVariable *global_base = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
+                has_expandable_base = exp_globals_map.count(global_base) > 0;
+            }
+        }
 
-          if (has_expandable_base or llvm::isa<llvm::CallInst>(ptr_u->getUser())) {
-              for (llvm::Instruction *i : inst_chain) {
-                  if (has_expandable_base) {
-                      inst_to_remove.insert(i);
-                  }
-              }
+        if (has_expandable_base) {
+            for (llvm::Instruction *i : inst_chain) {
+                if (has_expandable_base) {
+                    inst_to_remove.insert(i);
+                }
+            }
 
-              signed long long constant_sum = 0;
-              bool is_constant = true;
+            signed long long constant_sum = 0;
+            bool is_constant = true;
 
-              // Check whether the offset is constant
-              for (llvm::Value *offset : offset_chain) {
-                  if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
-                      constant_sum += c_offset->getSExtValue();
-                  } else {
-                      is_constant = false;
-                      break;
-                  }
-              }
+            // Check whether the offset is constant
+            for (llvm::Value *offset : offset_chain) {
+                if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
+                    constant_sum += c_offset->getSExtValue();
+                } else {
+                    is_constant = false;
+                    break;
+                }
+            }
 
-              if (llvm::isa<llvm::StoreInst>(ptr_u->getUser()) or llvm::isa<llvm::LoadInst>(ptr_u->getUser())) {
-                  if (!has_expandable_base) {
-                      return;
-                  }
+            if (is_constant) {
+                // const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
+                unsigned long long accessed_size = DL.getTypeAllocSize(
+                        ptr_u->get()->getType()->getPointerElementType());
+                unsigned long long actual_accessed_size; // useless here
+                llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                          arg_size_map, has_expandable_base, DL, base_address,
+                                                          constant_sum, actual_accessed_size, accessed_size,
+                                                          nullptr, ptr_u);
+                ptr_u->set(exp_val);
+            } else { // Non constant offset
 
-                  if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
-                      if (load_inst->getPointerOperand() != ptr_u->get()) {
-                          llvm::errs() << "ERR: Bad load inst usage\n";
-                          load_inst->dump();
-                          exit(-1);
-                      }
-                  } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_u->getUser())) {
-                      if (store_inst->getPointerOperand() != ptr_u->get()) {
-                          llvm::errs() << "ERR: Bad store inst usage\n";
-                          store_inst->dump();
-                          exit(-1);
-                      }
-                  }
+                if (should_be_constant) {
+                    llvm::errs() << "ERR Constant access needed\n";
+                    exit(-1);
+                }
 
-                  if (is_constant) {
-                      // const llvm::DataLayout* DL = &llvm::cast<llvm::Instruction>(ptr_u->getUser())->getModule()->getDataLayout();
-                      unsigned long long accessed_size = DL.getTypeAllocSize(
-                              ptr_u->get()->getType()->getPointerElementType());
-                      unsigned long long actual_accessed_size; // useless here
-                      llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
-                                                                arg_size_map, has_expandable_base, DL, base_address,
-                                                                constant_sum, actual_accessed_size, accessed_size,
-                                                                nullptr, ptr_u);
-                      ptr_u->set(exp_val);
-                  } else { // Non constant offset
+                std::vector<llvm::Type *> expanded_types;
 
-                      std::vector<llvm::Type *> expanded_types;
+                if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+                    expand_types(alloca_inst, exp_allocas_map, expanded_types);
+                } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
+                    expand_types(arg, exp_args_map, expanded_types);
+                } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
+                    expand_types(g_var, exp_globals_map, expanded_types);
+                } else {
+                    llvm::errs() << "ERR: Unknown base\n";
+                    base_address->dump();
+                    exit(-1);
+                }
 
-                      if (llvm::AllocaInst *alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
-                          expand_types(alloca_inst, exp_allocas_map, expanded_types);
-                      } else if (llvm::Argument *arg = llvm::dyn_cast<llvm::Argument>(base_address)) {
-                          expand_types(arg, exp_args_map, expanded_types);
-                      } else if (llvm::GlobalVariable *g_var = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
-                          expand_types(g_var, exp_globals_map, expanded_types);
-                      } else {
-                          llvm::errs() << "ERR: Unknown base\n";
-                          base_address->dump();
-                          exit(-1);
-                      }
+                llvm::APInt zero_ai = llvm::APInt((unsigned int) 32, 0, false);
+                llvm::ConstantInt *zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
 
-                      llvm::APInt zero_ai = llvm::APInt((unsigned int) 32, 0, false);
-                      llvm::ConstantInt *zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
+                llvm::Value *bytes_sum = zero_c;
 
-                      llvm::Value *bytes_sum = zero_c;
+                // Build the chain of adders for computing the offset
+                for (llvm::Value *offset : offset_chain) {
+                    std::string name = ptr_u->getUser()->getName().str() + ".add";
+                    bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, bytes_sum, offset,
+                                                             name, user_inst);
+                }
 
-                      // Build the chain of adders for computing the offset
-                      for (llvm::Value *offset : offset_chain) {
-                          std::string name = ptr_u->getUser()->getName().str() + ".add";
-                          bytes_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, bytes_sum, offset,
-                                                                   name, user_inst);
-                      }
+                llvm::Function *wrapper_function = nullptr;
+                llvm::CallInst *wrapper_call = nullptr;
+                llvm::ReturnInst *ret = nullptr;
+                bool wrap_non_const = true;
+                bool isStore = false;
+                if (wrap_non_const) {
+                    unsigned long long type_count = 0;
+                    llvm::Type *return_type = nullptr;
+                    llvm::Type *ptr_type = nullptr;
+                    std::vector<llvm::Type *> param_tys;
+                    llvm::Type *offset_ty = bytes_sum->getType();
+                    std::vector<llvm::Value *> args;
+                    if (llvm::StoreInst *SI = llvm::dyn_cast<llvm::StoreInst>(user_inst)) {
+                        param_tys.push_back(SI->getValueOperand()->getType());
+                        args.push_back(SI->getValueOperand());
+                    }
+                    param_tys.push_back(offset_ty);
+                    args.push_back(bytes_sum);
 
-                      llvm::Function *wrapper_function = nullptr;
-                      llvm::CallInst *wrapper_call = nullptr;
-                      llvm::ReturnInst *ret = nullptr;
-                      bool wrap_non_const = true;
-                      bool isStore = false;
-                      if (wrap_non_const) {
-                          unsigned long long type_count = 0;
-                          llvm::Type *return_type = nullptr;
-                          llvm::Type *ptr_type = nullptr;
-                          std::vector<llvm::Type *> param_tys;
-                          llvm::Type *offset_ty = bytes_sum->getType();
-                          std::vector<llvm::Value *> args;
-                          if (llvm::StoreInst *SI = llvm::dyn_cast<llvm::StoreInst>(user_inst)) {
-                              param_tys.push_back(SI->getValueOperand()->getType());
-                              args.push_back(SI->getValueOperand());
-                          }
-                          param_tys.push_back(offset_ty);
-                          args.push_back(bytes_sum);
+                    if (llvm::LoadInst *inst = llvm::dyn_cast<llvm::LoadInst>(user_inst)) {
+                        return_type = inst->getPointerOperand()->getType()->getPointerElementType();
+                        ptr_type = inst->getPointerOperand()->getType();
+                    } else if (llvm::StoreInst *inst = llvm::dyn_cast<llvm::StoreInst>(user_inst)) {
+                        return_type = llvm::Type::getVoidTy(inst->getContext());
+                        ptr_type = inst->getPointerOperand()->getType();
+                        isStore = true;
+                    }
 
-                          if (llvm::LoadInst *inst = llvm::dyn_cast<llvm::LoadInst>(user_inst)) {
-                              return_type = inst->getPointerOperand()->getType()->getPointerElementType();
-                              ptr_type = inst->getPointerOperand()->getType();
-                          } else if (llvm::StoreInst *inst = llvm::dyn_cast<llvm::StoreInst>(user_inst)) {
-                              return_type = llvm::Type::getVoidTy(inst->getContext());
-                              ptr_type = inst->getPointerOperand()->getType();
-                              isStore = true;
-                          }
+                    for (llvm::Type *exp_ty : expanded_types) {
+                        // llvm::Type *bitcast_type = nullptr;
+                        llvm::Type *ty1 = exp_ty;
+                        llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
+                        if (ty1->getTypeID() == ty2->getTypeID() and
+                            DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2)) {
+                            // bitcast_type = ty2;
+                            llvm::errs() << "ERR: bitcast broke everything";
+                        } else if (ty1 != ty2) {
+                            continue;
+                        }
 
-                          for (llvm::Type *exp_ty : expanded_types) {
-                              // llvm::Type *bitcast_type = nullptr;
-                              llvm::Type *ty1 = exp_ty;
-                              llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
-                              if (ty1->getTypeID() == ty2->getTypeID() and
-                                  DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2)) {
-                                  // bitcast_type = ty2;
-                                  llvm::errs() << "ERR: bitcast broke everything";
-                              } else if (ty1 != ty2) {
-                                  continue;
-                              }
+                        ++type_count;
+                        param_tys.push_back(ptr_type);
+                        args.push_back(
+                                llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
+                    }
 
-                              ++type_count;
-                              param_tys.push_back(ptr_type);
-                              args.push_back(
-                                      llvm::ConstantPointerNull::get(llvm::dyn_cast<llvm::PointerType>(ptr_type)));
-                          }
+                    llvm::FunctionType *function_ty = llvm::FunctionType::get(return_type, param_tys, false);
+                    wrapper_function = llvm::Function::Create(function_ty,
+                                                              llvm::GlobalValue::LinkageTypes::InternalLinkage,
+                                                              wrapper_function_name, user_inst->getModule());
+                    wrapper_function->addFnAttr(llvm::Attribute::NoInline);
+                    wrapper_function->addFnAttr(llvm::Attribute::OptimizeNone);
 
-                          llvm::FunctionType *function_ty = llvm::FunctionType::get(return_type, param_tys, false);
-                          wrapper_function = llvm::Function::Create(function_ty,
-                                                                    llvm::GlobalValue::LinkageTypes::InternalLinkage,
-                                                                    wrapper_function_name, user_inst->getModule());
-                          wrapper_function->addFnAttr(llvm::Attribute::NoInline);
-                          wrapper_function->addFnAttr(llvm::Attribute::OptimizeNone);
+                    llvm::BasicBlock *bb = llvm::BasicBlock::Create(user_inst->getContext(), "",
+                                                                    wrapper_function);
+                    if (return_type->isVoidTy()) {
+                        ret = llvm::ReturnInst::Create(user_inst->getContext(), bb);
+                    } else {
+                        ret = llvm::ReturnInst::Create(user_inst->getContext(),
+                                                       llvm::UndefValue::get(return_type), bb);
+                    }
+                    llvm::Instruction *new_inst = user_inst->clone();
+                    new_inst->insertBefore(ret);
 
-                          llvm::BasicBlock *bb = llvm::BasicBlock::Create(user_inst->getContext(), "",
-                                                                          wrapper_function);
-                          if (return_type->isVoidTy()) {
-                              ret = llvm::ReturnInst::Create(user_inst->getContext(), bb);
-                          } else {
-                              ret = llvm::ReturnInst::Create(user_inst->getContext(),
-                                                             llvm::UndefValue::get(return_type), bb);
-                          }
-                          llvm::Instruction *new_inst = user_inst->clone();
-                          new_inst->insertBefore(ret);
+                    wrapper_call = llvm::CallInst::Create(wrapper_function, args,
+                                                          (return_type->isVoidTy() ? "" : "wrapper_call"),
+                                                          user_inst);
 
-                          wrapper_call = llvm::CallInst::Create(wrapper_function, args,
-                                                                (return_type->isVoidTy() ? "" : "wrapper_call"),
-                                                                user_inst);
+                    if (!return_type->isVoidTy()) {
+                        user_inst->replaceAllUsesWith(wrapper_call);
+                    }
+                    inst_to_remove.insert(user_inst);
 
-                          if (!return_type->isVoidTy()) {
-                              user_inst->replaceAllUsesWith(wrapper_call);
-                          }
-                          inst_to_remove.insert(user_inst);
+                    user_inst = new_inst;
+                }
 
-                          user_inst = new_inst;
-                      }
+                // Keep track on where to split
+                llvm::Instruction *split_before = user_inst;
 
-                      // Keep track on where to split
-                      llvm::Instruction *split_before = user_inst;
+                unsigned long long bytes_acc = 0;
 
-                      unsigned long long bytes_acc = 0;
+                llvm::PHINode *last_phi_set = nullptr;
 
-                      llvm::PHINode *last_phi_set = nullptr;
+                // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
 
-                      // const llvm::DataLayout* DL = &user_inst->getModule()->getDataLayout();
+                llvm::Function::arg_iterator arg_it = wrapper_function->arg_begin();
+                llvm::Instruction::op_iterator op_it = wrapper_call->op_begin();
+                llvm::Function::arg_iterator arg_offset_it = wrapper_function->arg_begin();
+                llvm::Function::arg_iterator arg_value_it = wrapper_function->arg_begin();
+                if (wrapper_function != nullptr) {
+                    if (isStore) {
+                        arg_it->setName("value");
+                        arg_value_it = arg_it;
+                        ++arg_it;
+                        ++op_it;
+                    }
+                    arg_it->setName("offset");
+                    arg_offset_it = arg_it;
+                    ++arg_it;
+                    ++op_it;
+                }
+                // Create the if-then-else chain
+                for (llvm::Type *exp_ty : expanded_types) {
+                    unsigned long long type_size = DL.getTypeAllocSize(exp_ty);
+                    llvm::APInt bytes_ai = llvm::APInt((unsigned int) 32, bytes_acc, false);
 
-                      llvm::Function::arg_iterator arg_it = wrapper_function->arg_begin();
-                      llvm::Instruction::op_iterator op_it = wrapper_call->op_begin();
-                      llvm::Function::arg_iterator arg_offset_it = wrapper_function->arg_begin();
-                      llvm::Function::arg_iterator arg_value_it = wrapper_function->arg_begin();
-                      if (wrapper_function != nullptr) {
-                          if (isStore) {
-                              arg_it->setName("value");
-                              arg_value_it = arg_it;
-                              ++arg_it;
-                              ++op_it;
-                          }
-                          arg_it->setName("offset");
-                          arg_offset_it = arg_it;
-                          ++arg_it;
-                          ++op_it;
-                      }
-                      // Create the if-then-else chain
-                      for (llvm::Type *exp_ty : expanded_types) {
-                          unsigned long long type_size = DL.getTypeAllocSize(exp_ty);
-                          llvm::APInt bytes_ai = llvm::APInt((unsigned int) 32, bytes_acc, false);
+                    bytes_acc += type_size;
 
-                          bytes_acc += type_size;
+                    // llvm::Type *bitcast_type = nullptr;
+                    llvm::Type *ty1 = exp_ty;
+                    llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
+                    if (ty1->getTypeID() == ty2->getTypeID() and
+                        DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2)) {
+                        // bitcast_type = ty2;
+                        llvm::errs() << "ERR: bitcast broke anything";
+                    } else if (ty1 != ty2) {
+                        continue;
+                    }
 
-                          // llvm::Type *bitcast_type = nullptr;
-                          llvm::Type *ty1 = exp_ty;
-                          llvm::Type *ty2 = ptr_u->get()->getType()->getPointerElementType();
-                          if (ty1->getTypeID() == ty2->getTypeID() and
-                              DL.getTypeAllocSize(ty1) > DL.getTypeAllocSize(ty2)) {
-                              // bitcast_type = ty2;
-                              llvm::errs() << "ERR: bitcast broke anything";
-                          } else if (ty1 != ty2) {
-                              continue;
-                          }
+                    llvm::ConstantInt *bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
+                    std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
+                    llvm::Value *offset = (wrap_non_const ? &*arg_offset_it : bytes_sum);
+                    llvm::CmpInst *cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp,
+                                                                llvm::CmpInst::Predicate::ICMP_EQ, offset,
+                                                                bytes_c, cmp_name, split_before);
 
-                          llvm::ConstantInt *bytes_c = llvm::ConstantInt::get(base_address->getContext(), bytes_ai);
-                          std::string cmp_name = ptr_u->getUser()->getName().str() + ".cmp." + std::to_string(0);
-                          llvm::Value *offset = (wrap_non_const ? &*arg_offset_it : bytes_sum);
-                          llvm::CmpInst *cond = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp,
-                                                                      llvm::CmpInst::Predicate::ICMP_EQ, offset,
-                                                                      bytes_c, cmp_name, split_before);
+                    llvm::TerminatorInst *then_term;
+                    llvm::TerminatorInst *else_term;
+                    llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
+                    then_term->getParent()->setName("csroa.if.then");
+                    else_term->getParent()->setName("csroa.if.else");
+                    split_before->getParent()->setName("csroa.if.end");
 
-                          llvm::TerminatorInst *then_term;
-                          llvm::TerminatorInst *else_term;
-                          llvm::SplitBlockAndInsertIfThenElse(cond, split_before, &then_term, &else_term);
-                          then_term->getParent()->setName("csroa.if.then");
-                          else_term->getParent()->setName("csroa.if.else");
-                          split_before->getParent()->setName("csroa.if.end");
+                    if (new_bb == nullptr) {
+                        new_bb = split_before->getParent();
+                    }
 
-                          if (new_bb == nullptr) {
-                              new_bb = split_before->getParent();
-                          }
+                    llvm::Instruction *new_inst = user_inst->clone();
+                    new_inst->insertBefore(then_term);
 
-                          llvm::Instruction *new_inst = user_inst->clone();
-                          new_inst->insertBefore(then_term);
+                    if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
+                        llvm::PHINode *phi_node = llvm::PHINode::Create(
+                                ptr_u->get()->getType()->getPointerElementType(), expanded_types.size(),
+                                ptr_u->getUser()->getName().str() + ".phi", split_before);
 
-                          if (llvm::LoadInst *load_isnt = llvm::dyn_cast<llvm::LoadInst>(ptr_u->getUser())) {
-                              llvm::PHINode *phi_node = llvm::PHINode::Create(
-                                      ptr_u->get()->getType()->getPointerElementType(), expanded_types.size(),
-                                      ptr_u->getUser()->getName().str() + ".phi", split_before);
+                        if (ret != nullptr) {
+                            if (!ret->getReturnValue()->getType()->isVoidTy()) {
+                                if (llvm::isa<llvm::UndefValue>(ret->getReturnValue())) {
+                                    ret->setOperand(0, phi_node);
+                                }
+                            }
+                        }
 
-                              if (ret != nullptr) {
-                                  if (!ret->getReturnValue()->getType()->isVoidTy()) {
-                                      if (llvm::isa<llvm::UndefValue>(ret->getReturnValue())) {
-                                          ret->setOperand(0, phi_node);
-                                      }
-                                  }
-                              }
+                        phi_node->addIncoming(new_inst, then_term->getParent());
+                        phi_node->addIncoming(llvm::UndefValue::get(new_inst->getType()), else_term->getParent());
 
-                              phi_node->addIncoming(new_inst, then_term->getParent());
-                              phi_node->addIncoming(llvm::UndefValue::get(new_inst->getType()), else_term->getParent());
+                        if (last_phi_set) {
+                            last_phi_set->setIncomingValue(1, phi_node);
+                        } else {
+                            user_inst->replaceAllUsesWith(phi_node);
+                        }
 
-                              if (last_phi_set) {
-                                  last_phi_set->setIncomingValue(1, phi_node);
-                              } else {
-                                  user_inst->replaceAllUsesWith(phi_node);
-                              }
+                        last_phi_set = phi_node;
+                    }
 
-                              last_phi_set = phi_node;
-                          }
+                    unsigned long long actual_accessed_size;
+                    llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                              arg_size_map, has_expandable_base, DL, base_address,
+                                                              bytes_acc - type_size, actual_accessed_size,
+                                                              type_size, nullptr, ptr_u);
 
-                          unsigned long long actual_accessed_size;
-                          llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
-                                                                    arg_size_map, has_expandable_base, DL, base_address,
-                                                                    bytes_acc - type_size, actual_accessed_size,
-                                                                    type_size, nullptr, ptr_u);
+                    if (wrap_non_const) {
+                        std::string arg_name = "arg" + std::to_string(arg_it->getArgNo());
+                        arg_it->setName(arg_name);
+                        wrapper_call->setOperand(op_it->getOperandNo(), exp_val);
+                        if (isStore)
+                            new_inst->setOperand(0, &*arg_value_it);
 
-                          if (wrap_non_const) {
-                              std::string arg_name = "arg" + std::to_string(arg_it->getArgNo());
-                              arg_it->setName(arg_name);
-                              wrapper_call->setOperand(op_it->getOperandNo(), exp_val);
-                              if (isStore)
-                                  new_inst->setOperand(0, &*arg_value_it);
+                        new_inst->setOperand(ptr_u->getOperandNo(), &*arg_it);
+                        ++arg_it;
+                        ++op_it;
+                    } else {
+                        new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
+                    }
 
-                              new_inst->setOperand(ptr_u->getOperandNo(), &*arg_it);
-                              ++arg_it;
-                              ++op_it;
-                          } else {
-                              new_inst->setOperand(ptr_u->getOperandNo(), exp_val);
-                          }
+                    split_before = else_term;
+                }
 
-                          split_before = else_term;
-                      }
+                // TODO Fix it
+                user_inst->replaceAllUsesWith(llvm::UndefValue::get(user_inst->getType()));
+                user_inst->eraseFromParent();
+            }
+        }
 
-                      // TODO Fix it
-                      user_inst->replaceAllUsesWith(llvm::UndefValue::get(user_inst->getType()));
-                      user_inst->eraseFromParent();
-                  }
-              } else if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
-                  if (is_constant) {
-                      llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(),
-                                                          ptr_u->getOperandNo());
+    }
+    else
+    {
+        llvm::errs() << "ERR: User not inst\n";
+        exit(-1);
+    }
+}
 
-                      unsigned long long current_offset = constant_sum;
 
-                      std::vector<llvm::Argument*> arg_to_exp_vec;
+void process_expandable_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm::Instruction*>& inst_to_remove, const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
+                     const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
+                     const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout& DL, bool should_be_constant)
+{
+    llvm::Value* base_address = nullptr;
+    std::vector<llvm::Value*> offset_chain;
 
-                      auto exp_arg_it = exp_args_map.find(arg_u);
+    if(llvm::isa<llvm::ConstantPointerNull>(ptr_u->get()))
+    {
+        return;
+    }
 
-                      if (exp_arg_it == exp_args_map.end()) {
-                          arg_to_exp_vec.push_back(arg_u);
-                      } else {
-                          arg_to_exp_vec = exp_arg_it->second;
-                      }
+    if(llvm::Instruction* user_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser()))
+    {
+        std::vector<llvm::Instruction*> inst_chain;
 
-                      for (llvm::Argument *exp_arg_u : arg_to_exp_vec) {
+        bool has_expandable_base = compute_base_and_offset(ptr_u, base_address, offset_chain, inst_chain, DL);
 
-                          // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
-                          unsigned long long accessed_size = DL.getTypeAllocSize(
-                                  exp_arg_u->getType()->getPointerElementType());
+        if(base_address != nullptr) {
+            if (llvm::Argument *arg_base = llvm::dyn_cast<llvm::Argument>(base_address)) {
+                has_expandable_base = exp_args_map.count(arg_base) > 0;
+            } else if (llvm::AllocaInst *alloca_base = llvm::dyn_cast<llvm::AllocaInst>(base_address)) {
+                has_expandable_base = exp_allocas_map.count(alloca_base) > 0;
+            } else if (llvm::GlobalVariable *global_base = llvm::dyn_cast<llvm::GlobalVariable>(base_address)) {
+                has_expandable_base = exp_globals_map.count(global_base) > 0;
+            }
+        }
 
-                          auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
-                          if (exp_arg_size_it != arg_size_map.end() and !exp_arg_size_it->second.empty()) {
-                              accessed_size *= exp_arg_size_it->second.front();
-                          }
+        if (has_expandable_base) {
+            for (llvm::Instruction *i : inst_chain) {
+                if (has_expandable_base) {
+                    inst_to_remove.insert(i);
+                }
+            }
 
-                          unsigned long long actual_accessed_size = 0;
-                          llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
-                                                                    arg_size_map, has_expandable_base, DL,
-                                                                    base_address, current_offset,
-                                                                    actual_accessed_size, accessed_size, arg_u,
-                                                                    &call_inst->getOperandUse(
-                                                                            exp_arg_u->getArgNo()), &accessed_size);
+            signed long long constant_sum = 0;
+            bool is_constant = true;
 
-                          current_offset += actual_accessed_size;
+            // Check whether the offset is constant
+            for (llvm::Value *offset : offset_chain) {
+                if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
+                    constant_sum += c_offset->getSExtValue();
+                } else {
+                    is_constant = false;
+                    break;
+                }
+            }
 
-                          // Take care of array decay now
-                          if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
-                              if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
-                                  exp_arg_u->getType()->getPointerElementType()) {
-                                  if (!llvm::isa<llvm::Argument>(exp_val)) {
-                                      std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
-                                      llvm::Type *op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
-                                      llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
-                                      gepi_ops.push_back(op1);
-                                      llvm::Type *op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
-                                      llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
-                                      gepi_ops.push_back(op2);
+            if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
+                if (is_constant) {
+                    llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(),
+                                                        ptr_u->getOperandNo());
 
-                                      std::string gepi_name = exp_val->getName().str() + ".decay";
-                                      llvm::Type *gepi_type = exp_val->getType()->getPointerElementType();
+                    auto exp_arg_it = exp_args_map.find(arg_u);
 
-                                      llvm::GetElementPtrInst *decay_gep_inst = llvm::GetElementPtrInst::Create(
-                                              gepi_type, exp_val, gepi_ops, gepi_name, call_inst);
+                    unsigned long long current_offset = constant_sum;
+                    if (exp_arg_it != exp_args_map.end()) {
+                        unsigned long long exp_arg_u_idx = 0;
+                        for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
+                            // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
+                            unsigned long long accessed_size = DL.getTypeAllocSize(
+                                    exp_arg_u->getType()->getPointerElementType());
 
-                                      exp_val = decay_gep_inst;
-                                  }
-                              } else {
-                                  // llvm::errs() << "ERR: Malformed decay!\n";
-                                  // call_inst->dump();
-                                  // exp_arg_u->dump();
-                                  // exp_val->dump();
-                                  // exit(-1);
-                                  // TODO Review this
-                              }
-                          }
+                            auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
+                            if (exp_arg_size_it != arg_size_map.end() and !exp_arg_size_it->second.empty()) {
+                                accessed_size *= exp_arg_size_it->second.front();
+                            }
 
-                          call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
+                            unsigned long long actual_accessed_size = 0;
+                            llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                                      arg_size_map, has_expandable_base, DL,
+                                                                      base_address, current_offset,
+                                                                      actual_accessed_size, accessed_size, arg_u,
+                                                                      &call_inst->getOperandUse(
+                                                                              exp_arg_u->getArgNo()), &accessed_size);
 
-                      }
-                  } else {
-                      llvm::errs() << "ERR: Non constant access in function call operand\n";
-                      ptr_u->get()->dump();
-                      call_inst->dump();
-                      exit(-1);
-                  }
-              }
-          }
-      }
-   }
-   else
-   {
-      llvm::errs() << "ERR: User not inst\n";
-      exit(-1);
-   }
+                            current_offset += actual_accessed_size;
+
+                            // Take care of array decay now
+                            if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
+                                if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
+                                    exp_arg_u->getType()->getPointerElementType()) {
+                                    if (!llvm::isa<llvm::Argument>(exp_val)) {
+                                        std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+                                        llvm::Type *op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                        llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                                        gepi_ops.push_back(op1);
+                                        llvm::Type *op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                        llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
+                                        gepi_ops.push_back(op2);
+
+                                        std::string gepi_name = exp_val->getName().str() + ".decay";
+                                        llvm::Type *gepi_type = exp_val->getType()->getPointerElementType();
+
+                                        llvm::GetElementPtrInst *decay_gep_inst = llvm::GetElementPtrInst::Create(
+                                                gepi_type, exp_val, gepi_ops, gepi_name, call_inst);
+
+                                        exp_val = decay_gep_inst;
+                                    }
+                                } else {
+                                    // llvm::errs() << "ERR: Malformed decay!\n";
+                                    // call_inst->dump();
+                                    // exp_arg_u->dump();
+                                    // exp_val->dump();
+                                    // exit(-1);
+                                    // TODO Review this
+                                }
+                            }
+
+                            call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
+
+                            // arg_offset += accessed_size;
+                            exp_arg_u_idx++;
+                        }
+                    }
+                } else {
+                    llvm::errs() << "ERR: Non constant access in function call operand\n";
+                    ptr_u->get()->dump();
+                    call_inst->dump();
+                    exit(-1);
+                }
+            }
+        }
+
+    }
+    else
+    {
+        llvm::errs() << "ERR: User not inst\n";
+        exit(-1);
+    }
 }
 
 void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map, const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map,
@@ -3174,11 +3209,11 @@ void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::m
             llvm::BasicBlock* new_bb = nullptr;
             if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(&i))
             {
-               process_pointer(&load_inst->getOperandUse(0), new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL);
+               process_single_pointer(&load_inst->getOperandUse(0), new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL, false);
             }
             else if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(&i))
             {
-               process_pointer(&store_inst->getOperandUse(1), new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL);
+               process_single_pointer(&store_inst->getOperandUse(1), new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL, false);
             }
             else if(llvm::CallInst* call_inst = llvm::dyn_cast<llvm::CallInst>(&i))
             {
@@ -3191,12 +3226,17 @@ void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::m
                      llvm::Use* op_u = &call_inst->getOperandUse(op_i);
                      llvm::Argument* arg = &*std::next(called_function->arg_begin(), op_u->getOperandNo());
 
-                     if(arg->getType()->isPointerTy())
+                     if(arg_expandability_map.at(arg))
                      {
                         if(op_u->get()->getType()->isPointerTy())
                         {
-                           process_pointer(op_u, new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL);
+                           process_expandable_pointer(op_u, new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL, true);
                         }
+                     } else {
+                         if(op_u->get()->getType()->isPointerTy())
+                         {
+                             process_single_pointer(op_u, new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, DL, true);
+                         }
                      }
                   }
                }
@@ -3542,7 +3582,7 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
                         }
                         else
                         {
-                           llvm::errs() << "ERR\n";
+                           llvm::errs() << "ERR User not load nor call\n";
                            exit(-1);
                         }
                      }
