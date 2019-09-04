@@ -3077,102 +3077,99 @@ void process_expandable_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std
             }
         }
 
-        if (has_expandable_base) {
-            for (llvm::Instruction *i : inst_chain) {
-                if (has_expandable_base) {
-                    inst_to_remove.insert(i);
-                }
-            }
-
-            signed long long constant_sum = 0;
-            bool is_constant = true;
-
-            // Check whether the offset is constant
-            for (llvm::Value *offset : offset_chain) {
-                if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
-                    constant_sum += c_offset->getSExtValue();
-                } else {
-                    is_constant = false;
-                    break;
-                }
-            }
-
-            if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
-                if (is_constant) {
-                    llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(),
-                                                        ptr_u->getOperandNo());
-
-                    auto exp_arg_it = exp_args_map.find(arg_u);
-
-                    unsigned long long current_offset = constant_sum;
-                    if (exp_arg_it != exp_args_map.end()) {
-                        unsigned long long exp_arg_u_idx = 0;
-                        for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
-                            // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
-                            unsigned long long accessed_size = DL.getTypeAllocSize(
-                                    exp_arg_u->getType()->getPointerElementType());
-
-                            auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
-                            if (exp_arg_size_it != arg_size_map.end() and !exp_arg_size_it->second.empty()) {
-                                accessed_size *= exp_arg_size_it->second.front();
-                            }
-
-                            unsigned long long actual_accessed_size = 0;
-                            llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
-                                                                      arg_size_map, has_expandable_base, DL,
-                                                                      base_address, current_offset,
-                                                                      actual_accessed_size, accessed_size, arg_u,
-                                                                      &call_inst->getOperandUse(
-                                                                              exp_arg_u->getArgNo()), &accessed_size);
-
-                            current_offset += actual_accessed_size;
-
-                            // Take care of array decay now
-                            if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
-                                if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
-                                    exp_arg_u->getType()->getPointerElementType()) {
-                                    if (!llvm::isa<llvm::Argument>(exp_val)) {
-                                        std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
-                                        llvm::Type *op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
-                                        llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
-                                        gepi_ops.push_back(op1);
-                                        llvm::Type *op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
-                                        llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
-                                        gepi_ops.push_back(op2);
-
-                                        std::string gepi_name = exp_val->getName().str() + ".decay";
-                                        llvm::Type *gepi_type = exp_val->getType()->getPointerElementType();
-
-                                        llvm::GetElementPtrInst *decay_gep_inst = llvm::GetElementPtrInst::Create(
-                                                gepi_type, exp_val, gepi_ops, gepi_name, call_inst);
-
-                                        exp_val = decay_gep_inst;
-                                    }
-                                } else {
-                                    // llvm::errs() << "ERR: Malformed decay!\n";
-                                    // call_inst->dump();
-                                    // exp_arg_u->dump();
-                                    // exp_val->dump();
-                                    // exit(-1);
-                                    // TODO Review this
-                                }
-                            }
-
-                            call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
-
-                            // arg_offset += accessed_size;
-                            exp_arg_u_idx++;
-                        }
-                    }
-                } else {
-                    llvm::errs() << "ERR: Non constant access in function call operand\n";
-                    ptr_u->get()->dump();
-                    call_inst->dump();
-                    exit(-1);
-                }
+        for (llvm::Instruction *i : inst_chain) {
+            if (has_expandable_base) {
+                inst_to_remove.insert(i);
             }
         }
 
+        signed long long constant_sum = 0;
+        bool is_constant = true;
+
+        // Check whether the offset is constant
+        for (llvm::Value *offset : offset_chain) {
+            if (llvm::ConstantInt *c_offset = llvm::dyn_cast<llvm::ConstantInt>(offset)) {
+                constant_sum += c_offset->getSExtValue();
+            } else {
+                is_constant = false;
+                break;
+            }
+        }
+
+        if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(ptr_u->getUser())) {
+            if (is_constant) {
+                llvm::Argument *arg_u = &*std::next(call_inst->getCalledFunction()->arg_begin(),
+                                                    ptr_u->getOperandNo());
+
+                auto exp_arg_it = exp_args_map.find(arg_u);
+
+                unsigned long long current_offset = constant_sum;
+                if (exp_arg_it != exp_args_map.end()) {
+                    unsigned long long exp_arg_u_idx = 0;
+                    for (llvm::Argument *exp_arg_u : exp_arg_it->second) {
+                        // const llvm::DataLayout* DL = &call_inst->getModule()->getDataLayout();
+                        unsigned long long accessed_size = DL.getTypeAllocSize(
+                                exp_arg_u->getType()->getPointerElementType());
+
+                        auto exp_arg_size_it = arg_size_map.find(exp_arg_u);
+                        if (exp_arg_size_it != arg_size_map.end() and !exp_arg_size_it->second.empty()) {
+                            accessed_size *= exp_arg_size_it->second.front();
+                        }
+
+                        unsigned long long actual_accessed_size = 0;
+                        llvm::Value *exp_val = get_expanded_value(exp_args_map, exp_allocas_map, exp_globals_map,
+                                                                  arg_size_map, has_expandable_base, DL,
+                                                                  base_address, current_offset,
+                                                                  actual_accessed_size, accessed_size, arg_u,
+                                                                  &call_inst->getOperandUse(
+                                                                          exp_arg_u->getArgNo()), &accessed_size);
+
+                        current_offset += actual_accessed_size;
+
+                        // Take care of array decay now
+                        if (exp_val->getType()->getPointerElementType()->isArrayTy()) {
+                            if (exp_val->getType()->getPointerElementType()->getArrayElementType() ==
+                                exp_arg_u->getType()->getPointerElementType()) {
+                                if (!llvm::isa<llvm::Argument>(exp_val)) {
+                                    std::vector<llvm::Value *> gepi_ops = std::vector<llvm::Value *>();
+                                    llvm::Type *op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                    llvm::Constant *op1 = llvm::ConstantInt::get(op1_ty, 0, false);
+                                    gepi_ops.push_back(op1);
+                                    llvm::Type *op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
+                                    llvm::Constant *op2 = llvm::ConstantInt::get(op2_ty, 0, false);
+                                    gepi_ops.push_back(op2);
+
+                                    std::string gepi_name = exp_val->getName().str() + ".decay";
+                                    llvm::Type *gepi_type = exp_val->getType()->getPointerElementType();
+
+                                    llvm::GetElementPtrInst *decay_gep_inst = llvm::GetElementPtrInst::Create(
+                                            gepi_type, exp_val, gepi_ops, gepi_name, call_inst);
+
+                                    exp_val = decay_gep_inst;
+                                }
+                            } else {
+                                // llvm::errs() << "ERR: Malformed decay!\n";
+                                // call_inst->dump();
+                                // exp_arg_u->dump();
+                                // exp_val->dump();
+                                // exit(-1);
+                                // TODO Review this
+                            }
+                        }
+
+                        call_inst->setOperand(exp_arg_u->getArgNo(), exp_val);
+
+                        // arg_offset += accessed_size;
+                        exp_arg_u_idx++;
+                    }
+                }
+            } else {
+                llvm::errs() << "ERR: Non constant access in function call operand\n";
+                ptr_u->get()->dump();
+                call_inst->dump();
+                exit(-1);
+            }
+        }
     }
     else
     {
@@ -3224,7 +3221,7 @@ void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::m
                   for(unsigned long long op_i = 0; op_i < call_inst->getNumArgOperands(); op_i++)
                   {
                      llvm::Use* op_u = &call_inst->getOperandUse(op_i);
-                     llvm::Argument* arg = &*std::next(called_function->arg_begin(), op_u->getOperandNo());
+                     llvm::Argument* arg = &*std::next(called_function->arg_begin(), op_i);
 
                      if(arg_expandability_map.at(arg))
                      {
@@ -4026,7 +4023,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       expand_ptrs(function_worklist, arguments_expansion_map, allocas_expansion_map, globals_expansion_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
-      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
+      ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
