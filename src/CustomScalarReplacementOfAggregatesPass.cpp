@@ -321,7 +321,7 @@ void delete_functions_recursively(std::set<llvm::Function*>& fun_to_remove)
     fun_to_remove.clear();
 }
 
-bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map<std::pair<std::vector<llvm::CallInst *>, llvm::Use*>, bool>& operands_expandability_map, std::map<llvm::Value*, llvm::Value*>& point_to_set_map, bool (*is_relevant_call_fun)(llvm::CallInst* call_inst),
+bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map<std::pair<std::vector<llvm::CallInst *>, llvm::Use*>, bool>& operands_expandability_map, std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
                              bool constant_access, std::vector<llvm::CallInst *> &call_trace)
 {
    point_to_set_map.insert(std::make_pair(ptr_use.get(), base_ptr));
@@ -335,7 +335,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
          bool ret = true;
          for(llvm::Use& use : gep_inst->uses())
          {
-            ret = ret and check_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, is_relevant_call_fun, constant_access, call_trace);
+            ret = ret and check_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, constant_access, call_trace);
          }
 
          return ret;
@@ -377,7 +377,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
          }
          return true;
       }
-      else if(is_relevant_call_fun(call_inst))
+      else if(is_relevant_call(call_inst))
       {
          llvm::Function* called_function = call_inst->getCalledFunction();
          bool ret = true;
@@ -386,7 +386,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
           call_trace.push_back(call_inst);
          for(llvm::Use& use : ptr_arg->uses())
          {
-            bool op_exp = check_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, is_relevant_call_fun, true, call_trace);
+            bool op_exp = check_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, true, call_trace);
             ret = ret and op_exp;
 
              if (!op_exp) {
@@ -494,7 +494,7 @@ void compute_aggregates_expandability_rec(llvm::CallInst *call_inst, llvm::Funct
                         bool can_exp = true;
                         for(llvm::Use& use : alloca_inst->uses())
                         {
-                            can_exp = can_exp and check_ptr_expandability(use, alloca_inst, operands_expandability_map, point_to_set_map, is_relevant_call, true, call_trace);
+                            can_exp = can_exp and check_ptr_expandability(use, alloca_inst, operands_expandability_map, point_to_set_map, true, call_trace);
                         }
                         allocas_expandability_map.insert(std::make_pair(alloca_inst, can_exp));
                     }
@@ -585,7 +585,7 @@ void compute_aggregates_expandability(llvm::Function *kernel_function, llvm::Mod
                     bool can_exp = true;
                     for(llvm::Use& use : global_var.uses())
                     {
-                        can_exp = can_exp and check_ptr_expandability(use, &global_var, operands_expandability_map, point_to_set_map, is_relevant_call, true, call_trace);
+                        can_exp = can_exp and check_ptr_expandability(use, &global_var, operands_expandability_map, point_to_set_map, true, call_trace);
                     }
                     globals_expandability_map.insert(std::make_pair(&global_var, can_exp));
                 }
@@ -1079,9 +1079,15 @@ void update_calls_rec(llvm::CallInst *call_inst,
     llvm::Function *next_parent = nullptr;
     if(call_inst)
     {
+llvm::errs() << "\nCall: " << call_inst << " "; call_inst->dump();
+llvm::errs() << "Parent: " << parent_versioned_function->getName() << "\n";
+llvm::errs() << "      Call trace:  ";
+for (llvm::CallInst * c : call_trace) {
+    llvm::errs() << " " << c << "=" << (c ? c->getCalledFunction()->getName() : "KERNEL") << "  ";
+}
+llvm::errs() << "\n";
         if(llvm::Function* called_function = call_inst->getCalledFunction())
         {
-
             const std::vector<std::pair<bool, std::vector<unsigned long long>>> &op_exp_and_dim_vec = op_exp_and_dim_by_callsite.at(call_inst).at(call_trace);
 
             std::vector<bool> exp_vec;
@@ -1090,19 +1096,20 @@ void update_calls_rec(llvm::CallInst *call_inst,
             for (const auto &pair : op_exp_and_dim_vec) {
                 exp_vec.push_back(pair.first);
                 dim_vec.push_back(pair.second);
+llvm::errs() << "   Op: " << pair.first << "  *  "; for (auto d : pair.second) { llvm::errs() << d << " "; } llvm::errs() << "\n";
             }
 
             std::tuple<llvm::Function*, std::vector<bool>, std::vector<std::vector<unsigned long long>>> vfun_key = std::make_tuple(called_function, exp_vec, dim_vec);
 
-            if (processed_versioned_functions.count(vfun_key) > 0) {
+            llvm::Function *versioned_function = versioned_functions_map.at(vfun_key);
+llvm::errs() << "Versioned function: " << versioned_function->getName() << "\n";
+            llvm::CallInst *versioned_parent_call_inst = get_related_inst<llvm::CallInst>(call_inst, parent_versioned_function);
+llvm::errs() << "Versioned parent call inst: "; versioned_parent_call_inst->dump();
+            versioned_parent_call_inst->setCalledFunction(versioned_function);
+
+            if (!processed_versioned_functions.insert(vfun_key).second) {
                 return;
             }
-
-            llvm::Function *versioned_function = versioned_functions_map.at(vfun_key);
-
-            llvm::CallInst *versioned_parent_call_inst = get_related_inst<llvm::CallInst>(call_inst, parent_versioned_function);
-
-            versioned_parent_call_inst->setCalledFunction(versioned_function);
 
             next_parent = versioned_function;
         }
@@ -1111,7 +1118,7 @@ void update_calls_rec(llvm::CallInst *call_inst,
     if (next_parent == nullptr) {
         next_parent = parent_versioned_function;
     }
-
+llvm::errs() << "Next parent: " << next_parent->getName() << "\n";
     auto call_it = compact_callgraph.find(call_inst);
 
     if(call_it != compact_callgraph.end())
@@ -1151,12 +1158,12 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
 
     for (; op_exp_it != op_exp_it_end or op_dim_it != op_dim_it_end; ++op_exp_it, ++op_dim_it) {
         if (op_exp_it == op_exp_it_end or op_dim_it == op_dim_it_end) {
-            llvm::errs() << "ERR\n";
+            llvm::errs() << "ERR wrong iter\n";
             exit(-1);
         }
 
         if (op_exp_it->first != op_dim_it->first) {
-            llvm::errs() << "ERR\n";
+            llvm::errs() << "ERR wrong iter\n";
             exit(-1);
         }
 
@@ -1216,7 +1223,7 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
             }
             else
             {
-                llvm::errs() << "ERR\n";
+                llvm::errs() << "ERR uer not a call\n";
                 exit(-1);
             }
         }
@@ -1239,7 +1246,10 @@ void perform_function_versioning(std::map<llvm::CallInst *, std::vector<llvm::Ca
             std::string new_name = function->getName().str() + ".v" + std::to_string(version_id);
             cloned_function->setName(new_name);
 
-            versioned_function_map.insert(std::make_pair(vfun_key, cloned_function));
+            if (!versioned_function_map.insert(std::make_pair(vfun_key, cloned_function)).second) {
+                llvm::errs() << "Twin versioned function\n";
+                exit(-1);
+            }
 
             llvm::errs() << "INFO: Function " << function->getName() << " ["; function->getFunctionType()->print(llvm::errs()); llvm::errs() << "] (" << function << " ver #" << version_id << ") versioned as " << cloned_function->getName() << " with arguments \n";
             for(auto& arg : cloned_function->args())
@@ -1300,12 +1310,12 @@ bool check_function_versioning(const std::map<llvm::CallInst *, std::vector<llvm
 
     for (; op_exp_it != op_exp_it_end or op_dim_it != op_dim_it_end; ++op_exp_it, ++op_dim_it) {
         if (op_exp_it == op_exp_it_end or op_dim_it == op_dim_it_end) {
-            llvm::errs() << "ERR\n";
+            llvm::errs() << "ERR wrong iter\n";
             exit(-1);
         }
 
         if (op_exp_it->first != op_dim_it->first) {
-            llvm::errs() << "ERR\n";
+            llvm::errs() << "ERR wrong iter\n";
             exit(-1);
         }
 
@@ -1353,7 +1363,7 @@ bool check_function_versioning(const std::map<llvm::CallInst *, std::vector<llvm
             }
             else
             {
-                llvm::errs() << "ERR\n";
+                llvm::errs() << "ERR user not a call\n";
                 exit(-1);
             }
         }
@@ -1379,7 +1389,7 @@ bool check_function_versioning(const std::map<llvm::CallInst *, std::vector<llvm
                         for (const auto &callsite_map_it : callsite_map) {
                             const std::vector<std::pair<bool, std::vector<unsigned long long>>> &exp_dim_vec = callsite_map_it.second;
 
-                            llvm::errs() << "   Call: "; call_inst->dump();
+                            llvm::errs() << "   Call: " << call_inst << "  "; call_inst->dump();
                             llvm::errs() << "      Call trace:  ";
                             for (llvm::CallInst * c : callsite_map_it.first) {
                                 llvm::errs() << " " << c << "=" << (c ? c->getCalledFunction()->getName() : "KERNEL") << "  ";
@@ -1397,7 +1407,7 @@ bool check_function_versioning(const std::map<llvm::CallInst *, std::vector<llvm
                 }
                 else
                 {
-                    llvm::errs() << "ERR\n";
+                    llvm::errs() << "ERR user not a call\n";
                     exit(-1);
                 }
             }
@@ -3929,11 +3939,20 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
+llvm::errs() << "\n******** BEGIN VERSIONED MODULE *********\n";
+module.dump();
+llvm::errs() << "\n******** END VERSIONED MODULE *********\n";
+
       return true;
    }
 
    if(sroa_phase == SROA_disaggregation)
    {
+
+llvm::errs() << "\n******** BEGIN OPTIMIZED VERSIONED MODULE *********\n";
+module.dump();
+llvm::errs() << "\n******** END OPTIMIZED VERSIONED MODULE *********\n";
+
        const llvm::DataLayout DL = module.getDataLayout();
 
        std::map<llvm::CallInst*, std::vector<llvm::CallInst*>> compact_callgraph;
@@ -3952,7 +3971,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
        std::map<llvm::Argument*, bool> arguments_expandability_map;
        std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
-
+Utilities::print_cfg(compact_callgraph, operands_expandability_map, operands_dimensions_map);
        if(!check_function_versioning(compact_callgraph, kernel_function, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map))
        {
            arguments_expandability_map.clear(); // useless
@@ -3976,8 +3995,15 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
                                    allocas_expandability_map,
                                    globals_expandability_map, operands_dimensions_map, DL);
 
+           arguments_expandability_map.clear();
+           arguments_dimensions_map.clear();
+
            if(!check_function_versioning(compact_callgraph, kernel_function, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map))
            {
+Utilities::print_cfg(compact_callgraph, operands_expandability_map, operands_dimensions_map);
+llvm::errs() << "\n******** BEGIN VERSIONED OPTIMIZED VERSIONED MODULE *********\n";
+module.dump();
+llvm::errs() << "\n******** END VERSIONED OPTIMIZED VERSIONED MODULE *********\n";
                llvm::errs() << "ERR: Wrong versioning!\n";
                exit(-1);
            }
@@ -4023,7 +4049,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       expand_ptrs(function_worklist, arguments_expansion_map, allocas_expansion_map, globals_expansion_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
-      ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
+      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
