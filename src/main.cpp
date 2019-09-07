@@ -1,10 +1,9 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
-#include <fstream>
-#include <iostream>
-#include <list>
-#include <sys/time.h>
 #include <GepiCanonicalizationPass.hpp>
 #include <Iter2IndVarPass.hpp>
+#include <fstream>
+#include <iostream>
+#include <sys/time.h>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -93,7 +92,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         ///passManagerBuilder.populateModulePassManager(*passManager);
+         /// passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
@@ -114,7 +113,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         ///passManagerBuilder.populateModulePassManager(*passManager);
+         /// passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createSROADisaggregationPass(args_info.target_function));
