@@ -3,6 +3,8 @@
 #include <iostream>
 #include <list>
 #include <sys/time.h>
+#include <GepiCanonicalizationPass.hpp>
+#include <Iter2IndVarPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -86,16 +88,16 @@ int main(int argc, char** argv)
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 3;
+         passManagerBuilder.OptLevel = 1;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
+         ///passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
-      // passManager->add(createGepiCanonicalizationPass());
+      passManager->add(createGepiCanonicalizationPass());
       passManager->add(llvm::createVerifierPass());
 
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
@@ -112,7 +114,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         passManagerBuilder.populateModulePassManager(*passManager);
+         ///passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createSROADisaggregationPass(args_info.target_function));
@@ -142,7 +144,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
+         passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->run(*module);
