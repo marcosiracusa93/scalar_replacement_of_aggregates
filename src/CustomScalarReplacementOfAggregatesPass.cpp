@@ -2268,16 +2268,17 @@ bool compute_base_and_offset(llvm::Use* ptr_use, llvm::Value*& base_address, std
                signed long long offset = c_index->getSExtValue() * array_elmt_size.getSExtValue();
                llvm::APInt offset_ai(c_index->getBitWidth(), offset);
 
-               // Fold with the last element of the chain if constant as well
-               if(llvm::ConstantInt* c_last = llvm::dyn_cast<llvm::ConstantInt>(offset_chain.back()))
-               {
-                  signed long long offset_sum = c_last->getSExtValue() + offset_ai.getSExtValue();
-                  llvm::APInt offset_sum_ai(DL.getPointerTypeSizeInBits(gep_op->getType()), offset_sum);
-                  offset_chain.back() = llvm::ConstantInt::get(gep_op->getContext(), offset_sum_ai);
-               }
-               else
-               {
+               if (offset_chain.empty()) {
                   offset_chain.push_back(llvm::ConstantInt::get(gep_op->getContext(), offset_ai));
+               } else {
+                  // Fold with the last element of the chain if constant as well
+                  if (llvm::ConstantInt *c_last = llvm::dyn_cast<llvm::ConstantInt>(offset_chain.back())) {
+                     signed long long offset_sum = c_last->getSExtValue() + offset_ai.getSExtValue();
+                     llvm::APInt offset_sum_ai(DL.getPointerTypeSizeInBits(gep_op->getType()), offset_sum);
+                     offset_chain.back() = llvm::ConstantInt::get(gep_op->getContext(), offset_sum_ai);
+                  } else {
+                     offset_chain.push_back(llvm::ConstantInt::get(gep_op->getContext(), offset_ai));
+                  }
                }
             }
             else
