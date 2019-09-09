@@ -11,7 +11,8 @@
 enum SROA_optimizations
 {
     SROA_ptrIteratorSimplification,
-    SROA_chunkOperationsLowering
+    SROA_chunkOperationsLowering,
+    SROA_bitcastVectorRemoval
 };
 
 class GepiCanonicalizationPass : public llvm::FunctionPass
@@ -41,5 +42,7 @@ private:
 GepiCanonicalizationPass* createPtrIteratorSimplificationPass();
 
 GepiCanonicalizationPass* createChunkOperationsLoweringPass();
+
+GepiCanonicalizationPass* createBitcastVectorRemovalPass();
 
 #endif // SCALAR_REPLACEMENT_OF_AGGREGATES_GEPICANONICALIZATIONPASS_HPP

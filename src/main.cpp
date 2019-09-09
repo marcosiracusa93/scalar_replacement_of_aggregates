@@ -97,6 +97,7 @@ int main(int argc, char** argv)
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
+      passManager->add(createBitcastVectorRemovalPass());
       passManager->add(llvm::createVerifierPass());
 
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
@@ -118,6 +119,7 @@ int main(int argc, char** argv)
 
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
+      passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createSROADisaggregationPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
