@@ -1,4 +1,3 @@
-#include <ChunkOpsLoweringPass.hpp>
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
 #include <GepiCanonicalizationPass.hpp>
 #include <fstream>
@@ -96,8 +95,8 @@ int main(int argc, char** argv)
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
-      passManager->add(createChunkOpsLoweringPass());
-      passManager->add(createGepiCanonicalizationPass());
+      passManager->add(createPtrIteratorSimplificationPass());
+      passManager->add(createChunkOperationsLoweringPass());
       passManager->add(llvm::createVerifierPass());
 
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
@@ -117,8 +116,8 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      passManager->add(createChunkOpsLoweringPass());
-      passManager->add(createGepiCanonicalizationPass());
+      passManager->add(createPtrIteratorSimplificationPass());
+      passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createSROADisaggregationPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
