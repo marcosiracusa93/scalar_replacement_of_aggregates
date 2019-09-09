@@ -1,3 +1,35 @@
+/*
+ *
+ *                   _/_/_/    _/_/   _/    _/ _/_/_/    _/_/
+ *                  _/   _/ _/    _/ _/_/  _/ _/   _/ _/    _/
+ *                 _/_/_/  _/_/_/_/ _/  _/_/ _/   _/ _/_/_/_/
+ *                _/      _/    _/ _/    _/ _/   _/ _/    _/
+ *               _/      _/    _/ _/    _/ _/_/_/  _/    _/
+ *
+ *             ***********************************************
+ *                              PandA Project
+ *                     URL: http://panda.dei.polimi.it
+ *                       Politecnico di Milano - DEIB
+ *                        System Architectures Group
+ *             ***********************************************
+ *              Copyright (C) 2019 Politecnico di Milano
+ *
+ *   This file is part of the PandA framework.
+ *
+ *   The PandA framework is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ *   You should have received a copy of the GNU General Public License
+ *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
 //
 // Created by Marco Siracusa on 7/27/19.
 //
@@ -576,6 +608,8 @@ bool bitcast_vector_removal(llvm::Function& function)
          }
       }
    }
+
+   return !sequential_access_vec.empty();
 }
 
 bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
@@ -583,18 +617,16 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
    switch(optimization_selection)
    {
       case SROA_ptrIteratorSimplification:
-         ptr_iterator_simplification(function);
-         break;
+         return ptr_iterator_simplification(function);
       case SROA_chunkOperationsLowering:
-         chunk_operations_lowering(function);
-         break;
+         return chunk_operations_lowering(function);
       case SROA_bitcastVectorRemoval:
-         bitcast_vector_removal(function);
-         break;
+         return bitcast_vector_removal(function);
       default:
          llvm::errs() << "ERR No optimization found\n";
          exit(-1);
    }
+   return false;
 }
 
 GepiCanonicalizationPass* createPtrIteratorSimplificationPass()
