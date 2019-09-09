@@ -1,6 +1,6 @@
+#include <ChunkOpsLoweringPass.hpp>
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
 #include <GepiCanonicalizationPass.hpp>
-#include <Iter2IndVarPass.hpp>
 #include <fstream>
 #include <iostream>
 #include <sys/time.h>
@@ -96,6 +96,7 @@ int main(int argc, char** argv)
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
+      passManager->add(createChunkOpsLoweringPass());
       passManager->add(createGepiCanonicalizationPass());
       passManager->add(llvm::createVerifierPass());
 
@@ -116,6 +117,8 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
+      passManager->add(createChunkOpsLoweringPass());
+      passManager->add(createGepiCanonicalizationPass());
       passManager->add(createSROADisaggregationPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
@@ -128,7 +131,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
+         passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
