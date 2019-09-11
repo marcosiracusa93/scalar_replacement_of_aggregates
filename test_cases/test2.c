@@ -17,6 +17,7 @@ struct s1 {
     //struct s2 as2[2];
 };
 
+
 /*
 int f1(struct s1 *s11) {
     return s11->i1;
