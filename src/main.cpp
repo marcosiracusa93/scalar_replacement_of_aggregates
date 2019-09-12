@@ -114,7 +114,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
+         passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->add(createPtrIteratorSimplificationPass());
@@ -132,10 +132,10 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
+         passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      /// passManager->add(createSROAWrapperInliningPass(args_info.target_function));
+      passManager->add(createSROAWrapperInliningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
          passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
+         passManagerBuilder.populateModulePassManager(*passManager);
       }
 
       passManager->run(*module);
