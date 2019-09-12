@@ -4190,7 +4190,8 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
 #ifdef DEBUG_CSROA
-      llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
+      if(CSROAMaxTransformations != -1)
+         llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
 
       return true;
@@ -4289,7 +4290,8 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
 #ifdef DEBUG_CSROA
-      llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
+      if(CSROAMaxTransformations != -1)
+         llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
       return true;
    }
@@ -4325,7 +4327,8 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
 #ifdef DEBUG_CSROA
-      llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
+      if(CSROAMaxTransformations != -1)
+         llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
       return true;
    }
