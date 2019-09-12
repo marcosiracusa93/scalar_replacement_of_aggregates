@@ -1,8 +1,9 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
-#include <GepiCanonicalizationPass.hpp>
 #include <fstream>
 #include <iostream>
 #include <sys/time.h>
+#include <PrintModulePass.hpp>
+#include <GepiCanonicalizationPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -150,10 +151,9 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
+      passManager->add(createPrintModulePass("./out.ll"));
       passManager->run(*module);
    }
-
-   module->dump();
 
    return 0;
 }
