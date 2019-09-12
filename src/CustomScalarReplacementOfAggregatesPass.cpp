@@ -100,7 +100,7 @@ class Utilities
       llvm::errs() << "  " << call_inst << "  ";
       if(call_inst)
       {
-         call_inst->dump();
+         llvm::CallSite(call_inst)->dump();
       }
       else
       {
@@ -2000,6 +2000,19 @@ void expand_signatures_and_call_sites(std::set<llvm::Function*>& function_workli
       // Track the function mapping (old->new)
       exp_fun_map[called_function] = expanded_function;
 
+       llvm::errs() << "INFO: Function " << called_function->getName() << " [";
+       called_function->getFunctionType()->print(llvm::errs());
+       llvm::errs() << "] expanded as " << expanded_function->getName() << " with arguments \n";
+       for(auto& arg : expanded_function->args())
+       {
+           llvm::errs() << "   Arg" << arg.getArgNo() << ":  E( " << arg_expandability_map.at(&arg) << " )  D( ";
+           for(unsigned long long d : arg_dimensions_map.at(&arg))
+           {
+               llvm::errs() << d << " ";
+           }
+           llvm::errs() << ")\n";
+       }
+
       for(auto user : called_function->users())
       {
          if(llvm::isa<llvm::CallInst>(user) || llvm::isa<llvm::InvokeInst>(user))
@@ -2440,7 +2453,7 @@ void expand_types(T* ptr, const std::map<T*, std::vector<T*>>& exp_map_ref, std:
 
 void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm::Instruction*>& inst_to_remove, const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
                             const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
-                            const std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_size_map, const llvm::DataLayout& DL, bool should_be_constant)
+                            const std::map<llvm::Argument*, std::vector<unsigned long long>>& argexp__size_map, const llvm::DataLayout& DL, bool should_be_constant)
 {
    llvm::Value* base_address = nullptr;
 
@@ -2456,6 +2469,8 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
       llvm::ConstantInt* decay_offset;
       bool has_expandable_base = compute_base_and_idxs(ptr_u, base_address, idx_chain, inst_chain, decay_offset);
+
+
 
       if(base_address != nullptr)
       {
@@ -2475,6 +2490,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
       if(has_expandable_base)
       {
+
          for(llvm::Instruction* i : inst_chain)
          {
             if(has_expandable_base)
@@ -2495,10 +2511,16 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
             }
          }
 
+          llvm::Argument *base_arg = llvm::dyn_cast<llvm::Argument>(base_address);
+          auto exp_it = exp_args_map.find(base_arg);
+          if (base_arg and idx_chain.empty() and exp_it != exp_args_map.end() and !exp_it->second.empty()) {
+              idx_chain.push_back(std::make_pair(nullptr, llvm::ConstantInt::get(llvm::Type::getInt64Ty(user_inst->getContext()), 0)));
+          }
+
          if(is_constant)
          {
-            llvm::Value* exp_val = get_expanded_value_from_expandable_base(exp_args_map, exp_allocas_map, exp_globals_map, base_address, idx_chain);
-            ptr_u->set(exp_val);
+             llvm::Value* exp_val = get_expanded_value_from_expandable_base(exp_args_map, exp_allocas_map, exp_globals_map, base_address, idx_chain);
+             ptr_u->set(exp_val);
          }
          else
          {
@@ -2565,9 +2587,9 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
             llvm::Type* base_type_rec = base_address->getType()->getPointerElementType();
             if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(base_address))
             {
-               auto size_it = arg_size_map.find(arg);
+               auto size_it = argexp__size_map.find(arg);
 
-               if(size_it != arg_size_map.end() and !size_it->second.empty() and size_it->second.front() > 1)
+               if(size_it != argexp__size_map.end() and !size_it->second.empty() and size_it->second.front() > 1)
                {
                   base_type_rec = llvm::ArrayType::get(base_type_rec, size_it->second.front());
                }
@@ -2894,10 +2916,12 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
       }
    }
 
-   for(llvm::Instruction* i : inst_chain)
-   {
-      inst_to_remove.insert(i);
-   }
+    if (has_expandable_base) {
+        for(llvm::Instruction* i : inst_chain)
+        {
+            inst_to_remove.insert(i);
+        }
+    }
 
    bool is_constant = true;
 
@@ -2936,19 +2960,23 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
                }
                else
                {
-                  std::string gepi_name = base_address->getName().str() + ".gepi";
-                  std::vector<llvm::Value*> gepi_idxs;
-                  if(!llvm::isa<llvm::Argument>(base_address))
-                  {
-                     llvm::APInt zero_ai = llvm::APInt((unsigned int)64, 0, false);
-                     llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
+                   std::string gepi_name = base_address->getName().str() + ".gepi";
+                   std::vector<llvm::Value*> gepi_idxs;
 
-                     gepi_idxs.push_back(zero_c);
-                  }
-                  for(const std::pair<llvm::Type*, llvm::Value*>& idx : exp_idx_chain)
-                  {
-                     gepi_name += "." + std::to_string(llvm::dyn_cast<llvm::ConstantInt>(idx.second)->getSExtValue());
-                  }
+                   if(!llvm::isa<llvm::Argument>(base_address))
+                   {
+                       llvm::APInt zero_ai = llvm::APInt((unsigned int)64, 0, false);
+                       llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
+
+                       gepi_idxs.push_back(zero_c);
+
+                   }
+                   for(const std::pair<llvm::Type*, llvm::Value*>& idx : exp_idx_chain)
+                   {
+                       gepi_name += "." + std::to_string(llvm::dyn_cast<llvm::ConstantInt>(idx.second)->getSExtValue());
+                       gepi_idxs.push_back(idx.second);
+                   }
+
                   exp_val = llvm::GetElementPtrInst::Create(nullptr, base_address, gepi_idxs, gepi_name, call_inst);
                }
 
@@ -3047,10 +3075,10 @@ void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::m
                   auto nOperands = llvm::isa<llvm::CallInst>(call_inst) ? llvm::dyn_cast<llvm::CallInst>(call_inst)->getNumArgOperands() : llvm::dyn_cast<llvm::InvokeInst>(call_inst)->getNumArgOperands();
                   for(unsigned op_i = 0u; op_i < nOperands; op_i++)
                   {
-                     auto op_u = &(call_inst->getOperandUse(op_i));
-                     llvm::Argument* arg = &*std::next(called_function->arg_begin(), op_i);
+                      auto op_u = &(call_inst->getOperandUse(op_i));
+                      llvm::Argument* arg = &*std::next(called_function->arg_begin(), op_i);
 
-                     if(arg_expandability_map.at(arg))
+                     if(arg_expandability_map.at(arg) and !arg_dimensions_map.at(arg).empty() and arg_dimensions_map.at(arg).front() > 1)
                      {
                         if(op_u->get()->getType()->isPointerTy())
                         {
@@ -3875,6 +3903,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       expand_ptrs(function_worklist, arguments_expansion_map, allocas_expansion_map, globals_expansion_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
+
       cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
