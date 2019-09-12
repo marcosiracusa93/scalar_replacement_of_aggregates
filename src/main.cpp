@@ -1,9 +1,8 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
-#include <fstream>
+#include <GepiCanonicalizationPass.hpp>
+#include <PrintModulePass.hpp>
 #include <iostream>
 #include <sys/time.h>
-#include <PrintModulePass.hpp>
-#include <GepiCanonicalizationPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
