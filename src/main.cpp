@@ -1,6 +1,6 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
 #include <GepiCanonicalizationPass.hpp>
-#include <fstream>
+#include <PrintModulePass.hpp>
 #include <iostream>
 #include <sys/time.h>
 
@@ -150,10 +150,9 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
+      passManager->add(createPrintModulePass("./out.ll"));
       passManager->run(*module);
    }
-
-   module->dump();
 
    return 0;
 }

@@ -2635,6 +2635,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                   }
 
                   std::string mul_name = ptr_u->getUser()->getName().str() + ".mul" + idx_name;
+                  std::string add_name = mul_name + ".add";
                   llvm::APInt sub_count_ap = llvm::APInt(64, CountSublements::count(base_type_rec->getArrayElementType()), false);
                   llvm::ConstantInt* sub_count_ci = llvm::ConstantInt::get(base_address->getContext(), sub_count_ap);
 
@@ -2645,6 +2646,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                      idx_val = llvm::SExtInst::Create(llvm::Instruction::CastOps::SExt, idx_val, int64_ty, sext_name, user_inst);
                   }
                   llvm::BinaryOperator* mul = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Mul, sub_count_ci, idx_val, mul_name, user_inst);
+                  idx_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, idx_sum, mul, add_name, user_inst);
 
                   base_type_rec = base_type_rec->getArrayElementType();
                }
