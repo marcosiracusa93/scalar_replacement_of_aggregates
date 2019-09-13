@@ -686,6 +686,11 @@ void compute_aggregates_expandability(llvm::Function* kernel_function, llvm::Mod
       else
       {
          globals_expandability_map.insert(std::make_pair(&global_var, false));
+
+         std::string base_str;
+         llvm::raw_string_ostream base_rso(base_str);
+         global_var.print(base_rso);
+         llvm::errs() << "WAR: " << base_str << "  cannot expand because some uses out of worklist\n";
       }
    }
 
@@ -1368,6 +1373,7 @@ void perform_function_versioning(std::map<llvm::Instruction*, std::vector<llvm::
             std::vector<bool> ops_exp_vec;
             std::vector<std::vector<unsigned long long>> ops_dim_vec;
             std::tie(function, ops_exp_vec, ops_dim_vec) = vfun_key;
+
             arg_exp_map.insert(std::make_pair(&arg, ops_exp_vec.at(arg.getArgNo())));
             arg_dims_map.insert(std::make_pair(&arg, ops_dim_vec.at(arg.getArgNo())));
 
@@ -2141,7 +2147,7 @@ void update_allocas_expandability_map(std::map<llvm::AllocaInst*, bool>& allocas
    }
 }
 
-bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<std::pair<llvm::Type*, llvm::Value*>>& idx_chain, std::vector<llvm::Instruction*>& inst_chain, llvm::ConstantInt*& decay_offset)
+bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::vector<std::pair<llvm::Type*, llvm::Value*>>& idx_chain, std::vector<llvm::Instruction*>& inst_chain)
 {
    if(llvm::BitCastOperator* bitcast_op = llvm::dyn_cast<llvm::BitCastOperator>(ptr_use->get()))
    {
@@ -2150,7 +2156,7 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
          inst_chain.push_back(inst);
       }
       // Recursively go through the gepi chain up to the base address
-      compute_base_and_idxs(&bitcast_op->getOperandUse(0), base_address, idx_chain, inst_chain, decay_offset);
+      compute_base_and_idxs(&bitcast_op->getOperandUse(0), base_address, idx_chain, inst_chain);
       return false;
    }
    else if(llvm::GEPOperator* gep_op = llvm::dyn_cast<llvm::GEPOperator>(ptr_use->get()))
@@ -2178,57 +2184,56 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
       }
 
       // Recursively go through the gepi chain up to the base address
-      bool ret = compute_base_and_idxs(&gep_op->getOperandUse(gep_op->getPointerOperandIndex()), base_address, idx_chain, inst_chain, decay_offset);
+      bool ret = compute_base_and_idxs(&gep_op->getOperandUse(gep_op->getPointerOperandIndex()), base_address, idx_chain, inst_chain);
 
-      llvm::gep_type_iterator gti_begin = llvm::gep_type_begin(gep_op);
-      llvm::gep_type_iterator gti_end = llvm::gep_type_end(gep_op);
-      if(!llvm::isa<llvm::Argument>(gep_op->getPointerOperand()))
-      {
-         std::advance(gti_begin, 1);
-      }
+       if (ret) {
+           llvm::gep_type_iterator gti_begin = llvm::gep_type_begin(gep_op);
+           llvm::gep_type_iterator gti_end = llvm::gep_type_end(gep_op);
 
-      bool has_decay = false;
-      if(llvm::isa<llvm::CallInst>(ptr_use->getUser()) || llvm::isa<llvm::InvokeInst>(ptr_use->getUser()))
-      {
-         if(gep_op->getNumIndices() >= 2)
-         {
-            has_decay = std::next(llvm::gep_type_begin(gep_op), gep_op->getNumIndices() - 2).getIndexedType()->isArrayTy();
-         }
-         else if(llvm::Argument* arg = llvm::dyn_cast<llvm::Argument>(gep_op->getPointerOperand()))
-         {
-            if(gep_op->getNumIndices() == 1)
-            {
-               llvm::Argument* call_arg = llvm::dyn_cast<llvm::Argument>(std::next(llvm::CallSite(ptr_use->getUser()).getCalledFunction()->arg_begin(), ptr_use->getOperandNo()));
-               if(call_arg)
-               {
-                  has_decay = arg->getType() == call_arg->getType();
+           if (idx_chain.empty()) {
+               llvm::errs() << "Empty chain";
+               exit(-1);
+           }
+           llvm::Value *&last_chain_idx = idx_chain.back().second;
+           llvm::Value *first_gepi_idx = gti_begin.getOperand();
+
+           llvm::ConstantInt *last_chain_idx_c = llvm::dyn_cast<llvm::ConstantInt>(last_chain_idx);
+           llvm::ConstantInt *first_gepi_idx_c = llvm::dyn_cast<llvm::ConstantInt>(first_gepi_idx);
+
+           if (last_chain_idx_c != nullptr and first_gepi_idx_c != nullptr) {
+               unsigned long long idx_sum = last_chain_idx_c->getSExtValue() + first_gepi_idx_c->getSExtValue();
+               last_chain_idx = llvm::ConstantInt::get(first_gepi_idx_c->getType(), idx_sum);
+           } else {
+               llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(ptr_use->getUser());
+               if (last_chain_idx->getType()->isIntegerTy() and first_gepi_idx->getType()->isIntegerTy()) {
+                   if (last_chain_idx->getType()->getIntegerBitWidth() !=
+                       first_gepi_idx->getType()->getIntegerBitWidth()) {
+                       if (last_chain_idx->getType()->getIntegerBitWidth() <
+                           first_gepi_idx->getType()->getIntegerBitWidth()) {
+                           std::string sext_name = gep_op->getName().str() + ".sext";
+                           last_chain_idx = llvm::SExtInst::Create(llvm::Instruction::CastOps::SExt, last_chain_idx,
+                                                                   first_gepi_idx->getType(), sext_name, user_inst);
+                       } else {
+                           std::string trunc_name = gep_op->getName().str() + ".trunc";
+                           last_chain_idx = llvm::TruncInst::Create(llvm::Instruction::CastOps::Trunc, last_chain_idx,
+                                                                    first_gepi_idx->getType(), trunc_name, user_inst);
+                       }
+                   }
+               } else {
+                   llvm::errs() << "ERR not integer idx\n";
+                   exit(-1);
                }
-               else
-               {
-                  llvm::errs() << "ERR cannot find argument\n";
-                  exit(-1);
-               }
-            }
-         }
-      }
+               std::string add_name = gep_op->getName().str() + ".add";
+               last_chain_idx = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, last_chain_idx,
+                                                             first_gepi_idx, add_name, user_inst);
+           }
 
-      if(std::distance(gti_begin, gti_end) < 0)
-      {
-         llvm::errs() << "ERR wrong decay avoidance\n";
-         exit(-1);
-      }
+           ++gti_begin;
 
-      for(llvm::gep_type_iterator gti = gti_begin; gti != gti_end; ++gti)
-      {
-         if(has_decay and std::next(gti, 1) == gti_end)
-         {
-            decay_offset = llvm::dyn_cast<llvm::ConstantInt>(gti.getOperand());
-         }
-         else
-         {
-            idx_chain.push_back(std::make_pair(gti.getIndexedType(), gti.getOperand()));
-         }
-      }
+           for (llvm::gep_type_iterator gti = gti_begin; gti != gti_end; ++gti) {
+               idx_chain.push_back(std::make_pair(gti.getIndexedType(), gti.getOperand()));
+           }
+       }
 
       return ret;
    }
@@ -2236,6 +2241,8 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
    {
       // The alloca becomes the base address
       base_address = alloca_inst;
+      llvm::ConstantInt *zero_ci = llvm::ConstantInt::get(llvm::Type::getInt64Ty(alloca_inst->getContext()), 0);
+      idx_chain.push_back(std::make_pair(alloca_inst->getAllocatedType(), zero_ci));
 
       return true;
    }
@@ -2243,6 +2250,8 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
    {
       // The global variable becomes the base address
       base_address = g_var;
+      llvm::ConstantInt *zero_ci = llvm::ConstantInt::get(llvm::Type::getInt64Ty(g_var->getContext()), 0);
+      idx_chain.push_back(std::make_pair(g_var->getType()->getPointerElementType(), zero_ci));
 
       return true;
    }
@@ -2250,6 +2259,9 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
    {
       // The argument becomes the base address
       base_address = arg;
+      llvm::ConstantInt *zero_ci = llvm::ConstantInt::get(llvm::Type::getInt64Ty(arg->getContext()), 0);
+      idx_chain.push_back(std::make_pair(arg->getType()->getPointerElementType(), zero_ci));
+      idx_chain.push_back(std::make_pair(arg->getType()->getPointerElementType(), zero_ci));
 
       return true;
    }
@@ -2451,6 +2463,10 @@ void expand_types(T* ptr, const std::map<T*, std::vector<T*>>& exp_map_ref, std:
    }
 }
 
+
+//unsigned long long expansions = 0;
+
+
 void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<llvm::Instruction*>& inst_to_remove, const std::map<llvm::Argument*, std::vector<llvm::Argument*>>& exp_args_map,
                             const std::map<llvm::AllocaInst*, std::vector<llvm::AllocaInst*>>& exp_allocas_map, const std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>>& exp_globals_map,
                             const std::map<llvm::Argument*, std::vector<unsigned long long>>& argexp__size_map, const llvm::DataLayout& DL, bool should_be_constant)
@@ -2467,8 +2483,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
       std::vector<std::pair<llvm::Type*, llvm::Value*>> idx_chain;
       std::vector<llvm::Instruction*> inst_chain;
 
-      llvm::ConstantInt* decay_offset;
-      bool has_expandable_base = compute_base_and_idxs(ptr_u, base_address, idx_chain, inst_chain, decay_offset);
+      bool has_expandable_base = compute_base_and_idxs(ptr_u, base_address, idx_chain, inst_chain);
 
       if(base_address != nullptr)
       {
@@ -2488,6 +2503,19 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
       if(has_expandable_base)
       {
+          idx_chain.erase(idx_chain.begin());
+/*
+llvm::errs() << "\n*******************************\n";
+llvm::errs() << "expansion " << expansions++ << " " << user_inst->getFunction()->getName() << " "; ptr_u->getUser()->dump();
+llvm::errs() << "base address: "; base_address->dump();
+for (auto const &idx : inst_chain) {
+   llvm::errs() << "inst chain: "; idx->dump();
+}
+for (auto const &idx : idx_chain) {
+   llvm::errs() << "idx chain: "; idx.second->dump();
+}
+llvm::errs() << "\n*******************************\n";
+*/
          for(llvm::Instruction* i : inst_chain)
          {
             if(has_expandable_base)
@@ -2508,13 +2536,6 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
             }
          }
 
-         llvm::Argument* base_arg = llvm::dyn_cast<llvm::Argument>(base_address);
-         auto exp_it = exp_args_map.find(base_arg);
-         if(base_arg and idx_chain.empty() and exp_it != exp_args_map.end() and !exp_it->second.empty())
-         {
-            idx_chain.push_back(std::make_pair(nullptr, llvm::ConstantInt::get(llvm::Type::getInt64Ty(user_inst->getContext()), 0)));
-         }
-
          if(is_constant)
          {
             llvm::Value* exp_val = get_expanded_value_from_expandable_base(exp_args_map, exp_allocas_map, exp_globals_map, base_address, idx_chain);
@@ -2522,6 +2543,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
          }
          else
          {
+
             if(should_be_constant)
             {
                llvm::errs() << "ERR Constant access needed in op # " << ptr_u->getOperandNo() << "\n";
@@ -2897,8 +2919,7 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
    std::vector<std::pair<llvm::Type*, llvm::Value*>> idx_chain;
    std::vector<llvm::Instruction*> inst_chain;
 
-   llvm::ConstantInt* decay_offset = nullptr;
-   bool has_expandable_base = compute_base_and_idxs(ptr_u, base_address, idx_chain, inst_chain, decay_offset);
+   bool has_expandable_base = compute_base_and_idxs(ptr_u, base_address, idx_chain, inst_chain);
 
    if(base_address != nullptr)
    {
@@ -2936,6 +2957,19 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
       }
    }
 
+   idx_chain.erase(idx_chain.begin());
+/*
+llvm::errs() << "\n*******************************\n";
+llvm::errs() << "expansion " << expansions++ << " " << llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser())->getFunction()->getName() << " " << ptr_u->getOperandNo(); ptr_u->getUser()->dump();
+llvm::errs() << "base address: "; base_address->dump();
+for (auto const &idx : inst_chain) {
+    llvm::errs() << "inst chain: "; idx->dump();
+}
+for (auto const &idx : idx_chain) {
+    llvm::errs() << "idx chain: "; idx.second->dump();
+}
+llvm::errs() << "\n*******************************\n";
+*/
    if(llvm::isa<llvm::CallInst>(ptr_u->getUser()) || llvm::isa<llvm::InvokeInst>(ptr_u->getUser()))
    {
       llvm::Instruction* call_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser());
@@ -2947,7 +2981,7 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
 
          if(exp_arg_it != exp_args_map.end())
          {
-            signed long long exp_arg_u_idx = (decay_offset ? decay_offset->getSExtValue() : 0);
+            signed long long exp_arg_u_idx = llvm::dyn_cast<llvm::ConstantInt>(idx_chain.back().second)->getSExtValue();
             for(llvm::Argument* exp_arg_u : exp_arg_it->second)
             {
                std::vector<std::pair<llvm::Type*, llvm::Value*>> exp_idx_chain = idx_chain;
@@ -2964,13 +2998,6 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
                   std::string gepi_name = base_address->getName().str() + ".gepi";
                   std::vector<llvm::Value*> gepi_idxs;
 
-                  if(!llvm::isa<llvm::Argument>(base_address))
-                  {
-                     llvm::APInt zero_ai = llvm::APInt((unsigned int)64, 0, false);
-                     llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
-
-                     gepi_idxs.push_back(zero_c);
-                  }
                   for(const std::pair<llvm::Type*, llvm::Value*>& idx : exp_idx_chain)
                   {
                      gepi_name += "." + std::to_string(llvm::dyn_cast<llvm::ConstantInt>(idx.second)->getSExtValue());
@@ -3082,12 +3109,6 @@ void expand_ptrs(const std::set<llvm::Function*> function_worklist, const std::m
                      {
                         if(op_u->get()->getType()->isPointerTy())
                         {
-                           llvm::ConstantInt* decay_offset = nullptr;
-                           if(llvm::GEPOperator* gep_op = llvm::dyn_cast<llvm::GEPOperator>(op_u))
-                           {
-                              decay_offset = llvm::dyn_cast<llvm::ConstantInt>(gep_op->getOperand(gep_op->getNumOperands() - 1));
-                           }
-
                            process_arg_pointer(op_u, new_bb, inst_to_remove, exp_args_map, exp_allocas_map, exp_globals_map, arg_dimensions_map, true);
                         }
                      }
@@ -3904,7 +3925,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       function_worklist.erase(kernel_function);
 
-      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
+      ///cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 

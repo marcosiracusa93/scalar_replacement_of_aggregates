@@ -121,6 +121,7 @@ int main(int argc, char** argv)
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createSROADisaggregationPass(args_info.target_function));
+
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
