@@ -95,13 +95,15 @@ int main(int argc, char** argv)
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
+/*
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(llvm::createVerifierPass());
-
+*/
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
       passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
+/*
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
       passManager->add(llvm::createVerifierPass());
 
@@ -120,8 +122,9 @@ int main(int argc, char** argv)
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
+*/
       passManager->add(createSROADisaggregationPass(args_info.target_function));
-
+/*
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
@@ -150,7 +153,7 @@ int main(int argc, char** argv)
          passManagerBuilder.SLPVectorize = false;
          passManagerBuilder.populateModulePassManager(*passManager);
       }
-
+*/
       passManager->add(createPrintModulePass("./out.ll"));
       passManager->run(*module);
    }
