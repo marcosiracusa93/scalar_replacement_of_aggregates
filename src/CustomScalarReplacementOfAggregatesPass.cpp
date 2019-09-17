@@ -457,7 +457,7 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
       }
       else
       {
-         if(!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), false)).second)
+         if(false and !operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), false)).second)
          {
             llvm::errs() << "ERR Operand expandability inserted twice in map\n";
             exit(-1);
