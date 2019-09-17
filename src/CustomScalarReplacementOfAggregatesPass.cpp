@@ -602,6 +602,8 @@ void compute_global_op_expandability_rec(llvm::Instruction* call_inst, const std
                check_ptr_expandability(use, point_to_set_map.at(use.get()), operands_expandability_map, point_to_set_map, true, call_trace);
             }
          }
+
+         compute_global_op_expandability_rec(inner_call_inst, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, globals_as_exp);
       }
    }
 
@@ -1019,7 +1021,8 @@ void compute_op_exp_and_dims_rec(llvm::Instruction* call_inst, llvm::Instruction
                   }
 
                   std::string size_msg = "";
-                  bool expandable_size = has_expandable_size(op_use.get(), DL, dims.front(), size_msg);
+                  unsigned long long first_dim = (dims.empty() ? 0 : dims.front());
+                  bool expandable_size = has_expandable_size(op_use.get(), DL, first_dim, size_msg);
 
                   if(!expandable_size)
                   {
@@ -2537,37 +2540,37 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                idx_chain.erase(idx_chain.begin());
             }
          }
-
-         if(llvm::isa<llvm::CallInst>(ptr_u->getUser()) || llvm::isa<llvm::InvokeInst>(ptr_u->getUser()))
-         {
-            llvm::Instruction* call_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser());
-
-            llvm::Argument* arg = &*std::next(llvm::CallSite(call_inst).getCalledFunction()->arg_begin(), ptr_u->getOperandNo());
-
-            auto size_it = arg_dimensions_map.find(arg);
-            if(size_it != arg_dimensions_map.end() and !size_it->second.empty() and size_it->second.front() > 0)
-            {
-               // Nothing to do
-            }
-            else
-            {
-               if(llvm::ConstantInt* last_idx_c = llvm::dyn_cast<llvm::ConstantInt>(idx_chain.back().second))
-               {
-                  if(last_idx_c->getSExtValue() != 0)
+         /*
+                  if(llvm::isa<llvm::CallInst>(ptr_u->getUser()) || llvm::isa<llvm::InvokeInst>(ptr_u->getUser()))
                   {
-                     llvm::errs() << "ERR: Wrong decay\n";
-                     exit(-1);
-                  }
-               }
-               else
-               {
-                  llvm::errs() << "ERR: Wrong decay\n";
-                  exit(-1);
-               }
-               idx_chain.pop_back();
-            }
-         }
+                     llvm::Instruction* call_inst = llvm::dyn_cast<llvm::Instruction>(ptr_u->getUser());
 
+                     llvm::Argument* arg = &*std::next(llvm::CallSite(call_inst).getCalledFunction()->arg_begin(), ptr_u->getOperandNo());
+
+                     auto size_it = arg_dimensions_map.find(arg);
+                     if(size_it != arg_dimensions_map.end() and !size_it->second.empty() and size_it->second.front() > 0)
+                     {
+                        // Nothing to do
+                     }
+                     else
+                     {
+                        if(llvm::ConstantInt* last_idx_c = llvm::dyn_cast<llvm::ConstantInt>(idx_chain.back().second))
+                        {
+                           if(last_idx_c->getSExtValue() != 0)
+                           {
+                              llvm::errs() << "ERR: Wrong decay\n";
+                              exit(-1);
+                           }
+                        }
+                        else
+                        {
+                           llvm::errs() << "ERR: Wrong decay\n";
+                           exit(-1);
+                        }
+                        idx_chain.pop_back();
+                     }
+                  }
+         */
          llvm::errs() << "\nINFO: In function " << user_inst->getFunction()->getName() << " expanding ";
          ptr_u->getUser()->dump();
          llvm::errs() << "   Base address: ";
@@ -4091,12 +4094,12 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       delete_functions_recursively(fun_to_remove);
 
       function_worklist.insert(kernel_function);
-      module.dump();
+
       expand_ptrs(function_worklist, arguments_expansion_map, allocas_expansion_map, globals_expansion_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
 
-      /// cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
+      cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
 
       assert(!llvm::verifyModule(module, &llvm::errs()));
 
