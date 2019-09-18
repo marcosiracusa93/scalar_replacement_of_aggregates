@@ -2834,9 +2834,6 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
             user_inst = new_inst;
 
-            llvm::errs() << "   expanded as ";
-            wrapper_call->dump();
-
             // Keep track on where to split
             llvm::Instruction* split_before = user_inst;
 
@@ -2973,6 +2970,9 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
                split_before = else_term;
             }
+
+            llvm::errs() << "   expanded as ";
+            wrapper_call->dump();
 
             // TODO Fix it
             user_inst->replaceAllUsesWith(llvm::UndefValue::get(user_inst->getType()));
@@ -4094,7 +4094,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       delete_functions_recursively(fun_to_remove);
 
       function_worklist.insert(kernel_function);
-
+      return true;
       expand_ptrs(function_worklist, arguments_expansion_map, allocas_expansion_map, globals_expansion_map, arguments_expandability_map, arguments_dimensions_map, inst_to_remove, DL);
 
       function_worklist.erase(kernel_function);
