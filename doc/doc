@@ -1,0 +1,76 @@
+We propose a scalar replacement of aggregates as a 4-phases interprocedural optimization and we will see why...
+Complex types such as structs or arrays are a composition of simpler types sequentially allocated in memory.
+The access of any sub-element is performed through pointer arithmetic with respect the base address of the aggregate type.
+The scalar replacement of aggregates is a transformation that recursively expands aggregate data types allocated in memory into its containing first class types.
+Among all the benefits, it becomes clear how this optimization allows to save latency and area needed for the arithmetic of address computation along other code simplifications.
+In detail, the action of expanding an aggregate type consists of:
+ - expanding the memory allocation in simpler data types,
+ - considering the pointer arithmetic fot replacing all the memory accesses of an aggregate type with the a memory access to the corresponding disaggregated type.
+Specifically, LLVM manages address computation of memory accesses through gepis.
+Those instructions allow to abstracts address computation from the underlying memory layout.
+Indeed, a base address and a set of indices is needed for identifying the memory access within an aggregate type.
+The base address is the pointer to the first sub-element of the aggregate type whereas the set of indices is used for identifying which one among all the sequential sub-elements of the aggregate type would be accessed.
+In case the index set contains a non constant value (it is not known at compile time), the memory access is replaced with a switch-case like control flow accessing all of the aggregate elements and controlled by the runtime value of the index chain.
+Therefore, looking at the index set of the gepis employed for computing the address of a memory access, it is possible to directly identify the accessed sub-element.
+However, gepis are usually highly optimized during the whole process of high level synthesis, denying any canonical form.
+This implies that we are unable to expand memory accesses we cannot uniquely identify base address and index offset provided by the gepis.
+This is the case of pointer iterators or when you have phis in between.
+Therefore, since gepis abstraction is foundamental for our pourposes, we place the disaggregation pass in the early stages of the HLS optimization chain.
+Placing the SROA at the beginning of the HLS chain allows the whole transformation chain benefits of the code simplification provided by this transformation.
+However, letting the switch-case like control flow structure go through the HLS chain would interfere with parallel instruction execution.
+For this reason we wrap this structure in a dedicated function marked as noopt which is inlined only in the very end of the HLS optimization chain.
+To allow the expansion of a larger amount of aggregates, we also perform a pre-processing phase for canonicalizing all the memory accesses and their related gepis.
+Moreover, we achieve the expansion of the largest amount of aggregates performing an interprocedural transformation.
+However, this comes with the cost of managing argument disaggregation and the consequent function versioning.
+Indeed, arrays in C code are passed to functions by means of pointers, letting the first dimensions decay.
+As the first dimension is not known, we need to perform function versioning in order to understand which function instance to call for any call site.
+In the end, we propose a scalar replacement of aggregates optimization composed of:
+ - preprocessing
+ - function versioning + dims computation + expandability check
+ - disaggregation
+ - wrapper inlining
+We now go through all of those phases.
+
+* PREPROCESSING
+This phase needs for canonicalizing the gepis used for computing the memory access of aggregate allocations.
+It is composed of:
+ - SROA_ptrIteratorSimplification:
+    Canonicalizes this kind of situation...
+ - SROA_chunkOperationsLowering:
+    Canonicalizes this kind of situation...
+ - SROA_bitcastVectorRemoval:
+    Canonicalizes this kind of situation...
+
+* FUNCTION VERSIONING + DIMS COMPUTATION + EXPANDABILITY CHECK
+Call graph is considered.
+This phase is performed for supplying array decay computing dimension and expandability of any aggregate function argument.
+In this way we can asses whether a certain argument is expanded and how, instantiating a function with a proper signature.
+Since instantiating too many functions could become expensive in terms of area, heuristics and a caching strategy are applyed.
+The expandability check, instead, aims stating the expandability of any global variable or alloca instruction of aggregate type.
+An interprocedural depth-first visit over the aggregate's uses is performed.
+An aggregate is expandable if this visit encounters something different from gepis, calls or memory operations.
+When a call is encountered, the argument of the related called function is recursively analyzed.
+Analyzing the argument, we keep track of whether it is expandable or not, disregarding the upcoming aggregate.
+If it happens that the argument is expandable but the base aggregate is not, a chain of gepis is inserted in the disaggregation phase.
+
+* DISAGGREGATION
+Following phases:
+ - expand signatures and call sites
+     Each function provided by the function versioning has its signature expanded according to the aggregate types passes as arguments.
+     Any callsite of any expanded function is mend accordingly.
+     The new signature is created going through the arguments of the old function and inserting all of the sub-elements.
+     Performed recursively, therefore if aggregate into aggregate it works.
+ - expand allocas
+     All the allocas of aggregate types are expanded
+ - expand globals
+     All the allocas of aggregate types are expanded
+ - expand pointers
+     Any load/store/callsite operand of aggregate type is expanded.
+     The gepi chain is analyzed backward and
+      + in case of all-known indexes at compile time, the operand is replaced with the right aggregate
+      + in case of some index not known at comile time, the switch-case like control flow structure is inserted and wrapped
+ - cleanup
+     The code is cleaned up performing arguments semplification (like interprocedural register promotion of only loaded arguments)
+
+* WRAPPER INLINING
+Inlining of the wrapper function and a further cleanup is performed.
