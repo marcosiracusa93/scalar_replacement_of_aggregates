@@ -81,7 +81,7 @@ int main(int argc, char** argv)
    {
       llvm::legacy::PassManager* passManager = new llvm::legacy::PassManager();
       llvm::TargetIRAnalysis TIRA = llvm::TargetIRAnalysis();
-
+/*
       // Insert -O3 in chain
       {
          passManager->add(llvm::createVerifierPass());
@@ -95,7 +95,9 @@ int main(int argc, char** argv)
       }
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
-
+*/
+      passManager->add(createPrintModulePass("./f1_first.ll"));
+      passManager->add(createRemoveIntrinsicPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createChunkOperationsLoweringPass());
@@ -105,6 +107,7 @@ int main(int argc, char** argv)
       passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
 
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
+      passManager->add(createPrintModulePass("./f2_post_versioning.ll"));
 
       passManager->add(llvm::createVerifierPass());
       // Insert -O3 in chain
@@ -119,12 +122,14 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
+      passManager->add(createRemoveIntrinsicPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
 
+      passManager->add(createPrintModulePass("./f3_pre_disaggregation.ll"));
       passManager->add(createSROADisaggregationPass(args_info.target_function));
-
+      passManager->add(createPrintModulePass("./f4_post_disaggregation.ll"));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
@@ -139,7 +144,9 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
+      passManager->add(createPrintModulePass("./f5_pre_inlining.ll"));
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
+      passManager->add(createPrintModulePass("./f6_post_inlining.ll"));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
@@ -154,7 +161,7 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      passManager->add(createPrintModulePass("./out.ll"));
+      passManager->add(createPrintModulePass("./f7_final.ll"));
       passManager->run(*module);
    }
 
