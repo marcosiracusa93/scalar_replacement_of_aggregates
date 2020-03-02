@@ -809,6 +809,7 @@ bool bitcast_vector_removal(llvm::Function& function)
 
 bool remove_lifetime(llvm::Function& function)
 {
+   return false;
    std::vector<llvm::Instruction*> intrinsic_to_remove;
 
    for(llvm::BasicBlock& bb : function)
@@ -819,10 +820,10 @@ bool remove_lifetime(llvm::Function& function)
             llvm::Function *called_function = call_inst->getCalledFunction();
 
             if (called_function) {
-               if (called_function->getIntrinsicID() == llvm::Intrinsic::lifetime_start) {
+               if (called_function->getIntrinsicID() == llvm::Intrinsic::ID::lifetime_start) {
                   intrinsic_to_remove.push_back(call_inst);
                }
-               if (called_function->getIntrinsicID() == llvm::Intrinsic::lifetime_end) {
+               if (called_function->getIntrinsicID() == llvm::Intrinsic::ID::lifetime_end) {
                   intrinsic_to_remove.push_back(call_inst);
                }
             }
