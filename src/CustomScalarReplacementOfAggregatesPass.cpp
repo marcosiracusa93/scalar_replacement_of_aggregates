@@ -3166,8 +3166,7 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
                   llvm::ConstantInt* c_idx = llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(64, (unsigned long long)exp_arg_u_idx));
                   gepi2_idxs.push_back(zero_idx);
                   gepi2_idxs.push_back(c_idx);
-exp_val->dump();
-exp_val->getType()->dump();
+
                   exp_val = llvm::GetElementPtrInst::Create(nullptr, exp_val, gepi2_idxs, gepi2_name, call_inst);
                }
 
