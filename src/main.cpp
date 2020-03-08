@@ -3,6 +3,7 @@
 #include <PrintModulePass.hpp>
 #include <iostream>
 #include <sys/time.h>
+#include <ExpandMemOpsPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -97,17 +98,19 @@ int main(int argc, char** argv)
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
 */
       passManager->add(createPrintModulePass("./f1_first.ll"));
+      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(llvm::createVerifierPass());
+      passManager->add(createPrintModulePass("./f2_post_canonicalization.ll"));
 
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
       passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
 
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
-      passManager->add(createPrintModulePass("./f2_post_versioning.ll"));
+      passManager->add(createPrintModulePass("./f3_post_versioning.ll"));
 
       passManager->add(llvm::createVerifierPass());
       // Insert -O3 in chain
@@ -122,14 +125,16 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
+      passManager->add(createPrintModulePass("./f4_pre_canonicalization.ll"));
+      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
+      passManager->add(createPrintModulePass("./f5_post_canonicalization.ll"));
 
-      passManager->add(createPrintModulePass("./f3_pre_disaggregation.ll"));
       passManager->add(createSROADisaggregationPass(args_info.target_function));
-      passManager->add(createPrintModulePass("./f4_post_disaggregation.ll"));
+      passManager->add(createPrintModulePass("./f6_post_disaggregation.ll"));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
@@ -144,9 +149,9 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      passManager->add(createPrintModulePass("./f5_pre_inlining.ll"));
+      passManager->add(createPrintModulePass("./f7_pre_inlining.ll"));
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
-      passManager->add(createPrintModulePass("./f6_post_inlining.ll"));
+      passManager->add(createPrintModulePass("./f8_post_inlining.ll"));
       passManager->add(llvm::createVerifierPass());
 
       // Insert -O3 in chain
@@ -161,7 +166,7 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      passManager->add(createPrintModulePass("./f7_final.ll"));
+      passManager->add(createPrintModulePass("./f9_final.ll"));
       passManager->run(*module);
    }
 

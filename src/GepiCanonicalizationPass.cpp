@@ -809,7 +809,6 @@ bool bitcast_vector_removal(llvm::Function& function)
 
 bool remove_lifetime(llvm::Function& function)
 {
-   return false;
    std::vector<llvm::Instruction*> intrinsic_to_remove;
 
    for(llvm::BasicBlock& bb : function)
