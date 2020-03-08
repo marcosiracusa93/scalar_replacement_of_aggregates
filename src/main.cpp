@@ -98,8 +98,8 @@ int main(int argc, char** argv)
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
 */
       passManager->add(createPrintModulePass("./f1_first.ll"));
-      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createRemoveIntrinsicPass());
+      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createChunkOperationsLoweringPass());
@@ -126,8 +126,8 @@ int main(int argc, char** argv)
       }
 
       passManager->add(createPrintModulePass("./f4_pre_canonicalization.ll"));
-      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createRemoveIntrinsicPass());
+      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());

@@ -90,7 +90,7 @@ struct ChunkInit
    }
 };
 
-void recursive_copy_lowering(llvm::Type* type, std::vector<unsigned long long> gepi_idxs, llvm::Value* load_ptr, llvm::Value* store_ptr, llvm::LoadInst* load_inst, llvm::StoreInst* store_inst, unsigned long long fitting)
+void recursive_copy_lowering(llvm::Type* type, std::vector<unsigned long long> gepi_idxs, llvm::Value* load_ptr, llvm::Value* store_ptr, llvm::Instruction* load_inst, llvm::Instruction* store_inst, unsigned long long fitting)
 {
    if(fitting > 1)
    {
@@ -807,10 +807,23 @@ bool bitcast_vector_removal(llvm::Function& function)
    return !sequential_access_vec.empty();
 }
 
+void implement_copy(llvm::Type *ty, unsigned long size_to_be_copied, llvm::Value *load_val, llvm::Value* store_val, llvm::Instruction *inst) {
+   unsigned long ty_size = inst->getModule()->getDataLayout().getTypeSizeInBits(ty) / 8;
+
+   double fitting = size_to_be_copied / ty_size;
+   std::vector<unsigned long long> gepi_idxs = std::vector<unsigned long long>();
+   if(fitting == 1)
+   {
+      gepi_idxs.push_back(0);
+   }
+   recursive_copy_lowering(ty, gepi_idxs, load_val, store_val, inst, inst, fitting);
+}
+
 bool remove_lifetime(llvm::Function& function)
 {
    std::vector<llvm::Instruction*> intrinsic_to_remove;
 
+   unsigned long memcpy_count = 0;
    for(llvm::BasicBlock& bb : function)
    {
       for(llvm::Instruction& i : bb)
@@ -825,6 +838,20 @@ bool remove_lifetime(llvm::Function& function)
                if (called_function->getIntrinsicID() == llvm::Intrinsic::ID::lifetime_end) {
                   intrinsic_to_remove.push_back(call_inst);
                }
+               if (called_function->getIntrinsicID() == llvm::Intrinsic::ID::memcpy) {
+                  if (llvm::BitCastOperator *src_op = llvm::dyn_cast<llvm::BitCastOperator>(call_inst->getOperand(0))) {
+                     if (llvm::BitCastOperator *dst_op = llvm::dyn_cast<llvm::BitCastOperator>(call_inst->getOperand(1))) {
+                        if (src_op->getSrcTy() == dst_op->getSrcTy()) {
+                           llvm::Type *ty = src_op->getSrcTy()->getPointerElementType();
+
+                           unsigned long size = function.getParent()->getDataLayout().getTypeSizeInBits(ty) / 8;
+
+                           implement_copy(ty, size, src_op->getOperand(0), dst_op->getOperand(0), call_inst);
+                           intrinsic_to_remove.push_back(call_inst);
+                        }
+                     }
+                  }
+               }
             }
          }
       }
@@ -834,7 +861,7 @@ bool remove_lifetime(llvm::Function& function)
       instr->eraseFromParent();
    }
 
-   return !intrinsic_to_remove.empty();
+   return !intrinsic_to_remove.empty() or memcpy_count > 0;
 }
 
 bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
