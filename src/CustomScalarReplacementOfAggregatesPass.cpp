@@ -2710,8 +2710,39 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                         }
                         else
                         {
-                            llvm::errs() << "ERR Non constant idx on struct\n";
-                            exit(-1);
+                            llvm::Type *ty = (base_type_rec->getStructNumElements() > 0 ? base_type_rec->getStructElementType(0) : nullptr);
+
+                            for(unsigned long long i = 0; i < base_type_rec->getStructNumElements(); ++i)
+                            {
+                                if (ty != base_type_rec->getStructElementType(i)) {
+
+                                    ty = nullptr;
+                                }
+                            }
+
+                            if (ty) {
+                                idx_name += ".x";
+                                std::string mul_name = ptr_u->getUser()->getName().str() + ".mul" + idx_name;
+                                std::string add_name = mul_name + ".add";
+                                llvm::APInt sub_count_ap = llvm::APInt(64, CountSublements::count(ty), false);
+                                llvm::ConstantInt* sub_count_ci = llvm::ConstantInt::get(base_address->getContext(), sub_count_ap);
+
+                                if(idx_val->getType()->isIntegerTy(32))
+                                {
+                                    llvm::Type* int64_ty = llvm::Type::getInt64Ty(user_inst->getContext());
+                                    std::string sext_name = mul_name + ".sext";
+                                    idx_val = llvm::SExtInst::Create(llvm::Instruction::CastOps::SExt, idx_val, int64_ty, sext_name, user_inst);
+                                }
+                                llvm::BinaryOperator* mul = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Mul, sub_count_ci, idx_val, mul_name, user_inst);
+                                idx_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, idx_sum, mul, add_name, user_inst);
+
+                                base_type_rec = ty;
+                            } else {
+                                ptr_u->get()->dump();
+                                ptr_u->getUser()->dump();
+                                llvm::errs() << "ERR Non constant idx on struct\n";
+                                exit(-1);
+                            }
                         }
                     }
                     else if(base_type_rec->isArrayTy())
