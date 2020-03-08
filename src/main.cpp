@@ -1,9 +1,9 @@
 #include <CustomScalarReplacementOfAggregatesPass.hpp>
+#include <ExpandMemOpsPass.hpp>
 #include <GepiCanonicalizationPass.hpp>
 #include <PrintModulePass.hpp>
 #include <iostream>
 #include <sys/time.h>
-#include <ExpandMemOpsPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -82,21 +82,21 @@ int main(int argc, char** argv)
    {
       llvm::legacy::PassManager* passManager = new llvm::legacy::PassManager();
       llvm::TargetIRAnalysis TIRA = llvm::TargetIRAnalysis();
-/*
-      // Insert -O3 in chain
-      {
-         passManager->add(llvm::createVerifierPass());
-         llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 1;
-         passManagerBuilder.DisableUnrollLoops = true;
-         passManagerBuilder.BBVectorize = false;
-         passManagerBuilder.LoopVectorize = false;
-         passManagerBuilder.SLPVectorize = false;
-         /// passManagerBuilder.populateModulePassManager(*passManager);
-      }
+      /*
+            // Insert -O3 in chain
+            {
+               passManager->add(llvm::createVerifierPass());
+               llvm::PassManagerBuilder passManagerBuilder;
+               passManagerBuilder.OptLevel = 1;
+               passManagerBuilder.DisableUnrollLoops = true;
+               passManagerBuilder.BBVectorize = false;
+               passManagerBuilder.LoopVectorize = false;
+               passManagerBuilder.SLPVectorize = false;
+               /// passManagerBuilder.populateModulePassManager(*passManager);
+            }
 
-      passManager->add(llvm::createPromoteMemoryToRegisterPass());
-*/
+            passManager->add(llvm::createPromoteMemoryToRegisterPass());
+      */
       passManager->add(createPrintModulePass("./f1_first.ll"));
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
