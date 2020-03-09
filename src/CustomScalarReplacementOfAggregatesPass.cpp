@@ -406,7 +406,11 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
          for(llvm::Use& use : gep_op->uses())
          {
             bool ptr_exp = check_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, chain_has_all_constant_indices, call_trace);
-            ret = ret and ptr_exp;
+            ret = ptr_exp and ret;
+
+            if (!ptr_exp) {
+               llvm::errs() << get_val_string(use.get()) << " in " << get_val_string(use.getUser()) << " cannot be expanded\n";
+            }
          }
 
          return ret;
@@ -418,10 +422,17 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
    }
    else if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(ptr_use.getUser()))
    {
+      if (ptr_use.getOperandNo() != load_inst->getPointerOperandIndex()) {
+          llvm::errs() << get_val_string(load_inst) << " cannot be expanded\n";
+      }
+
       return ptr_use.getOperandNo() == load_inst->getPointerOperandIndex();
    }
    else if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_use.getUser()))
    {
+      if (ptr_use.getOperandNo() != store_inst->getPointerOperandIndex()) {
+         llvm::errs() << get_val_string(store_inst) << " cannot be expanded\n";
+      }
       return ptr_use.getOperandNo() == store_inst->getPointerOperandIndex();
    }
    else if(llvm::isa<llvm::CallInst>(ptr_use.getUser()) || llvm::isa<llvm::InvokeInst>(ptr_use.getUser()))
@@ -470,11 +481,11 @@ bool check_ptr_expandability(llvm::Use& ptr_use, llvm::Value* base_ptr, std::map
          for(llvm::Use& use : ptr_arg->uses())
          {
             bool op_exp = check_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, true, call_trace);
-            ret = ret and op_exp;
+            ret = op_exp and ret;
 
             if(!op_exp)
             {
-               llvm::errs() << "WAR: Operand #" << ptr_use.getOperandNo() << "  of " << get_val_string(ptr_use.getUser()) << " cannot expand because of " << get_val_string(ptr_use.get()) << "\n";
+               llvm::errs() << "WAR: Operand #" << ptr_use.getOperandNo() << "  of " << get_val_string(ptr_use.getUser()) << " cannot expand\n";
             }
          }
          call_trace.pop_back();

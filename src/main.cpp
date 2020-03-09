@@ -16,6 +16,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include "llvm/IR/Verifier.h"
 
@@ -97,6 +98,7 @@ int main(int argc, char** argv)
 
             passManager->add(llvm::createPromoteMemoryToRegisterPass());
       */
+      passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
@@ -117,7 +119,7 @@ int main(int argc, char** argv)
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 3;
+         passManagerBuilder.OptLevel = 0;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
@@ -141,7 +143,7 @@ int main(int argc, char** argv)
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 3;
+         passManagerBuilder.OptLevel = 0;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
