@@ -402,7 +402,7 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
       }
 
       for(llvm::PHINode* phi_node : two_op_phi_vec) {
-phi_node->dump();
+
          std::vector<llvm::GetElementPtrInst*> gepi_vector;
 
          llvm::Value* init_ptr = nullptr;    /// The initialization of the pointer iterator
@@ -413,14 +413,40 @@ phi_node->dump();
          llvm::Value* init_val = nullptr;
          llvm::Value* stop_val = nullptr;
 
-         llvm::Instruction *income_0 = llvm::dyn_cast<llvm::Instruction>(phi_node->getIncomingValue(0));
-         llvm::Instruction *income_1 = llvm::dyn_cast<llvm::Instruction>(phi_node->getIncomingValue(1));
-         if (income_0 == nullptr) income_0 = phi_node;
-         if (income_1 == nullptr) income_1 = phi_node;
-         llvm::Loop *income_0_loop = LI.getLoopFor(income_0->getParent());
-         llvm::Loop *income_1_loop = LI.getLoopFor(income_1->getParent());
-         bool income_0_in_loop = income_0_loop == loop; // TODO expand to subloops
-         bool income_1_in_loop = income_1_loop == loop; // TODO expand to subloops
+         bool income_0_in_loop = false;
+         {
+            llvm::Value *income_val = phi_node->getIncomingValue(0);
+            if (llvm::Instruction *income_inst = llvm::dyn_cast<llvm::Instruction>(income_val)) {
+               llvm::Loop *income_loop = LI.getLoopFor(income_inst->getParent());
+               income_0_in_loop = income_loop == loop;
+            } else {
+               while (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(income_val)) {
+                  income_val = gep_op->getPointerOperand();
+               }
+
+               if (llvm::Instruction *income_inst = llvm::dyn_cast<llvm::Instruction>(income_val)) {
+                  llvm::Loop *income_loop = LI.getLoopFor(income_inst->getParent());
+                  income_0_in_loop = income_loop == loop;
+               }
+            }
+         }
+         bool income_1_in_loop = false;
+         {
+            llvm::Value *income_val = phi_node->getIncomingValue(1);
+            if (llvm::Instruction *income_inst = llvm::dyn_cast<llvm::Instruction>(income_val)) {
+               llvm::Loop *income_loop = LI.getLoopFor(income_inst->getParent());
+               income_1_in_loop = income_loop == loop;
+            } else {
+               while (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(income_val)) {
+                  income_val = gep_op->getPointerOperand();
+               }
+
+               if (llvm::Instruction *income_inst = llvm::dyn_cast<llvm::Instruction>(income_val)) {
+                  llvm::Loop *income_loop = LI.getLoopFor(income_inst->getParent());
+                  income_1_in_loop = income_loop == loop;
+               }
+            }
+         }
 
          //llvm::GetElementPtrInst *indvar_gepi = nullptr;
          if (income_0_in_loop xor income_1_in_loop) {
@@ -431,12 +457,12 @@ phi_node->dump();
 
             if (income_0_in_loop) {
                //indvar_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(income_0);
-               init_ptr = income_1;
+               init_ptr = phi_node->getIncomingValue(1);
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(0)); // It shouldnt be null, will be replaced
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(1));
             } else {
                //indvar_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(income_1);
-               init_ptr = income_0;
+               init_ptr = phi_node->getIncomingValue(0);
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(0));
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(1)); // It shouldnt be null, will be replaced
             }
@@ -1125,6 +1151,7 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
    switch(optimization_selection)
    {
       case SROA_ptrIteratorSimplification: {
+         // Check CHStone adpcm for examples
          llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
          return ptr_iterator_simplification(function, LI);
       }
