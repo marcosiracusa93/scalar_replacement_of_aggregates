@@ -39,6 +39,7 @@
 
 #include <llvm/IR/Instructions.h>
 #include <llvm/Pass.h>
+#include <llvm/Analysis/LoopInfo.h>
 
 enum SROA_optimizations
 {
@@ -69,6 +70,7 @@ class GepiCanonicalizationPass : public llvm::FunctionPass
    void getAnalysisUsage(llvm::AnalysisUsage& AU) const override
    {
       AU.setPreservesCFG();
+      AU.addRequiredTransitive<llvm::LoopInfoWrapperPass>();
    }
 };
 

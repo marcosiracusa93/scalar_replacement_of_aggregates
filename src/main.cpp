@@ -99,7 +99,9 @@ int main(int argc, char** argv)
             passManager->add(llvm::createPromoteMemoryToRegisterPass());
       */
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
+      //passManager->add(llvm::createScalarizerPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
+      passManager->add(new llvm::LoopInfoWrapperPass());
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
