@@ -112,6 +112,7 @@ int main(int argc, char** argv)
       //passManager->add(llvm::createScalarizerPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
       passManager->add(new llvm::LoopInfoWrapperPass());
+      passManager->add(createGepiCanonicalIdxs());
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
@@ -141,6 +142,7 @@ int main(int argc, char** argv)
       }
 
       passManager->add(createPrintModulePass("./f4_pre_canonicalization.ll"));
+      passManager->add(createGepiCanonicalIdxs());
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
