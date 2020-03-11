@@ -112,11 +112,12 @@ int main(int argc, char** argv)
       //passManager->add(llvm::createScalarizerPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
       passManager->add(new llvm::LoopInfoWrapperPass());
-      //passManager->add(createRemoveIntrinsicPass());
-      //passManager->add(llvm::createExpandMemOpsPass());
+      passManager->add(createRemoveIntrinsicPass());
+      passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
-      //passManager->add(createBitcastVectorRemovalPass());
-      //passManager->add(createChunkOperationsLoweringPass());
+      passManager->add(createChunkOperationsLoweringPass());
+      passManager->add(createBitcastVectorRemovalPass());
+      passManager->add(createSelectLoweringPass());
       passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f2_post_canonicalization.ll"));
 
@@ -145,6 +146,7 @@ int main(int argc, char** argv)
       passManager->add(createPtrIteratorSimplificationPass());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
+      passManager->add(createSelectLoweringPass());
       passManager->add(createPrintModulePass("./f5_post_canonicalization.ll"));
 
       passManager->add(createSROADisaggregationPass(args_info.target_function));

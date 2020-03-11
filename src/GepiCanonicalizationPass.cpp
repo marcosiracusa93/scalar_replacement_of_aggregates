@@ -143,6 +143,11 @@ void recursive_copy_lowering(llvm::Type* type, std::vector<unsigned long long> g
 
       llvm::LoadInst* lowered_load = new llvm::LoadInst(load_gep_inst, "ccload." + gepi_name, load_inst);
       llvm::StoreInst* lowered_store = new llvm::StoreInst(lowered_load, store_gep_inst, store_inst);
+
+      llvm::errs() << "Lowered load gepi: "; load_gep_inst->dump();
+      llvm::errs() << "Lowered load inst: "; lowered_load->dump();
+      llvm::errs() << "Lowered store gepi: "; store_gep_inst->dump();
+      llvm::errs() << "Lowered store inst: "; lowered_store->dump();
    }
 }
 
@@ -891,6 +896,7 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 
 bool chunk_operations_lowering(llvm::Function& function)
 {
+   // See for example the mpeg2 example, motion_vertical_field_select[i][j] = inmvfs[i][j];
    const llvm::DataLayout& DL = function.getParent()->getDataLayout();
 
    if(!DL.isLittleEndian())
@@ -1222,6 +1228,69 @@ bool remove_lifetime(llvm::Function& function)
    return !intrinsic_to_remove.empty() or memcpy_count > 0;
 }
 
+bool select_lowering(llvm::Function& function)
+{
+   std::vector<llvm::Instruction*> inst_to_remove;
+
+   for (llvm::BasicBlock &bb : function) {
+      for (llvm::Instruction &i : bb) {
+         if (llvm::SelectInst *select_inst = llvm::dyn_cast<llvm::SelectInst>(&i)) {
+            llvm::Type *selected_type = select_inst->getTrueValue()->getType();
+            if (selected_type->isPointerTy()) {
+               if (select_inst->hasOneUse()) {
+                  if (llvm::GetElementPtrInst *gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(select_inst->use_begin()->getUser())) {
+                     if (gepi->hasOneUse() and (llvm::isa<llvm::LoadInst>(gepi->use_begin()->getUser()))) {
+                        std::vector<llvm::Value *> gepi_idxs;
+                        for (auto idx = gepi->idx_begin(); idx < gepi->idx_end(); ++idx) {
+                           gepi_idxs.push_back(idx->get());
+                        }
+                        llvm::GetElementPtrInst *true_gepi = llvm::GetElementPtrInst::CreateInBounds(nullptr,
+                                                                                             select_inst->getTrueValue(),
+                                                                                             gepi_idxs,
+                                                                                             gepi->getName().str() +
+                                                                                             ".true",
+                                                                                             select_inst);
+                        llvm::GetElementPtrInst *false_gepi = llvm::GetElementPtrInst::CreateInBounds(nullptr,
+                                                                                              select_inst->getFalseValue(),
+                                                                                              gepi_idxs,
+                                                                                              gepi->getName().str() +
+                                                                                              ".false",
+                                                                                              select_inst);
+
+                        if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(gepi->use_begin()->getUser())) {
+                           llvm::LoadInst *true_load = new llvm::LoadInst(true_gepi,
+                                                                         load_inst->getName().str() + ".lowered.true",
+                                                                         select_inst);
+                           llvm::LoadInst *false_load = new llvm::LoadInst(false_gepi,
+                                                                          load_inst->getName().str() + ".lowered.false",
+                                                                          select_inst);
+                           llvm::SelectInst *new_select_inst = llvm::SelectInst::Create(select_inst->getCondition(),
+                                                                                        true_load, false_load,
+                                                                                        select_inst->getName().str() +
+                                                                                        ".lowered",
+                                                                                        select_inst);
+
+                           load_inst->replaceAllUsesWith(new_select_inst);
+
+                           inst_to_remove.push_back(load_inst);
+                           inst_to_remove.push_back(gepi);
+                           inst_to_remove.push_back(select_inst);
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   for (llvm::Instruction *inst : inst_to_remove) {
+      inst->eraseFromParent();
+   }
+
+   return inst_to_remove.size() > 0;
+}
+
 bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
 {
    switch(optimization_selection)
@@ -1237,6 +1306,8 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
          return bitcast_vector_removal(function);
       case SROA_removeLifetime:
          return remove_lifetime(function);
+      case SROA_select_lowering:
+         return select_lowering(function);
       default:
          llvm::errs() << "ERR No optimization found\n";
          exit(-1);
@@ -1262,4 +1333,9 @@ GepiCanonicalizationPass* createBitcastVectorRemovalPass()
 GepiCanonicalizationPass* createRemoveIntrinsicPass()
 {
    return new GepiCanonicalizationPass(SROA_removeLifetime);
+}
+
+GepiCanonicalizationPass* createSelectLoweringPass()
+{
+   return new GepiCanonicalizationPass(SROA_select_lowering);
 }

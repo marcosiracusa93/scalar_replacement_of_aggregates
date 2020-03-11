@@ -62,7 +62,7 @@
 
 #define DEBUG_CSROA
 
-static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold", llvm::cl::Hidden, llvm::cl::init(64), llvm::cl::desc("Max amount of scalar types contained in a type for allowing disaggregation"));
+static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold", llvm::cl::Hidden, llvm::cl::init(128), llvm::cl::desc("Max amount of scalar types contained in a type for allowing disaggregation"));
 
 static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(512), llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
