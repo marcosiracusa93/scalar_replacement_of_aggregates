@@ -64,7 +64,7 @@
 
 static llvm::cl::opt<uint32_t> MaxNumScalarTypes("csroa-expanded-scalar-threshold", llvm::cl::Hidden, llvm::cl::init(64), llvm::cl::desc("Max amount of scalar types contained in a type for allowing disaggregation"));
 
-static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(256), llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
+static llvm::cl::opt<uint32_t> MaxTypeByteSize("csroa-type-byte-size", llvm::cl::Hidden, llvm::cl::init(512), llvm::cl::desc("Max type size (in bytes) allowed for disaggregation"));
 
 static llvm::cl::opt<uint32_t> CSROAInlineThreshold("csroa-inline-threshold", llvm::cl::Hidden, llvm::cl::init(200), llvm::cl::desc("number of maximum statements of the single called function after the inline is applied"));
 
@@ -3794,9 +3794,45 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
       erase_in_fixed.insert(function);
    }
 
+   std::vector<llvm::AllocaInst*> allocas_to_del;
+
+   for(llvm::Function* new_function : new_functions_set)
+   {
+      for(llvm::BasicBlock& bb : *new_function)
+      {
+         for(llvm::Instruction& i : bb)
+         {
+            if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i))
+            {
+               if(alloca_inst->getNumUses() == 0)
+               {
+                  allocas_to_del.push_back(alloca_inst);
+               }
+            }
+            else
+            {
+               break;
+            }
+         }
+      }
+   }
+
+   for(llvm::AllocaInst* alloca_to_del : allocas_to_del)
+   {
+      alloca_to_del->eraseFromParent();
+   }
+
+   for(auto r_it = erase_in_fixed.rbegin(); r_it != erase_in_fixed.rend(); ++r_it)
+   {
+      llvm::Function* f = *r_it;
+      f->eraseFromParent();
+   }
+
+   std::vector<llvm::GlobalVariable *> globals_to_del;
+
    for(llvm::GlobalVariable& g_var : module.globals())
    {
-      if(!g_var.getType()->isAggregateType())
+      if(!g_var.getType()->getPointerElementType()->isAggregateType())
       {
          if(g_var.getInitializer() != nullptr)
          {
@@ -3837,47 +3873,15 @@ void cleanup(llvm::Module& module, const std::map<llvm::Function*, llvm::Functio
             }
          }
       }
-      else
+
+      if(g_var.getNumUses() == 0)
       {
-         if(g_var.getNumUses() == 0)
-         {
-            g_var.eraseFromParent();
-         }
+         globals_to_del.push_back(&g_var);
       }
    }
 
-   std::vector<llvm::AllocaInst*> allocas_to_del;
-
-   for(llvm::Function* new_function : new_functions_set)
-   {
-      for(llvm::BasicBlock& bb : *new_function)
-      {
-         for(llvm::Instruction& i : bb)
-         {
-            if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i))
-            {
-               if(alloca_inst->getNumUses() == 0)
-               {
-                  allocas_to_del.push_back(alloca_inst);
-               }
-            }
-            else
-            {
-               break;
-            }
-         }
-      }
-   }
-
-   for(llvm::AllocaInst* alloca_to_del : allocas_to_del)
-   {
-      alloca_to_del->eraseFromParent();
-   }
-
-   for(auto r_it = erase_in_fixed.rbegin(); r_it != erase_in_fixed.rend(); ++r_it)
-   {
-      llvm::Function* f = *r_it;
-      f->eraseFromParent();
+   for(llvm::GlobalVariable *g_var : globals_to_del) {
+      g_var->eraseFromParent();
    }
 
 } // end cleanup

@@ -366,9 +366,10 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
          std::vector<llvm::Value*> new_gepi_idx_vec;
          new_gepi_idx_vec.push_back(new_phi);
 
-         std::string new_gepi_name = new_phi->getName().str() + ".gepi";
+         std::string new_gepi_name = new_phi->getName().str() + ".phigepi";
          // llvm::Type* gepi_type = llvm::cast<llvm::PointerType>(init_ptr->getType()->getScalarType())->getElementType();
-         llvm::GetElementPtrInst* new_gepi = llvm::GetElementPtrInst::Create(nullptr, ptr_iter_init, new_gepi_idx_vec, new_gepi_name, phi_node);
+         llvm::GetElementPtrInst* new_gepi = llvm::GetElementPtrInst::Create(nullptr, ptr_iter_init, new_gepi_idx_vec, new_gepi_name);
+         new_gepi->insertAfter(get_last_phi(phi_node->getParent()));
          phi_node->replaceAllUsesWith(new_gepi);
 
          for (llvm::Use &use : new_gepi->uses()) {
@@ -601,8 +602,6 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
          }
       }
    }
-
-
 
    unsigned long num_deletion = 0;
    std::set<llvm::Instruction*> remove_set = inst_to_remove;
