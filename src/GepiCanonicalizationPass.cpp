@@ -288,13 +288,14 @@ void lower_chunk_init(const ChunkInit& chunk_init)
    }
 }
 
-void gepis_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instructions along the path
-                            llvm::Value *ptr_iter_init, /// pointer iterator initialization
-                            llvm::Value *int_ind_var, /// integer iterator
-                            llvm::PHINode *first_phi_node,
-                            llvm::PHINode *new_phi_node,
-                            std::set<llvm::CmpInst*> &encountered_cmps,
-                            std::set<llvm::Instruction*> &inst_to_remove) {
+void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instructions along the path
+                               llvm::Value *ptr_iter_init, /// pointer iterator initialization
+                               llvm::Value *int_ind_var, /// integer iterator
+                               llvm::PHINode *first_phi_node,
+                               llvm::PHINode *new_phi_node,
+                               std::map<llvm::CmpInst *, std::vector<llvm::Use *>> &encountered_cmps,
+                               std::set<llvm::PHINode *> &encountered_phis,
+                               std::set<llvm::Instruction *> &inst_to_remove) {
 
    llvm::User *user = iter_use.getUser();
    unsigned long op_num = iter_use.getOperandNo();
@@ -343,14 +344,45 @@ void gepis_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruction
 
       for (llvm::Use &use : new_gepi->uses()) {
          llvm::errs() << "Replaced use in user: "; use.getUser()->dump();
-         gepis_canonicalization(use, ptr_iter_init, new_idx, first_phi_node, new_phi_node, encountered_cmps, inst_to_remove);
+         iterator_canonicalization(use, ptr_iter_init, new_idx, first_phi_node, new_phi_node, encountered_cmps,
+                                   encountered_phis, inst_to_remove);
       }
 
       inst_to_remove.insert(gepi_inst);
       return;
 
-   }
+   } else if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(user)) {
+      if (phi_node == first_phi_node) {
+         new_phi_node->setOperand(op_num, int_ind_var);
+         llvm::errs() << "Setting init PHI: "; new_phi_node->dump();
+         return;
+      } else {
+         llvm::errs() << "Expanding conditional PHI: "; new_phi_node->dump();
+         llvm::PHINode *new_phi = llvm::PHINode::Create(int_ind_var->getType(), 2, phi_node->getName().str() + ".phi", phi_node);
+         new_phi->addIncoming(llvm::ConstantInt::get(int_ind_var->getType(), 0, true), phi_node->getIncomingBlock(0));
+         new_phi->addIncoming(int_ind_var, phi_node->getIncomingBlock(1));
+         inst_to_remove.insert(phi_node);
 
+         std::vector<llvm::Value*> new_gepi_idx_vec;
+         new_gepi_idx_vec.push_back(new_phi);
+
+         std::string new_gepi_name = new_phi->getName().str() + ".gepi";
+         // llvm::Type* gepi_type = llvm::cast<llvm::PointerType>(init_ptr->getType()->getScalarType())->getElementType();
+         llvm::GetElementPtrInst* new_gepi = llvm::GetElementPtrInst::Create(nullptr, ptr_iter_init, new_gepi_idx_vec, new_gepi_name, phi_node);
+         phi_node->replaceAllUsesWith(new_gepi);
+
+         for (llvm::Use &use : new_gepi->uses()) {
+            llvm::errs() << "Replaced use in user: "; use.getUser()->dump();
+            iterator_canonicalization(use, ptr_iter_init, new_phi, first_phi_node, new_phi_node, encountered_cmps,
+                                      encountered_phis, inst_to_remove);
+         }
+         return;
+      }
+   } else if (llvm::CmpInst *cmp_inst = llvm::dyn_cast<llvm::CmpInst>(user)) {
+      encountered_cmps[cmp_inst].push_back(&iter_use);
+      return;
+   }
+/*
    llvm::Instruction *inst_before = llvm::dyn_cast<llvm::Instruction>(user);
    if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(user)) {
       if (phi_node == first_phi_node) {
@@ -359,14 +391,15 @@ void gepis_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruction
          return;
       }
    }
-
+*/
    return ;
 }
 
 bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 {
    std::set<llvm::Instruction*> inst_to_remove;
-   std::set<llvm::CmpInst*> encountered_cmps;
+   std::map<llvm::CmpInst *, std::vector<llvm::Use *>> encountered_cmps;
+   std::set<llvm::PHINode*> encountered_phis;
    unsigned long long transformation_count = 0;
 
    for (const llvm::Loop *loop : LI) {
@@ -400,11 +433,10 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
       }
 
       for(llvm::PHINode* phi_node : two_op_phi_vec) {
-
          std::vector<llvm::GetElementPtrInst*> gepi_vector;
 
          llvm::Value* init_ptr = nullptr;    /// The initialization of the pointer iterator
-         llvm::Value* stop_ptr = nullptr;    /// The value for which the loop exits if the pointer is the indvar
+         llvm::Value* other_ptr = nullptr;    /// The other value of the phi node
 
          llvm::CmpInst* cmp_inst = nullptr;  /// The cmp inst in case the pointer is the indvar
          llvm::Value* base_ptr = nullptr;
@@ -455,25 +487,39 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 
             if (income_0_in_loop) {
                //indvar_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(income_0);
-               stop_ptr = phi_node->getIncomingValue(0);
+               other_ptr = phi_node->getIncomingValue(0);
                init_ptr = phi_node->getIncomingValue(1);
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(0)); // It shouldnt be null, will be replaced
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(1));
             } else {
                //indvar_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(income_1);
                init_ptr = phi_node->getIncomingValue(0);
-               stop_ptr = phi_node->getIncomingValue(1);
+               other_ptr = phi_node->getIncomingValue(1);
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(0));
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(1)); // It shouldnt be null, will be replaced
             }
 
             {
-               //std::vector<llvm::GEPOperator*> gep_vec;
-               llvm::Value *gep_iter = stop_ptr;
-               while (llvm::GEPOperator *gep_step = llvm::dyn_cast<llvm::GEPOperator>(gep_iter)) {
-                  gep_iter = gep_step->getPointerOperand();
-                  //gep_vec.push_back(gep_step);
+               llvm::Value *iter_rec = other_ptr;
+
+               do {
+                  if (llvm::GetElementPtrInst *gep_step = llvm::dyn_cast<llvm::GetElementPtrInst>(iter_rec)) {
+                     iter_rec = gep_step->getPointerOperand();
+                  } else if (llvm::PHINode *phi_step = llvm::dyn_cast<llvm::PHINode>(iter_rec)) {
+                     if (phi_step != phi_node and phi_step->getIncomingValue(0) == init_ptr) {
+                        iter_rec = phi_step->getIncomingValue(1);
+                     } else {
+                        break;
+                     }
+                  } else {
+                     break;
+                  }
+               } while(true);
+
+               if (iter_rec != phi_node) {
+                  continue;
                }
+
 /*
                signed long gepi_offset = 0;
                bool all_constant_idxs = true;
@@ -490,10 +536,6 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
                   llvm::errs() << "AP: " << gepi_offset << "\n";
                }
 */
-
-               if (gep_iter != init_ptr) {
-                  continue;
-               }
             }
 
             std::vector<llvm::Value*> gepi_idx_vec;
@@ -503,7 +545,7 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
                add_inst->getType()->dump();
                add_inst = llvm::SExtInst::Create(llvm::CastInst::SExt, add_inst, new_gepi_idx_vec.at(0)->getType(), add_inst_name + ".sext", gepi_inst);
             }
-             */
+            */
             gepi_idx_vec.push_back(llvm::ConstantInt::get(idx_ty, 0, true));
             std::string new_gepi_name = phi_node->getName().str() + ".firstgepi";
             // llvm::Type* gepi_type = llvm::cast<llvm::PointerType>(init_ptr->getType()->getScalarType())->getElementType();
@@ -520,7 +562,8 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
             first_gepi->setOperand(0, phi_node);
 
             for (llvm::Use &use : phi_node->uses()) {
-               gepis_canonicalization(use, init_ptr, new_phi_node, phi_node, new_phi_node, encountered_cmps, inst_to_remove);
+               iterator_canonicalization(use, init_ptr, new_phi_node, phi_node, new_phi_node, encountered_cmps,
+                                         encountered_phis, inst_to_remove);
             }
 
             inst_to_remove.insert(phi_node);
@@ -530,8 +573,11 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
       }
    }
 
-   for (llvm::CmpInst *cmp_inst : encountered_cmps) {
-      if (cmp_inst->getType()->isPointerTy()) {
+   for (auto &cmp_it : encountered_cmps) {
+      llvm::CmpInst* cmp_inst = cmp_it.first;
+      std::vector<llvm::Use*> &use_vec = cmp_it.second;
+
+      if (cmp_inst->getOperand(0)->getType()->isPointerTy()) {
          llvm::Value *op_0 = cmp_inst->getOperand(0);
          llvm::Value *op_1 = cmp_inst->getOperand(1);
 
@@ -549,6 +595,7 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
                                                                       cmp_inst);
                   cmp_inst->replaceAllUsesWith(new_cmp_inst);
                   inst_to_remove.insert(cmp_inst);
+                  transformation_count++;
                }
             }
          }
