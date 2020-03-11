@@ -1669,6 +1669,7 @@ void expand_alloca(llvm::AllocaInst* alloca_inst, const llvm::DataLayout& DL, st
 #endif
                                                                   new_alloca_name, alloca_inst);
 
+         //new_alloca_inst->setAlignment(DL.getTypeSizeInBits(new_alloca_inst->getAllocatedType())/8);
          exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
 
          expand_alloca(new_alloca_inst, DL, exp_allocas_map);
@@ -1687,6 +1688,7 @@ void expand_alloca(llvm::AllocaInst* alloca_inst, const llvm::DataLayout& DL, st
 #endif
                                                                   new_alloca_name, alloca_inst);
 
+         //new_alloca_inst->setAlignment(DL.getTypeSizeInBits(new_alloca_inst->getAllocatedType())/8);
          exp_allocas_map[alloca_inst].push_back(new_alloca_inst);
 
          expand_alloca(new_alloca_inst, DL, exp_allocas_map);
@@ -1759,6 +1761,7 @@ void expand_globals(llvm::Module* module, const llvm::DataLayout& DL, std::map<l
             llvm::GlobalVariable* new_g_var = new llvm::GlobalVariable(*g_var->getParent(), element, g_var->isConstant(), g_var->getLinkage(), initializer, new_global_name, g_var);
 
             new_g_var->copyAttributesFrom(g_var);
+            //new_g_var->setAlignment(DL.getTypeSizeInBits(new_g_var->getType()->getPointerElementType())/8);
 
             exp_globals_map[g_var].push_back(new_g_var);
             globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);
@@ -1779,6 +1782,7 @@ void expand_globals(llvm::Module* module, const llvm::DataLayout& DL, std::map<l
             }
             llvm::GlobalVariable* new_g_var = new llvm::GlobalVariable(*g_var->getParent(), element, g_var->isConstant(), g_var->getLinkage(), initializer, new_global_name, g_var);
             new_g_var->copyAttributesFrom(g_var);
+            //new_g_var->setAlignment(DL.getTypeSizeInBits(new_g_var->getType()->getPointerElementType())/8);
 
             exp_globals_map[g_var].push_back(new_g_var);
             globals_to_exp.insert(globals_to_exp.begin() + g_idx + 1, new_g_var);

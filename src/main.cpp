@@ -4,6 +4,7 @@
 #include <PrintModulePass.hpp>
 #include <iostream>
 #include <sys/time.h>
+#include <LoopUnrollPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -98,15 +99,24 @@ int main(int argc, char** argv)
 
             passManager->add(llvm::createPromoteMemoryToRegisterPass());
       */
+/*
+      passManager->add(llvm::createLoopRotatePass());
+      passManager->add(new llvm::ScalarEvolutionWrapperPass());
+      passManager->add(new llvm::LoopInfoWrapperPass());
+      passManager->add(new llvm::DominatorTreeWrapperPass());
+      passManager->add(new llvm::AssumptionCacheTracker());
+      passManager->add(new llvm::TargetTransformInfoWrapperPass());
+      passManager->add(createMyLoopUnrollPass());
+*/
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       //passManager->add(llvm::createScalarizerPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
       passManager->add(new llvm::LoopInfoWrapperPass());
-      passManager->add(createRemoveIntrinsicPass());
-      passManager->add(llvm::createExpandMemOpsPass());
+      //passManager->add(createRemoveIntrinsicPass());
+      //passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
-      passManager->add(createBitcastVectorRemovalPass());
-      passManager->add(createChunkOperationsLoweringPass());
+      //passManager->add(createBitcastVectorRemovalPass());
+      //passManager->add(createChunkOperationsLoweringPass());
       passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f2_post_canonicalization.ll"));
 

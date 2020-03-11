@@ -39,6 +39,7 @@
 #include <llvm/IR/Dominators.h>
 #include <llvm/IR/Operator.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
 
 llvm::PHINode* get_last_phi(llvm::BasicBlock* bb)
 {
@@ -364,10 +365,6 @@ void gepis_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruction
 
 bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 {
-   if (function.getName() == "decode") {
-      function.dump();
-   }
-
    std::set<llvm::Instruction*> inst_to_remove;
    std::set<llvm::CmpInst*> encountered_cmps;
    unsigned long long transformation_count = 0;
@@ -384,14 +381,15 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
          {
             if(phi_node->getType()->isPointerTy())
             {
-               switch(phi_node->getNumOperands())
-               {
-                  case 1:
-                     one_op_phi_vec.push_back(phi_node);
-                     break;
-                  case 2:
-                     two_op_phi_vec.push_back(phi_node);
-                     break;
+               if (!phi_node->getType()->getPointerElementType()->isAggregateType()) {
+                  switch (phi_node->getNumOperands()) {
+                     case 1:
+                        one_op_phi_vec.push_back(phi_node);
+                        break;
+                     case 2:
+                        two_op_phi_vec.push_back(phi_node);
+                        break;
+                  }
                }
             }
          }
@@ -406,8 +404,8 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
          std::vector<llvm::GetElementPtrInst*> gepi_vector;
 
          llvm::Value* init_ptr = nullptr;    /// The initialization of the pointer iterator
-
          llvm::Value* stop_ptr = nullptr;    /// The value for which the loop exits if the pointer is the indvar
+
          llvm::CmpInst* cmp_inst = nullptr;  /// The cmp inst in case the pointer is the indvar
          llvm::Value* base_ptr = nullptr;
          llvm::Value* init_val = nullptr;
@@ -457,14 +455,45 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 
             if (income_0_in_loop) {
                //indvar_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(income_0);
+               stop_ptr = phi_node->getIncomingValue(0);
                init_ptr = phi_node->getIncomingValue(1);
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(0)); // It shouldnt be null, will be replaced
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(1));
             } else {
                //indvar_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(income_1);
                init_ptr = phi_node->getIncomingValue(0);
+               stop_ptr = phi_node->getIncomingValue(1);
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(0));
                new_phi_node->addIncoming(llvm::ConstantInt::get(idx_ty, 0, true), phi_node->getIncomingBlock(1)); // It shouldnt be null, will be replaced
+            }
+
+            {
+               //std::vector<llvm::GEPOperator*> gep_vec;
+               llvm::Value *gep_iter = stop_ptr;
+               while (llvm::GEPOperator *gep_step = llvm::dyn_cast<llvm::GEPOperator>(gep_iter)) {
+                  gep_iter = gep_step->getPointerOperand();
+                  //gep_vec.push_back(gep_step);
+               }
+/*
+               signed long gepi_offset = 0;
+               bool all_constant_idxs = true;
+               for (auto gep_it = gep_vec.rbegin(); gep_it != gep_vec.rend(); ++gep_it) {
+                  llvm::GEPOperator *gep_op = *gep_it;
+                  unsigned int bw = function.getParent()->getDataLayout().getPointerSizeInBits(gep_op->getPointerAddressSpace());
+                  llvm::APInt ap_offset = llvm::APInt(bw, 0);
+                  gep_op->accumulateConstantOffset(function.getParent()->getDataLayout(), ap_offset);
+                  signed long offset_byte = (signed long)ap_offset.getSExtValue() / (signed long)(function.getParent()->getDataLayout().getTypeSizeInBits(phi_node->getType()->getPointerElementType()) / 8);
+                  gepi_offset += offset_byte;
+                  all_constant_idxs = all_constant_idxs and gep_op->hasAllConstantIndices();
+
+                  gep_op->dump();
+                  llvm::errs() << "AP: " << gepi_offset << "\n";
+               }
+*/
+
+               if (gep_iter != init_ptr) {
+                  continue;
+               }
             }
 
             std::vector<llvm::Value*> gepi_idx_vec;
@@ -488,8 +517,9 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
             llvm::errs() << "First GEPI: "; first_gepi->dump();
 
             phi_node->replaceAllUsesWith(first_gepi);
+            first_gepi->setOperand(0, phi_node);
 
-            for (llvm::Use &use : first_gepi->uses()) {
+            for (llvm::Use &use : phi_node->uses()) {
                gepis_canonicalization(use, init_ptr, new_phi_node, phi_node, new_phi_node, encountered_cmps, inst_to_remove);
             }
 
@@ -526,7 +556,7 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
    }
 
 
-/*
+
    unsigned long num_deletion = 0;
    std::set<llvm::Instruction*> remove_set = inst_to_remove;
    do {
@@ -546,9 +576,9 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 
       num_deletion = removed_set.size();
    } while (num_deletion > 0);
-*/
+
    for (llvm::Instruction *inst : inst_to_remove) {
-      inst->eraseFromParent();
+      //inst->eraseFromParent();
    }
 /*
    for(llvm::PHINode* phi_node : two_op_phi_vec)
