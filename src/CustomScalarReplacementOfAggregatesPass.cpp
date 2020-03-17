@@ -128,7 +128,8 @@ std::string getDemangled(const std::string& declname)
 class Utilities
 {
  public:
-   static void print_cfg(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& op_expandability_map,
+   static void print_cfg(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                         const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& op_expandability_map,
                          const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dimensions_map)
    {
       std::vector<llvm::Instruction*> call_trace;
@@ -141,8 +142,11 @@ class Utilities
    }
 
  private:
-   static void print_cfg_rec(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, llvm::Instruction* call_inst, const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& op_expandability_map,
-                             const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dimensions_map, std::vector<llvm::Instruction*>& call_trace)
+   static void print_cfg_rec(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                             llvm::Instruction* call_inst,
+                             const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& op_expandability_map,
+                             const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dimensions_map,
+                             std::vector<llvm::Instruction*>& call_trace)
    {
       for(unsigned long long d = 0; d < call_trace.size(); ++d)
       {
@@ -193,7 +197,7 @@ class Utilities
                   dim_str += std::to_string(d) + " ";
                }
             }
-            llvm::errs() << "      Op" << op.getOperandNo() << ":  E( " << exp_str << " )  D( " << dim_str << ")\n";
+            llvm::errs() << "      Op" << op.getOperandNo() << ":  E( " << exp_str << " )  D( " << dim_str <<  ")\n";
          }
       }
 
@@ -397,7 +401,8 @@ std::tuple<bool, double, double> CustomScalarReplacementOfAggregatesPass::get_pt
                                                                            std::map<std::pair<std::vector<llvm::Instruction *>, llvm::Use *>, std::tuple<bool, double, double>> &operands_expandability_map,
                                                                            std::map<llvm::Value *, llvm::Value *> &point_to_set_map,
                                                                            bool constant_access,
-                                                                           std::vector<llvm::Instruction *> &call_trace)
+                                                                           std::vector<llvm::Instruction *> &call_trace,
+                                                                           const std::map<llvm::Use*, std::tuple<bool, double, double>> &versioning_cost_map)
 {
    point_to_set_map.insert(std::make_pair(ptr_use.get(), base_ptr));
 
@@ -418,14 +423,15 @@ std::tuple<bool, double, double> CustomScalarReplacementOfAggregatesPass::get_pt
          }
 
          std::string msg = "";
-         std::tuple<bool, double, double> exp_ret = compute_gepi_cost(gep_op, msg);
+         std::tuple<bool, double, double> exp_ret = compute_gepi_expandability_profit(gep_op, msg);
          for(llvm::Use& use : gep_op->uses())
          {
             const std::tuple<bool, double, double> use_exp = get_ptr_expandability(use, base_ptr,
                                                                                    operands_expandability_map,
                                                                                    point_to_set_map,
                                                                                    chain_has_all_constant_indices,
-                                                                                   call_trace);
+                                                                                   call_trace,
+                                                                                   versioning_cost_map);
             merge_expandability(exp_ret, use_exp);
 
             if (!std::get<0>(use_exp)) {
@@ -498,12 +504,24 @@ std::tuple<bool, double, double> CustomScalarReplacementOfAggregatesPass::get_pt
 
          std::tuple<bool, double, double> exp_ret = std::make_tuple(true, 0.0, 0.0);
 
+         std::tuple<bool, double, double> v_cost = std::make_tuple(true, 0.0, 0.0);
+         auto v_it = versioning_cost_map.find(&ptr_use);
+         if (v_it != versioning_cost_map.end()) {
+            v_cost = v_it->second;
+         }
+         merge_expandability(exp_ret, v_cost);
+
+
          call_trace.push_back(call_inst);
          for(llvm::Use& use : ptr_arg->uses())
          {
-            const std::tuple<bool, double, double> use_exp = get_ptr_expandability(use, base_ptr,
+            const std::tuple<bool, double, double> use_exp = get_ptr_expandability(use,
+                                                                                   base_ptr,
                                                                                    operands_expandability_map,
-                                                                                   point_to_set_map, true, call_trace);
+                                                                                   point_to_set_map,
+                                                                                   true,
+                                                                                   call_trace,
+                                                                                   versioning_cost_map);
             merge_expandability(exp_ret, use_exp);
 
             if (!std::get<0>(use_exp))
@@ -535,7 +553,7 @@ std::tuple<bool, double, double> CustomScalarReplacementOfAggregatesPass::get_pt
    {
       for(llvm::Use& use : bitcast_op->uses())
       {
-         get_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, constant_access, call_trace);
+         get_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map, constant_access, call_trace, versioning_cost_map);
          if(llvm::isa<llvm::CallInst>(use.getUser()) || llvm::isa<llvm::InvokeInst>(use.getUser()))
          {
             llvm::Instruction* call_inst = llvm::dyn_cast<llvm::Instruction>(use.getUser());
@@ -561,9 +579,16 @@ std::tuple<bool, double, double> CustomScalarReplacementOfAggregatesPass::get_pt
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_allocas_expandability_rec(llvm::Instruction* call_inst, llvm::Function* kernel_function, std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map, std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
-                                                                                std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map, std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
-                                                                                std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, const llvm::DataLayout& DL, std::vector<llvm::Instruction*>& call_trace)
+void CustomScalarReplacementOfAggregatesPass::compute_allocas_expandability_rec(llvm::Instruction* call_inst,
+                                                                                llvm::Function* kernel_function,
+                                                                                std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map,
+                                                                                std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
+                                                                                std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map,
+                                                                                std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
+                                                                                std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                                                                                const llvm::DataLayout& DL,
+                                                                                std::vector<llvm::Instruction*>& call_trace,
+                                                                                const std::map<llvm::Use*, std::tuple<bool, double, double>> &versioning_cost)
 {
    call_trace.push_back(call_inst);
 
@@ -589,13 +614,16 @@ void CustomScalarReplacementOfAggregatesPass::compute_allocas_expandability_rec(
             {
                std::string size_msg = "";
 
-               std::tuple<bool, double, double> expandability = compute_alloca_expandability_cost(alloca_inst, DL, size_msg);
+               std::tuple<bool, double, double> expandability = compute_alloca_expandability_profit(alloca_inst, DL,
+                                                                                                    size_msg);
                for(llvm::Use& use : alloca_inst->uses())
                {
                   const std::tuple<bool, double, double> use_exp = get_ptr_expandability(use, alloca_inst,
                                                                                          operands_expandability_map,
-                                                                                         point_to_set_map, true,
-                                                                                         call_trace);
+                                                                                         point_to_set_map,
+                                                                                         true,
+                                                                                         call_trace,
+                                                                                         versioning_cost);
                   merge_expandability(expandability, use_exp);
                }
 
@@ -632,15 +660,21 @@ void CustomScalarReplacementOfAggregatesPass::compute_allocas_expandability_rec(
 
    for(llvm::Instruction* inner_call_inst : call_inst_vec)
    {
-      compute_allocas_expandability_rec(inner_call_inst, nullptr, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace);
+      compute_allocas_expandability_rec(inner_call_inst, nullptr, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, versioning_cost);
    }
 
    call_trace.pop_back();
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_global_op_expandability_rec(llvm::Instruction* call_inst, const std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map, std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map,
-                                                                                 std::map<llvm::Value*, llvm::Value*>& point_to_set_map, std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, const llvm::DataLayout& DL, std::vector<llvm::Instruction*>& call_trace,
-                                                                                 const std::set<llvm::Use*>& globals_as_exp)
+void CustomScalarReplacementOfAggregatesPass::compute_global_op_expandability_rec(llvm::Instruction* call_inst,
+                                                                                  const std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
+                                                                                  std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map,
+                                                                                  std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
+                                                                                  std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                                                                                  const llvm::DataLayout& DL,
+                                                                                  std::vector<llvm::Instruction*>& call_trace,
+                                                                                  const std::set<llvm::Use*>& globals_as_exp,
+                                                                                  const std::map<llvm::Use*, std::tuple<bool, double, double>> &versioning_cost)
 {
    call_trace.push_back(call_inst);
 
@@ -654,23 +688,29 @@ void CustomScalarReplacementOfAggregatesPass::compute_global_op_expandability_re
          {
             if(globals_as_exp.count(&use) > 0)
             {
-               get_ptr_expandability(use, point_to_set_map.at(use.get()), operands_expandability_map, point_to_set_map, true, call_trace);
+               get_ptr_expandability(use, point_to_set_map.at(use.get()), operands_expandability_map, point_to_set_map, true, call_trace, versioning_cost);
             }
          }
 
-         compute_global_op_expandability_rec(inner_call_inst, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, globals_as_exp);
+         compute_global_op_expandability_rec(inner_call_inst, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, globals_as_exp, versioning_cost);
       }
    }
 
    call_trace.pop_back();
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_aggregates_expandability(llvm::Function* kernel_function, llvm::Module* module, std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map, std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
-                                                                               std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map, std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
-                                                                               std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, const llvm::DataLayout& DL, const std::set<llvm::Use*> &forbidden_expansions)
+void CustomScalarReplacementOfAggregatesPass::compute_aggregates_expandability(llvm::Function* kernel_function,
+                                                                               llvm::Module* module,
+                                                                               std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map,
+                                                                               std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
+                                                                               std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map,
+                                                                               std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
+                                                                               std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                                                                               const llvm::DataLayout& DL,
+                                                                               const std::map<llvm::Use*, std::tuple<bool, double, double>> &versioning_cost)
 {
    std::vector<llvm::Instruction*> call_trace;
-   compute_allocas_expandability_rec(nullptr, kernel_function, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace);
+   compute_allocas_expandability_rec(nullptr, kernel_function, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, versioning_cost);
 
    std::set<llvm::Function*> function_worklist;
    for(auto cc_it : compact_callgraph)
@@ -707,13 +747,15 @@ void CustomScalarReplacementOfAggregatesPass::compute_aggregates_expandability(l
             call_trace.push_back(nullptr);
 
             std::string size_msg = "";
-            std::tuple<bool, double, double> expandability = compute_global_expandability_cost(&global_var, DL, size_msg);
+            std::tuple<bool, double, double> expandability = compute_global_expandability_profit(&global_var, DL,
+                                                                                                 size_msg);
             for(llvm::Use& use : global_var.uses())
             {
                const std::tuple<bool, double, double> use_exp = get_ptr_expandability(use, &global_var,
                                                                                       operands_expandability_map,
                                                                                       point_to_set_map, true,
-                                                                                      call_trace);
+                                                                                      call_trace,
+                                                                                      versioning_cost);
                merge_expandability(expandability, use_exp);
             }
 
@@ -746,7 +788,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_aggregates_expandability(l
       }
    }
 
-   compute_global_op_expandability_rec(nullptr, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, global_as_op);
+   compute_global_op_expandability_rec(nullptr, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, call_trace, global_as_op, versioning_cost);
 }
 
 void compute_callgraph_rec(llvm::Instruction* call_inst, llvm::Function* kernel_function, std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, std::vector<llvm::Instruction*>& call_trace)
@@ -1030,11 +1072,16 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use, llvm::Instruction
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims_rec(llvm::Instruction* call_inst, llvm::Instruction* parent_call_inst, const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, const std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
-                                                                       std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map, const std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map,
-                                                                       const std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map, std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& operands_dimensions_map, const llvm::DataLayout& DL,
-                                                                       std::vector<llvm::Instruction*>& call_trace,
-                                                                       const std::set<llvm::Use*> &forbidden_expansions)
+void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims_rec(llvm::Instruction* call_inst, llvm::Instruction* parent_call_inst,
+                                                                          const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                                                                          const std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
+                                                                          std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map,
+                                                                          const std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map,
+                                                                          const std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
+                                                                          std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& operands_dimensions_map,
+                                                                          const llvm::DataLayout& DL,
+                                                                          std::vector<llvm::Instruction*>& call_trace,
+                                                                          const std::map<llvm::Use*, std::tuple<bool, double, double>> &versioning_cost)
 {
    if(call_inst)
    {
@@ -1061,11 +1108,23 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims_rec(llvm::
 
                   std::string size_msg = "";
                   unsigned long long first_dim = (dims.empty() ? 0 : dims.front());
-                  std::tuple<bool, double, double> expandable_size = compute_operand_expandability_cost(&op_use, DL, first_dim, size_msg);
+                  std::tuple<bool, double, double> expandable_size = compute_operand_expandability_profit(&op_use, DL,
+                                                                                                          first_dim,
+                                                                                                          size_msg);
 
-                  if(!std::get<0>(expandable_size))
+                  std::tuple<bool, double, double> versioning_cost = operands_expandability_map.at(call_key);
+                  merge_expandability(expandable_size, versioning_cost);
+
+                  bool can_expand = std::get<0>(expandable_size);// and std::get<1>(expandable_size) > 0 and std::get<1>(expandable_size) > 0;
+
+                  if(!can_expand)
                   {
-                     operands_expandability_map[call_key] = std::make_tuple(false, 0.0, 0.0);
+                     //operands_expandability_map.at(call_key) = expandable_size;
+                     std::get<0>(operands_expandability_map.at(call_key)) = false;
+
+                     for (unsigned long long &d : dims) {
+                        //d = 0;
+                     }
 
                      if(!size_msg.empty())
                      {
@@ -1091,28 +1150,37 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims_rec(llvm::
       call_trace.push_back(call_inst);
       for(llvm::Instruction* inner_call_inst : call_it->second)
       {
-         compute_op_exp_and_dims_rec(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, call_trace, forbidden_expansions);
+         compute_op_exp_and_dims_rec(inner_call_inst, call_inst, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, call_trace, versioning_cost);
       }
       call_trace.pop_back();
    }
 }
 
-void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph, llvm::Function *kernel_function, const std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
-                                                   std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map, const std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map,
-                                                   const std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map, std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& operands_dimensions_map, const llvm::DataLayout& DL)
+void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
+                                                                      llvm::Function *kernel_function,
+                                                                      const std::map<llvm::Value*, llvm::Value*>& point_to_set_map,
+                                                                      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>>& operands_expandability_map,
+                                                                      const std::map<llvm::AllocaInst*, std::tuple<bool, double, double>>& allocas_expandability_map,
+                                                                      const std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>>& globals_expandability_map,
+                                                                      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& operands_dimensions_map,
+                                                                      const llvm::DataLayout& DL,
+                                                                      std::map<llvm::Use*, std::tuple<bool, double, double>> &versioning_cost_map)
 {
    std::set<llvm::Use*> forbidden_expansions;
    std::vector<llvm::Instruction*> call_trace;
-   compute_op_exp_and_dims_rec(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, call_trace, forbidden_expansions);
+Utilities::print_cfg(compact_callgraph, operands_expandability_map, operands_dimensions_map);
+   compute_op_exp_and_dims_rec(nullptr, nullptr, compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, call_trace, versioning_cost_map);
 
-   return;
    std::map<llvm::Instruction*, std::map<std::vector<llvm::Instruction*>, std::vector<std::pair<bool, std::vector<unsigned long long>>>>> op_exp_and_dim_by_callsite;
+
+Utilities::print_cfg(compact_callgraph, operands_expandability_map, operands_dimensions_map);
 
    {
       std::vector<llvm::Instruction*> call_trace;
       initialize_callsites(nullptr, call_trace, operands_expandability_map, operands_dimensions_map, compact_callgraph, op_exp_and_dim_by_callsite);
    }
 
+Utilities::print_cfg(compact_callgraph, operands_expandability_map, operands_dimensions_map);
    if(operands_expandability_map.size() != operands_dimensions_map.size())
    {
       llvm::errs() << "ERR Exp and dim maps with different sizes (" << operands_expandability_map.size() << " vs. " << operands_dimensions_map.size() << ")\n";
@@ -1221,25 +1289,39 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims(const std:
          }
       }
 
-
       std::map<llvm::Function *, std::tuple<bool, double, double>> versioning_revenue_map;
       for (const auto &op_it : operands_expandability_map) {
          const llvm::Use *use = op_it.first.second;
          const std::tuple<bool, double, double> &profit = op_it.second;
 
          llvm::Function *called_function = llvm::CallSite(use->getUser()).getCalledFunction();
-         std::tuple<bool, double, double> &version_it = versioning_revenue_map[called_function];
-         std::get<1>(version_it) += std::get<1>(profit);
-         std::get<2>(version_it) += std::get<2>(profit);
+         auto vr_it = versioning_revenue_map.find(called_function);
+         if (vr_it != versioning_revenue_map.end()) {
+            std::get<1>(vr_it->second) += std::get<1>(profit);
+            std::get<2>(vr_it->second) += std::get<2>(profit);
+         } else {
+            versioning_revenue_map[called_function] = std::make_tuple(true, 0.0, 0.0);
+         }
+
       }
 
       unsigned long num_versions = local_versioned_function_map.size() - 1;
-      std::tuple<bool, double, double> versioning_cost = compute_function_cost(function);
+      std::tuple<bool, double, double> versioning_cost = compute_function_versioning_cost(function);
       std::tuple<bool, double, double> versioning_revenue = versioning_revenue_map[function];
 
-      double area_profit = std::get<1>(versioning_revenue) - std::get<1>(versioning_cost);
-      double latency_profit = std::get<2>(versioning_revenue) - std::get<2>(versioning_cost);
+      double area_profit = std::get<1>(versioning_revenue) - std::get<1>(versioning_cost) * num_versions;
+      double latency_profit = std::get<2>(versioning_revenue) - std::get<2>(versioning_cost) * num_versions;
 
+      llvm::errs() << "INFO: Estimated versioning profit of (" << area_profit << "," << latency_profit << ") for function " << function->getName() << "\n";
+      for (auto &op_it : operands_expandability_map) {
+         llvm::Use *use = op_it.first.second;
+         if (llvm::CallSite(use->getUser()).getCalledFunction() == function) {
+            bool is_expandable = area_profit + latency_profit >= 0;
+            versioning_cost_map[use] = std::make_tuple(is_expandable, 0.0, 0.0);
+         }
+      }
+
+/*
       if (area_profit <= 0 or latency_profit <= 0) {
 
          std::tuple<llvm::Function *, std::vector<bool>, std::vector<std::vector<unsigned long long>>> tuple_key = local_versioned_function_map.begin()->first;
@@ -1278,6 +1360,7 @@ void CustomScalarReplacementOfAggregatesPass::compute_op_exp_and_dims(const std:
             }
          }
       }
+*/
    }
 
 }
@@ -2965,9 +3048,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                      }
                      else
                      {
-                        ptr_u->get()->dump();
-                        ptr_u->getUser()->dump();
-                        llvm::errs() << "ERR Non constant idx on struct\n";
+                        llvm::errs() << "ERR Non constant idx on struct" << get_val_string(ptr_u->getUser()) << "\n";
                         exit(-1);
                      }
                   }
@@ -4251,6 +4332,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
    if(sroa_phase == SROA_functionVersioning)
    {
+      llvm::errs() << "\n ***********************************************";
+      llvm::errs() << "\n ********** BEGIN FUNCTION VERSIONING **********";
+      llvm::errs() << "\n *********************************************** \n";
       const llvm::DataLayout DL = module.getDataLayout();
 
       std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
@@ -4259,18 +4343,34 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>> globals_expandability_map;
       std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>> operands_expandability_map;
       std::map<llvm::Value*, llvm::Value*> point_to_set_map;
-      std::set<llvm::Use*> forbidden_expansions;
-      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, forbidden_expansions);
-
+      std::map<llvm::Use*, std::tuple<bool, double, double>> versioning_cost;
+      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, versioning_cost);
+llvm::errs() << "\n****ERRORS********\n";
+for (auto op : operands_expandability_map) {
+   if (op.first.first.size() == 1) {
+      llvm::errs() << "Use: "; op.first.second->get()->dump();
+      llvm::errs() << "User: "; op.first.second->getUser()->dump();
+   }
+}
+llvm::errs() << "\n****ERRORS********\n";
       std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>> operands_dimensions_map;
-      compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL);
+      compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, versioning_cost);
+
+      allocas_expandability_map.clear();
+      globals_expandability_map.clear();
+      operands_expandability_map.clear();
+      point_to_set_map.clear();
+      compact_callgraph.clear();
+      operands_dimensions_map.clear();
+
+      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, versioning_cost);
+      compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, versioning_cost);
 
       std::map<llvm::Argument*, std::tuple<bool, double, double>> arguments_expandability_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
 
       std::set<llvm::Function*> function_worklist;
-      perform_function_versioning(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map,
-                                  function_worklist);
+      perform_function_versioning(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map, function_worklist);
 
       propagate_constant_arguments(function_worklist);
 
@@ -4281,11 +4381,17 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
          llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
 
+      llvm::errs() << "\n *********************************************";
+      llvm::errs() << "\n ********** END FUNCTION VERSIONING **********";
+      llvm::errs() << "\n ********************************************* \n";
       return true;
    }
 
    if(sroa_phase == SROA_disaggregation)
    {
+      llvm::errs() << "\n ******************************************";
+      llvm::errs() << "\n ********** BEGIN DISAGGREGATION **********";
+      llvm::errs() << "\n ****************************************** \n";
       const llvm::DataLayout DL = module.getDataLayout();
 
       std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
@@ -4294,12 +4400,43 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::GlobalVariable*, std::tuple<bool, double, double>> globals_expandability_map;
       std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::tuple<bool, double, double>> operands_expandability_map;
       std::map<llvm::Value*, llvm::Value*> point_to_set_map;
-      std::set<llvm::Use*> forbidden_expansions;
-      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, forbidden_expansions);
-
+      std::map<llvm::Use*, std::tuple<bool, double, double>> versioning_cost;
+      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, versioning_cost);
+/*
+llvm::errs() << "******ALLOCAS1:" << "\n";
+for (auto ait : allocas_expandability_map) {
+   llvm::errs() << std::get<0>(ait.second) << " " << std::get<1>(ait.second) << " " << std::get<2>(ait.second) << " "; ait.first->dump();
+}
+llvm::errs() << "******ALLOCAS1:" << "\n";
+*/
       std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>> operands_dimensions_map;
-      compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL);
+      compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, versioning_cost);
+/*
+llvm::errs() << "******VERSIONING1:" << "\n";
+for (auto ait : versioning_cost) {
+   ait.first->get()->dump();
+   ait.first->getUser()->dump();
+   llvm::errs() << std::get<0>(ait.second) << " " << std::get<1>(ait.second) << " " << std::get<2>(ait.second) << " ";
+}
+llvm::errs() << "******VERSIONING1:" << "\n";
+*/
+      allocas_expandability_map.clear();
+      globals_expandability_map.clear();
+      operands_expandability_map.clear();
+      point_to_set_map.clear();
+      compact_callgraph.clear();
+      operands_dimensions_map.clear();
 
+      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, versioning_cost);
+      compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, versioning_cost);
+/*
+llvm::errs() << "******ALLOCAS2:" << "\n";
+for (auto ait : allocas_expandability_map) {
+   llvm::errs() << std::get<0>(ait.second) << " " << std::get<1>(ait.second) << " " << std::get<2>(ait.second) << " "; ait.first->dump();
+}
+llvm::errs() << "******ALLOCAS2:" << "\n";
+Utilities::print_cfg(compact_callgraph, operands_expandability_map, operands_dimensions_map);
+*/
       std::map<llvm::Argument*, std::tuple<bool, double, double>> arguments_expandability_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
 
@@ -4309,8 +4446,18 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
          arguments_dimensions_map.clear();    // useless
 
          std::set<llvm::Function*> function_worklist;
-         perform_function_versioning(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map,
-                                     function_worklist);
+         perform_function_versioning(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map, function_worklist);
+
+         allocas_expandability_map.clear();
+         globals_expandability_map.clear();
+         operands_expandability_map.clear();
+         point_to_set_map.clear();
+         compact_callgraph.clear();
+         operands_dimensions_map.clear();
+         versioning_cost.clear();
+
+         compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, versioning_cost);
+         compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, versioning_cost);
 
          allocas_expandability_map.clear();
          globals_expandability_map.clear();
@@ -4319,9 +4466,8 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
          compact_callgraph.clear();
          operands_dimensions_map.clear();
 
-         compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, forbidden_expansions);
-
-         compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL);
+         compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, versioning_cost);
+         compute_op_exp_and_dims(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, versioning_cost);
 
          arguments_expandability_map.clear();
          arguments_dimensions_map.clear();
@@ -4382,11 +4528,17 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       if(CSROAMaxTransformations != -1)
          llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
+      llvm::errs() << "\n ****************************************";
+      llvm::errs() << "\n ********** END DISAGGREGATION **********";
+      llvm::errs() << "\n **************************************** \n";
       return true;
    }
 
    if(sroa_phase == SROA_wrapperInlining)
    {
+      llvm::errs() << "\n ********************************************";
+      llvm::errs() << "\n ********** BEGIN WRAPPER INLINING **********";
+      llvm::errs() << "\n ******************************************** \n";
       std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
 
       compute_callgraph(kernel_function, compact_callgraph);
@@ -4419,6 +4571,10 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       if(CSROAMaxTransformations != -1)
          llvm::errs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
+
+      llvm::errs() << "\n ******************************************";
+      llvm::errs() << "\n ********** END WRAPPER INLINING **********";
+      llvm::errs() << "\n ****************************************** \n";
       return true;
    }
 
