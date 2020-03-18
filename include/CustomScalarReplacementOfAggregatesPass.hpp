@@ -59,6 +59,34 @@ enum SROA_phase
    SROA_wrapperInlining
 };
 
+class Expandability {
+public:
+    bool expandability;
+    double area_profit;
+    double latency_profit;
+
+    Expandability() : expandability(true), area_profit(0.0), latency_profit(0.0) {}
+
+    Expandability(bool expandability, double area_profit, double latency_profit) :
+            expandability(expandability), area_profit(area_profit), latency_profit(latency_profit) {}
+
+    void cast() {
+       expandability = expandability and (area_profit + latency_profit) > 0;
+       area_profit = 0.0;
+       latency_profit = 0.0;
+    }
+
+    Expandability get_casted() {
+       return Expandability(expandability and (area_profit + latency_profit) > 0, 0.0, 0.0);
+    }
+
+    void add(const Expandability &op) {
+       expandability = op.expandability and expandability;
+       area_profit += op.area_profit;
+       latency_profit += op.latency_profit;
+    }
+};
+
 class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 {
  public:
