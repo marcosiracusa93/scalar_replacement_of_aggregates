@@ -4,8 +4,10 @@ rm bins/*
 cd test_cases
 
 for filename in *.ll; do
-    echo TESTING "$filename"
+    echo -e "\n"
+    echo TESTING "$filename" "***************************"
     cd ../../bin/
+    rm *.ll
     pwd
 
     echo PERFORMING SROA

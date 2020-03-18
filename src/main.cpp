@@ -108,6 +108,7 @@ int main(int argc, char** argv)
       passManager->add(new llvm::TargetTransformInfoWrapperPass());
       passManager->add(createMyLoopUnrollPass());
 */
+
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       //passManager->add(llvm::createScalarizerPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
@@ -128,6 +129,7 @@ int main(int argc, char** argv)
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
       passManager->add(createPrintModulePass("./f3_post_versioning.ll"));
 
+/*
       passManager->add(llvm::createVerifierPass());
       // Insert -O3 in chain
       {
@@ -140,7 +142,7 @@ int main(int argc, char** argv)
          passManagerBuilder.SLPVectorize = false;
          passManagerBuilder.populateModulePassManager(*passManager);
       }
-
+*/
       passManager->add(createPrintModulePass("./f4_pre_canonicalization.ll"));
       passManager->add(createGepiCanonicalIdxs());
       passManager->add(createRemoveIntrinsicPass());

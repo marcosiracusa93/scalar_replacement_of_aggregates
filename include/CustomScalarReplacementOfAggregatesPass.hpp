@@ -173,8 +173,8 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
    /// *** Utilities and callbacks for computing cost and expandability of aggregate base *** ///
    /// ************************************************************************************** ///
 
-   unsigned long MaxNumScalarTypes = 16;
-   unsigned long MaxTypeByteSize = 64;
+   unsigned long MaxNumScalarTypes = 32;
+   unsigned long MaxTypeByteSize = 512;
 
    unsigned long get_num_elements(llvm::Type *ty, unsigned long decayed_dim_if_any = 1)
    {
@@ -234,11 +234,11 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
       double area_revenue = 0.0;
       double area_cost = 0.0;
-      double area_profit = area_revenue - area_cost;
+      double area_profit = 100.0;//area_revenue - area_cost;
 
       double latency_revenue = 0.0;
       double latency_cost = 0.0;
-      double latency_profit = latency_revenue - latency_cost;
+      double latency_profit = 100.0;//latency_revenue - latency_cost;
 
       return std::make_tuple(expandable_size, area_profit, latency_profit);
    }
@@ -260,11 +260,11 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
       double area_revenue = 0.0;
       double area_cost = 0.0;
-      double area_profit = area_revenue - area_cost;
+      double area_profit = 100.0;//area_revenue - area_cost;
 
       double latency_revenue = 0.0;
       double latency_cost = 0.0;
-      double latency_profit = latency_revenue - latency_cost;
+      double latency_profit = 100.0;//latency_revenue - latency_cost;
 
       return std::make_tuple(expandable_size, area_profit, latency_profit);
    }
@@ -287,11 +287,11 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
       double area_revenue = 0.0;
       double area_cost = 0.0;
-      double area_profit = area_revenue - area_cost;
+      double area_profit = 100.0;//area_revenue - area_cost;
 
       double latency_revenue = 0.0;
       double latency_cost = 0.0;
-      double latency_profit = latency_revenue - latency_cost;
+      double latency_profit = 100.0;//latency_revenue - latency_cost;
 
       return std::make_tuple(expandable_size, area_profit, latency_profit);
    }
@@ -301,21 +301,21 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
       if (gep_op->hasAllConstantIndices()) {
          double area_revenue = 0.0;
          double area_cost = 0.0;
-         double area_profit = area_revenue - area_cost;
+         double area_profit = 100.0;//area_revenue - area_cost;
 
          double latency_revenue = 0.0;
          double latency_cost = 0.0;
-         double latency_profit =  latency_revenue - latency_cost;
+         double latency_profit =  100.0;//latency_revenue - latency_cost;
 
          return std::make_tuple(true,  area_profit, latency_profit);
       } else {
          double area_revenue = 0.0;
          double area_cost = 0.0;
-         double area_profit = area_revenue - area_cost;
+         double area_profit = 100.0;//area_revenue - area_cost;
 
          double latency_revenue = 0.0;
          double latency_cost = 0.0;
-         double latency_profit = latency_revenue - latency_cost;
+         double latency_profit = 100.0;//latency_revenue - latency_cost;
 
          return std::make_tuple(true, area_profit, latency_profit);
       }
@@ -323,7 +323,7 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
    std::tuple<bool, double, double> compute_function_versioning_cost(llvm::Function *function)
    {
-      return std::make_tuple(true, -100.0, -100.0);
+      return std::make_tuple(true, -1000000.0, -1000000.0);
    }
 };
 
