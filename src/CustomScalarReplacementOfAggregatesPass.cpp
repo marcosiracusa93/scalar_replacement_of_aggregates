@@ -171,7 +171,7 @@ Expandability compute_operand_expandability_profit(llvm::Use *op_use,
 {
    llvm::Type *allocated_type = op_use->get()->getType()->getPointerElementType();
 
-   unsigned long num_elements = get_num_elements(allocated_type);
+   unsigned long num_elements = get_num_elements(allocated_type) * decayed_dim;
    unsigned long size = DL.getTypeAllocSize(allocated_type) * decayed_dim;
    bool expandable_size = num_elements <= MaxNumScalarTypes and size <= MaxTypeByteSize;
 
@@ -282,7 +282,7 @@ class Utilities
 {
  public:
    static void print_cfg(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
-                         const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool>& op_expandability_map,
+                         const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, Expandability>& op_expandability_map,
                          const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dimensions_map)
    {
       std::vector<llvm::Instruction*> call_trace;
@@ -297,7 +297,7 @@ class Utilities
  private:
    static void print_cfg_rec(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
                              llvm::Instruction* call_inst,
-                             const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool>& op_expandability_map,
+                             const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, Expandability>& op_expandability_map,
                              const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dimensions_map,
                              std::vector<llvm::Instruction*>& call_trace)
    {
@@ -338,7 +338,7 @@ class Utilities
             }
 
             auto exp_it = op_expandability_map.find(std::make_pair(call_trace, &op));
-            std::string exp_str = (exp_it != op_expandability_map.end() ? std::to_string(exp_it->second) : "-");
+            std::string exp_str = (exp_it != op_expandability_map.end() ? std::to_string(exp_it->second.expandability) + ", " + std::to_string(exp_it->second.area_profit) + ", " + std::to_string(exp_it->second.latency_profit) : "-");
 
             auto dim_it = op_dimensions_map.find(std::make_pair(call_trace, &op));
             std::string dim_str = "-";
@@ -350,7 +350,7 @@ class Utilities
                   dim_str += std::to_string(d) + " ";
                }
             }
-            llvm::errs() << "      Op" << op.getOperandNo() << ":  E( " << exp_str << " )  D( " << dim_str << ")\n";
+            llvm::errs() << "      Op" << op.getOperandNo() << ":  E( " << exp_str << " )  D( " << dim_str << " )\n";
          }
       }
 
@@ -645,6 +645,10 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
          llvm::Function* called_function = llvm::CallSite(call_inst).getCalledFunction();
 
          Expandability expandability(chain_has_all_constant_indices, 0.0, 0.0);
+
+         if (!expandability.expandability) {
+            llvm::errs() << "    Use #" << ptr_use.getOperandNo() << " in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion (non constant gepi chain in call)\n";
+         }
 
          llvm::Argument* ptr_arg = &*std::next(called_function->arg_begin(), ptr_use.getOperandNo());
 
@@ -971,10 +975,10 @@ void compute_callgraph(llvm::Function* kernel_function,
    compute_callgraph_rec(nullptr, kernel_function, compact_callgraph, call_trace);
 }
 
-std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
-                                            llvm::Instruction* parent_call_isnt,
-                                            const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dims_map,
-                                            const std::vector<llvm::Instruction*>& call_trace)
+std::pair<double, std::vector<unsigned long long>> get_op_dims(llvm::Use* op_use,
+                                                              llvm::Instruction* parent_call_inst,
+                                                              const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& op_dims_map,
+                                                              const std::vector<llvm::Instruction*>& call_trace)
 {
    std::vector<llvm::Instruction*> parent_call_trace = std::vector<llvm::Instruction*>(call_trace.begin(), call_trace.end() - 1);
 
@@ -1000,7 +1004,7 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
             // Which is supposed to be an argument (err otherwise)
             if(llvm::Argument* arg_ptr_op = llvm::dyn_cast<llvm::Argument>(ptr_op))
             {
-               llvm::Use& parent_op = parent_call_isnt->getOperandUse(arg_ptr_op->getArgNo());
+               llvm::Use& parent_op = parent_call_inst->getOperandUse(arg_ptr_op->getArgNo());
                auto op_dim_it = op_dims_map.find(std::make_pair(parent_call_trace, &parent_op));
 
                // Which is supposed to have known size (since already processed)
@@ -1026,29 +1030,30 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
                      else
                      {
                         llvm::errs() << "WAR: Dim out of range for " << get_val_string(gep_op_op) << "\n";
-                        gep_op_op->getOperand(1);
+                        return std::make_pair(false, std::vector<unsigned long long>());
                         /// exit(-1);
                      }
                   }
                   else
                   {
                      llvm::errs() << "ERR: empty dims for " << get_val_string(gep_op_op) << "\n";
-                     gep_op_op->getOperand(1);
+                     return std::make_pair(false, std::vector<unsigned long long>());
                      exit(-1);
                   }
 
-                  return arg_dims;
+                  return std::make_pair(true, arg_dims);
                }
                else
                {
-                  llvm::errs() << "ERR: Argument dimension not found for " << get_val_string(arg_ptr_op) << " in " << get_val_string(op_use->getUser()) << "\n";
+                  llvm::errs() << "WAR: Argument dimension not found for " << get_val_string(arg_ptr_op) << " in " << get_val_string(op_use->getUser()) << "\n";
+                  return std::make_pair(false, std::vector<unsigned long long>());
                   exit(-1);
                }
             }
             else
             {
-               llvm::errs() << "ERR: Ptr op can be argument only for gepi " << get_val_string(gep_op_op) << "\n";
-               gep_op_op->getOperand(1);
+               llvm::errs() << "WAR: Ptr op can be argument only for gepi " << get_val_string(gep_op_op) << "\n";
+               return std::make_pair(false, std::vector<unsigned long long>());
                exit(-1);
             }
          }
@@ -1107,8 +1112,7 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
                else
                {
                   llvm::errs() << "WAR: Dim out of range for " << get_val_string(gep_op_op) << "\n";
-                  gep_op_op->getOperand(1);
-                  /// exit(-1);
+                  exit(-1);
                }
             }
             else
@@ -1116,28 +1120,30 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
                gepi_dims.push_back(1);
             }
 
-            return gepi_dims;
+            return std::make_pair(true, gepi_dims);
          }
          else
          {
-            llvm::errs() << "ERR: Gep op with no indices " << get_val_string(gep_op_op) << "\n";
+            llvm::errs() << "WAR: Gep op with no indices " << get_val_string(gep_op_op) << "\n";
+            return std::make_pair(false, std::vector<unsigned long long>());
             exit(-1);
          }
       }
       else if(llvm::Argument* arg_op = llvm::dyn_cast<llvm::Argument>(op))
       {
-         llvm::Use& parent_op = parent_call_isnt->getOperandUse(arg_op->getArgNo());
+         llvm::Use& parent_op = parent_call_inst->getOperandUse(arg_op->getArgNo());
          auto op_dim_it = op_dims_map.find(std::make_pair(parent_call_trace, &parent_op));
 
          // Which is supposed to have known size (since already processed)
          if(op_dim_it != op_dims_map.end())
          {
             std::vector<unsigned long long> arg_dims = op_dim_it->second;
-            return arg_dims;
+            return std::make_pair(true, arg_dims);
          }
          else
          {
-            llvm::errs() << "ERR: Argument dimension not found for " << get_val_string(arg_op) << " at " << get_val_string(op_use->getUser()) << "\n";
+            llvm::errs() << "WAR: Argument dimension not found for " << get_val_string(arg_op) << " at " << get_val_string(op_use->getUser()) << "\n";
+            return std::make_pair(false, std::vector<unsigned long long>());
             exit(-1);
          }
       }
@@ -1162,7 +1168,7 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
          {
             alloca_dims.push_back(1);
          }
-         return alloca_dims;
+         return std::make_pair(true, alloca_dims);
       }
       else if(llvm::GlobalVariable* g_var_op = llvm::dyn_cast<llvm::GlobalVariable>(op))
       {
@@ -1185,17 +1191,19 @@ std::vector<unsigned long long> get_op_dims(llvm::Use* op_use,
          {
             g_var_dims.push_back(1);
          }
-         return g_var_dims;
+         return std::make_pair(true, g_var_dims);
       }
       else
       {
-         llvm::errs() << "ERR: unknown element for " << get_val_string(op_use->get()) << " in " << get_val_string(op_use->getUser()) << "\n";
+         llvm::errs() << "WAR: unknown element for " << get_val_string(op_use->get()) << " in " << get_val_string(op_use->getUser()) << "\n";
+         return std::make_pair(false, std::vector<unsigned long long>());
+         //return std::vector<unsigned long long>();
          exit(-1);
       }
    }
    else
    {
-      return std::vector<unsigned long long>();
+      return std::make_pair(false, std::vector<unsigned long long>());
    }
 }
 
@@ -1227,21 +1235,33 @@ void compute_op_exp_and_dims_rec(llvm::Instruction* call_inst,
             {
                if(exp_it->second.expandability)
                {
-                  dims = get_op_dims(&op_use, parent_call_inst, operands_dimensions_map, call_trace);
-                  if(dims.size() == 1 and dims.front() == 1)
-                  {
-                     dims.clear();
-                  }
+                  bool found = true;
+                  std::tie(found, dims) = get_op_dims(&op_use, parent_call_inst, operands_dimensions_map, call_trace);
 
-                  std::string size_msg = "";
-                  unsigned long long first_dim = (dims.empty() ? 0 : dims.front());
+                  if (found) {
+                     if(dims.size() == 1 and dims.front() == 1)
+                     {
+                        dims.clear();
+                     }
 
-                  Expandability expandability = compute_operand_expandability_profit(&op_use, DL, first_dim, size_msg);
+                     std::string size_msg = "";
+                     unsigned long long first_dim = (dims.empty() ? 0 : dims.front());
 
-                  operands_expandability_map.insert(std::make_pair(call_key, expandability));
-                  if(!expandability.expandability)
-                  {
-                     llvm::errs() << "WAR: Use #" << op_use.getOperandNo() << " in " << get_val_string(op_use.getUser()) << "  cannot expand because of its size (" << size_msg << ")\n";
+                     Expandability expandability = compute_operand_expandability_profit(&op_use, DL, first_dim, size_msg);
+
+                     operands_expandability_map[call_key] = expandability;
+                     if(!expandability.expandability)
+                     {
+                        llvm::errs() << "WAR: Use #" << op_use.getOperandNo() << " in " << get_val_string(op_use.getUser()) << "  cannot expand because of its size (" << size_msg << ")\n";
+                     }
+                  } else {
+                     Expandability expandability = Expandability(false, 0.0, 0.0);
+
+                     operands_expandability_map[call_key] = expandability;
+                     if(!expandability.expandability)
+                     {
+                        llvm::errs() << "WAR: Use #" << op_use.getOperandNo() << " in " << get_val_string(op_use.getUser()) << "  cannot expand because not computable dimensions\n";
+                     }
                   }
                }
             }
