@@ -628,7 +628,7 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
       }
 
       auto call_inst = llvm::dyn_cast<llvm::Instruction>(ptr_use.getUser());
-      if(!chain_has_all_constant_indices)
+      if(false and !chain_has_all_constant_indices)
       {
          if(!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), Expandability(false, 0.0, 0.0))).second)
          {
@@ -636,7 +636,7 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
             exit(-1);
          }
 
-         llvm::errs() << "    Use #" << ptr_use.getOperandNo() << "  in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion (non constant gepi chain in call)\n";
+         llvm::errs() << "    Use #" << ptr_use.getOperandNo() << " in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion (non constant gepi chain in call)\n";
 
          return Expandability(false, 0.0, 0.0);
       }
@@ -644,7 +644,7 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
       {
          llvm::Function* called_function = llvm::CallSite(call_inst).getCalledFunction();
 
-         Expandability expandability(true, 0.0, 0.0);
+         Expandability expandability(chain_has_all_constant_indices, 0.0, 0.0);
 
          llvm::Argument* ptr_arg = &*std::next(called_function->arg_begin(), ptr_use.getOperandNo());
 
@@ -657,7 +657,7 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
 
             if(!op_exp.expandability)
             {
-               llvm::errs() << "    Use #" << ptr_use.getOperandNo() << "  in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion\n";
+               llvm::errs() << "    Use #" << ptr_use.getOperandNo() << " in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion\n";
             }
          }
          call_trace.pop_back();
@@ -747,7 +747,7 @@ void compute_allocas_expandability_rec(llvm::Instruction* call_inst,
                // #HOTPOINT
 
                if (!expandability.expandability) {
-                  llvm::errs() << "WAR: " << get_val_string(alloca_inst) << " cannot expand: " << size_msg << "\n";
+                  llvm::errs() << "WAR: " << get_val_string(alloca_inst) << " in " << alloca_inst->getFunction()->getName() << " cannot expand: " << size_msg << "\n";
                }
 
                for(llvm::Use& use : alloca_inst->uses())
@@ -756,7 +756,7 @@ void compute_allocas_expandability_rec(llvm::Instruction* call_inst,
                   expandability.add(ptr_exp);
 
                   if (!ptr_exp.expandability) {
-                     llvm::errs() << "WAR: " << get_val_string(alloca_inst) << " cannot expand because of use #" << use.getOperandNo() << " in " << use.getUser() << "\n";
+                     llvm::errs() << "WAR: " << get_val_string(alloca_inst) << " in " << alloca_inst->getFunction()->getName() << " cannot expand because of use #" << use.getOperandNo() << " in " << get_val_string(use.getUser()) << "\n";
                   }
                }
 
@@ -880,7 +880,7 @@ void compute_aggregates_expandability(llvm::Function* kernel_function,
                expandability.add(ptr_exp);
 
                if (!ptr_exp.expandability) {
-                  llvm::errs() << "WAR: " << get_val_string(&global_var) << " cannot expand because of use #" << use.getOperandNo() << " in " << use.getUser() << "\n";
+                  llvm::errs() << "WAR: " << get_val_string(&global_var) << " cannot expand because of use #" << use.getOperandNo() << " in " << get_val_string(use.getUser()) << "\n";
                }
             }
 
@@ -1235,13 +1235,12 @@ void compute_op_exp_and_dims_rec(llvm::Instruction* call_inst,
 
                   std::string size_msg = "";
                   unsigned long long first_dim = (dims.empty() ? 0 : dims.front());
-                  bool expandable_size = has_expandable_size(op_use.get(), DL, first_dim, size_msg);
+
                   Expandability expandability = compute_operand_expandability_profit(&op_use, DL, first_dim, size_msg);
 
+                  operands_expandability_map.insert(std::make_pair(call_key, expandability));
                   if(!expandability.expandability)
                   {
-                     operands_expandability_map[call_key] = expandability;
-
                      llvm::errs() << "WAR: Use #" << op_use.getOperandNo() << " in " << get_val_string(op_use.getUser()) << "  cannot expand because of its size (" << size_msg << ")\n";
                   }
                }
