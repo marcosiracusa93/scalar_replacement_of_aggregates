@@ -62,14 +62,12 @@
 
 #define DEBUG_CSROA
 
-
-
 /// ************************************************************************************** ///
 /// *** Utilities and callbacks for computing cost and expandability of aggregate base *** ///
 /// ************************************************************************************** ///
 
-unsigned long MaxNumScalarTypes = 128;
-unsigned long MaxTypeByteSize = 512;
+unsigned long MaxNumScalarTypes = 32;
+unsigned long MaxTypeByteSize = 128;
 
 unsigned long get_num_elements(llvm::Type *ty, unsigned long decayed_dim_if_any = 1)
 {
@@ -221,8 +219,39 @@ Expandability compute_function_versioning_cost(llvm::Function *function)
    return Expandability(true, -1000000.0, -1000000.0);
 }
 
+/// ************************************************************************************** ///
+/// ************************************************************************************** ///
+/// ************************************************************************************** ///
 
+enum output_streams {OUTS, ERRS, NULLS};
+class OutputHandler {
+public:
+    OutputHandler() {}
 
+    llvm::raw_ostream *out;
+
+    void set_output(output_streams os) {
+       switch (os) {
+          case OUTS:
+             out = &llvm::outs();
+             break;
+          case ERRS:
+             out = &llvm::errs();
+             break;
+          case NULLS:
+             out = &llvm::nulls();
+             break;
+       }
+    }
+
+    template<class T>
+    void operator<<(const T& obj)
+    {
+       *out << obj;
+    }
+};
+
+OutputHandler output;
 
 
 
