@@ -80,10 +80,30 @@ public:
        return Expandability(expandability and (area_profit + latency_profit) > 0, 0.0, 0.0);
     }
 
-    void add(const Expandability &op) {
+    void andadd(const Expandability &op) {
        expandability = op.expandability and expandability;
        area_profit += op.area_profit;
        latency_profit += op.latency_profit;
+    }
+
+    void operator*=(double factor) {
+       area_profit *= factor;
+       latency_profit *= factor;
+    }
+
+    void operator+=(const Expandability &exp) {
+       area_profit += exp.area_profit;
+       latency_profit += exp.latency_profit;
+    }
+
+    void operator-=(const Expandability &exp) {
+       area_profit -= exp.area_profit;
+       latency_profit -= exp.latency_profit;
+    }
+
+    std::string get_string() {
+       std::string ret = "<" + std::to_string(expandability) + "," + std::to_string(area_profit) + "," + std::to_string(latency_profit) + ">";
+       return ret;
     }
 };
 
