@@ -80,10 +80,18 @@ public:
        return Expandability(expandability and (area_profit + latency_profit) > 0, 0.0, 0.0);
     }
 
-    void andadd(const Expandability &op) {
+    void and_add(const Expandability &op) {
        expandability = op.expandability and expandability;
        area_profit += op.area_profit;
        latency_profit += op.latency_profit;
+    }
+
+    void and_cond_add(const Expandability &op) {
+       expandability = op.expandability and expandability;
+       if (op.expandability) {
+          area_profit += op.area_profit;
+          latency_profit += op.latency_profit;
+       }
     }
 
     void operator*=(double factor) {
