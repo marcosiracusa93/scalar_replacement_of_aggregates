@@ -40,6 +40,9 @@
 #include <llvm/IR/Operator.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/IR/GetElementPtrTypeIterator.h>
+#include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
 llvm::PHINode* get_last_phi(llvm::BasicBlock* bb)
 {
@@ -1312,10 +1315,142 @@ bool canonical_idxs(llvm::Function& function)
    return false;
 }
 
+bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::ScalarEvolution &SE) {
+   std::map<llvm::Use*, llvm::Value*> point_to_set_map;
+
+   for (llvm::BasicBlock &bb : function) {
+      for (llvm::Instruction &i : bb) {
+         if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(&i)) {
+
+         } else if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(&i)) {
+            point_to_set_map.insert(std::make_pair(&load_inst->getOperandUse(load_inst->getPointerOperandIndex()), nullptr));
+         } else if (llvm::StoreInst *store_inst = llvm::dyn_cast<llvm::StoreInst>(&i)) {
+            point_to_set_map.insert(std::make_pair(&store_inst->getOperandUse(store_inst->getPointerOperandIndex()), nullptr));
+         }
+      }
+   }
+
+   std::map<const llvm::Loop *, unsigned long long> non_const_idxs_per_loop;
+   std::map<const llvm::CallInst *, unsigned long long> non_const_idxs_per_call;
+
+   for (auto pts_it : point_to_set_map) {
+      llvm::Use *use = pts_it.first;
+      llvm::Value *base = pts_it.second;
+
+      if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use->getUser())) {
+         if (llvm::isa<llvm::CallInst>(user_inst) and
+             !llvm::dyn_cast<llvm::CallInst>(user_inst)->getCalledFunction()->isIntrinsic() or
+             llvm::isa<llvm::LoadInst>(user_inst) or
+             llvm::isa<llvm::StoreInst>(user_inst)) {
+            if (SE.isSCEVable(use->get()->getType())) {
+               use->get()->dump();
+               use->getUser()->dump();
+               const llvm::SCEV *use_scev = SE.getSCEV(use->get());
+
+               const llvm::SCEV *scev_rec = use_scev;
+               while (const llvm::SCEVAddRecExpr *use_add_rec_scev_rec = llvm::dyn_cast<llvm::SCEVAddRecExpr>(
+                       scev_rec)) {
+                  const llvm::Loop *loop = use_add_rec_scev_rec->getLoop();
+
+                  if (loop) {
+                     auto i_it = non_const_idxs_per_loop.insert(std::make_pair(loop, 0));
+                     if (!i_it.second) {
+                        i_it.first->second += 1;
+                     }
+
+                     if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user_inst)) {
+                        non_const_idxs_per_call[call_inst] += 1;
+                     }
+                  }
+                  scev_rec = use_add_rec_scev_rec->evaluateAtIteration(
+                          SE.getZero(llvm::Type::getInt32Ty(function.getContext())), SE);
+               }
+            }
+         }
+      }
+   }
+
+   for (auto loop_it : non_const_idxs_per_loop) {
+      const llvm::Loop *loop = loop_it.first;
+
+      unsigned long long inst_count = 0;
+      for (const llvm::BasicBlock *bb : loop->blocks()) {
+         if (bb != loop->getHeader() or bb != loop->getLoopLatch()) {
+            for (const llvm::Instruction &inst : *bb) {
+               if (inst.isBinaryOp() or llvm::isa<llvm::CallInst>(inst)) {
+                  inst_count++;
+               }
+            }
+         }
+      }
+
+      double threshold = (double)SE.getSmallConstantTripCount(loop) * (double)inst_count / (double)loop_it.second;
+      if (threshold <= 32) {
+         llvm::MDNode *loopID = llvm::MDNode::get(function.getContext(),
+                                                  llvm::MDString::get(function.getContext(), "llvm.loop.unroll.full"));
+
+         std::vector<llvm::Metadata *> metas;
+         metas.push_back(loopID);
+         metas.push_back(loopID);
+         llvm::MDTuple *tuple = llvm::MDTuple::getDistinct(function.getContext(), metas);
+         tuple->replaceOperandWith(0, tuple);
+
+         llvm::errs() << "INFO: Force unroll for loop " << loop->getName() << "\n";
+         loop->setLoopID(tuple);
+      }
+   }
+
+   for (auto call_it : non_const_idxs_per_call) {
+      llvm::CallInst *call_inst = const_cast<llvm::CallInst*>(call_it.first);
+      unsigned long long idx_count = call_it.second;
+
+      if (call_inst->getCalledFunction())
+      {
+         llvm::Function *called_function = call_inst->getCalledFunction();
+         if (called_function and called_function->size() > 0) {
+
+            unsigned long long inst_count = 0;
+            for (const llvm::BasicBlock *bb : called_function) {
+               for (const llvm::Instruction &inst : *bb) {
+                  if (inst.isBinaryOp() or llvm::isa<llvm::CallInst>(inst)) {
+                     inst_count++;
+                  }
+               }
+            }
+
+            double threshold = inst_count / idx_count;
+            if (threshold <= 32) {
+               llvm::errs() << "INFO: Inlining call to " << called_function->getName() << " in function "
+                            << call_inst->getFunction()->getName() << "\n";
+               called_function->removeFnAttr(llvm::Attribute::NoInline);
+               called_function->removeFnAttr(llvm::Attribute::OptimizeNone);
+               llvm::InlineFunctionInfo IFI = llvm::InlineFunctionInfo();
+               if ((llvm::isa<llvm::CallInst>(call_inst) &&
+                    !llvm::InlineFunction(llvm::dyn_cast<llvm::CallInst>(call_inst), IFI)) ||
+                   (llvm::isa<llvm::InvokeInst>(call_inst) &&
+                    !llvm::InlineFunction(llvm::dyn_cast<llvm::InvokeInst>(call_inst), IFI))) {
+                  llvm::errs() << "ERR: Cannot inline function " << called_function->getName() << "\n";
+                  exit(-1);
+               }
+            }
+         }
+      }
+   }
+
+   return true;
+}
+
 bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
 {
    switch(optimization_selection)
    {
+      case SROA_codeSimplification: {
+         // Check CHStone adpcm for examples
+         llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
+         llvm::ScalarEvolution &SE = getAnalysis<llvm::ScalarEvolutionWrapperPass>().getSE();
+         return code_simplification(function, LI, SE);
+      }
+
       case SROA_ptrIteratorSimplification: {
          // Check CHStone adpcm for examples
          llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
@@ -1336,6 +1471,10 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
          exit(-1);
    }
    return false;
+}
+
+GepiCanonicalizationPass* createCodeSimplificationPass() {
+   return new GepiCanonicalizationPass(SROA_codeSimplification);
 }
 
 GepiCanonicalizationPass* createPtrIteratorSimplificationPass()

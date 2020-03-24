@@ -2,9 +2,9 @@
 #include <ExpandMemOpsPass.hpp>
 #include <GepiCanonicalizationPass.hpp>
 #include <PrintModulePass.hpp>
+#include <SROA_LoopRotation.h>
 #include <iostream>
 #include <sys/time.h>
-#include <LoopUnrollPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -18,6 +18,7 @@
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
+#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 
 #include "llvm/IR/Verifier.h"
 
@@ -71,14 +72,14 @@ int main(int argc, char** argv)
       exit(-1);
    }
 
-   /*
-       char progName[] = "progName";
-       char debug[] = "-debug";
-       char print_after_all[] = "-print-after-all";
 
-       char* opt_argv[] = {progName, debug, print_after_all};
-       llvm::cl::ParseCommandLineOptions(3, opt_argv, "");
-   */
+    char progName[] = "progName";
+    char debug[] = "-debug";
+    char print_after_all[] = "-print-after-all";
+
+    char* opt_argv[] = {progName, debug/*, print_after_all*/};
+    llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
+
 
    // Run on module
    {
@@ -99,15 +100,27 @@ int main(int argc, char** argv)
 
             passManager->add(llvm::createPromoteMemoryToRegisterPass());
       */
-/*
-      passManager->add(llvm::createLoopRotatePass());
+      passManager->add(llvm::createPromoteMemoryToRegisterPass());
+      passManager->add(new llvm::ScalarEvolutionWrapperPass());
+      passManager->add(new llvm::LoopInfoWrapperPass());
+      passManager->add(new llvm::DominatorTreeWrapperPass());
+      passManager->add(new llvm::AssumptionCacheTracker());
+      passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
+
+      passManager->add(createCodeSimplificationPass());
+
+      passManager->add(llvm::createPromoteMemoryToRegisterPass());
+      passManager->add(createPrintModulePass("./pre_rotate.ll"));
+      passManager->add(createSROALoopRotatePass());
+      passManager->add(createPrintModulePass("./post_rotate.ll"));
       passManager->add(new llvm::ScalarEvolutionWrapperPass());
       passManager->add(new llvm::LoopInfoWrapperPass());
       passManager->add(new llvm::DominatorTreeWrapperPass());
       passManager->add(new llvm::AssumptionCacheTracker());
       passManager->add(new llvm::TargetTransformInfoWrapperPass());
-      passManager->add(createMyLoopUnrollPass());
-*/
+      passManager->add(llvm::createLoopUnrollPass());
+      passManager->add(createPrintModulePass("./post_unrolling.ll"));
+/*
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       //passManager->add(llvm::createScalarizerPass());
       passManager->add(createPrintModulePass("./f1_first.ll"));
@@ -159,7 +172,7 @@ int main(int argc, char** argv)
       {
          passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 0;
+         passManagerBuilder.OptLevel = 1;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
@@ -183,7 +196,7 @@ int main(int argc, char** argv)
          passManagerBuilder.SLPVectorize = false;
          passManagerBuilder.populateModulePassManager(*passManager);
       }
-
+*/
       passManager->add(createPrintModulePass("./f9_final.ll"));
       passManager->run(*module);
    }

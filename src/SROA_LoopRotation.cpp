@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <llvm/Transforms/Utils/UnrollLoop.h>
 #include "SROA_LoopRotation.h"
 
 #include "llvm/ADT/Statistic.h"
@@ -640,6 +641,8 @@ PreservedAnalyses SROA_LoopRotatePass::run(Loop &L, LoopAnalysisManager &AM,
 
 namespace {
 
+
+
 class LoopRotateLegacyPass : public LoopPass {
   unsigned MaxHeaderSize;
 
@@ -663,6 +666,11 @@ public:
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
     if (skipLoop(L))
       return false;
+
+    if (!HasUnrollFullPragma(L)) {
+       return false;
+    }
+
     Function &F = *L->getHeader()->getParent();
 
     auto *LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
@@ -675,6 +683,21 @@ public:
     LoopRotate LR(MaxHeaderSize, LI, TTI, AC, DT, SE);
     return LR.processLoop(L);
   }
+
+private:
+    // Returns the loop hint metadata node with the given name (for example,
+    // "llvm.loop.unroll.count").  If no such metadata node exists, then nullptr is
+    // returned.
+    static MDNode *GetUnrollMetadataForLoop(const Loop *L, StringRef Name) {
+       if (MDNode *LoopID = L->getLoopID())
+          return GetUnrollMetadata(LoopID, Name);
+       return nullptr;
+    }
+
+    // Returns true if the loop has an unroll(full) pragma.
+    bool HasUnrollFullPragma(const Loop *L) const {
+       return GetUnrollMetadataForLoop(L, "llvm.loop.unroll.full");
+    }
 };
 }
 

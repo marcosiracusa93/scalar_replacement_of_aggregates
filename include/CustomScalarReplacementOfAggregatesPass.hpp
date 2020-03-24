@@ -41,6 +41,13 @@
 #ifndef SCALAR_REPLACEMENT_OF_AGGREGATES_CUSTOMSCALARREPLACEMENTOFAGGREGATESPASS_HPP
 #define SCALAR_REPLACEMENT_OF_AGGREGATES_CUSTOMSCALARREPLACEMENTOFAGGREGATESPASS_HPP
 
+#include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/TargetTransformInfo.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Analysis/AssumptionCache.h>
+#include <llvm/IR/Dominators.h>
+
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
@@ -136,8 +143,18 @@ class CustomScalarReplacementOfAggregatesPass : public llvm::ModulePass
 
    bool runOnModule(llvm::Module& module) override;
 
-   void getAnalysisUsage(llvm::AnalysisUsage& AU) const override;
+    void getAnalysisUsage(llvm::AnalysisUsage& AU) const override
+    {
+       AU.addRequiredTransitive<llvm::LoopInfoWrapperPass>();
+       AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
+       AU.addRequiredTransitive<llvm::TargetTransformInfoWrapperPass>();
+       AU.addRequiredTransitive<llvm::TargetLibraryInfoWrapperPass>();
+       AU.addRequiredTransitive<llvm::DominatorTreeWrapperPass>();
+       AU.addRequiredTransitive<llvm::AssumptionCacheTracker>();
+    }
 };
+
+//CustomScalarReplacementOfAggregatesPass* createSROACodeSimplificationPass(std::string kernel_name);
 
 CustomScalarReplacementOfAggregatesPass* createSROAFunctionVersioningPass(std::string kernel_name);
 

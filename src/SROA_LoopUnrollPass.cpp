@@ -1054,6 +1054,10 @@ public:
     if (skipLoop(L))
       return false;
 
+    if (!HasUnrollFullPragma(L)) {
+      return false;
+    }
+
     Function &F = *L->getHeader()->getParent();
 
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
