@@ -44,13 +44,15 @@
 
 enum SROA_optimizations
 {
+   SROA_cleanLCSSA,
+   SROA_gepiExplicitation,
    SROA_codeSimplification,
    SROA_ptrIteratorSimplification,
    SROA_chunkOperationsLowering,
    SROA_bitcastVectorRemoval,
    SROA_removeLifetime,
-   SROA_select_lowering,
-   SROA_canonical_idxs
+   SROA_selectLowering,
+   SROA_canonicalIdxs
 };
 
 class GepiCanonicalizationPass : public llvm::FunctionPass
@@ -78,6 +80,10 @@ class GepiCanonicalizationPass : public llvm::FunctionPass
       AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
    }
 };
+
+GepiCanonicalizationPass* createCleanLCSSA();
+
+GepiCanonicalizationPass* createGepiExplicitation();
 
 GepiCanonicalizationPass* createCodeSimplificationPass();
 

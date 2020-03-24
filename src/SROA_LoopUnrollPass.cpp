@@ -12,7 +12,8 @@
 // counts of loops easily.
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
+#include "SROA_LoopUnrollPass.h"
+
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/CodeMetrics.h"
@@ -43,11 +44,11 @@ using namespace llvm;
 #define DEBUG_TYPE "loop-unroll"
 
 static cl::opt<unsigned>
-    UnrollThreshold("unroll-threshold", cl::Hidden,
+    UnrollThreshold("sroa-unroll-threshold", cl::Hidden,
                     cl::desc("The baseline cost threshold for loop unrolling"));
 
 static cl::opt<unsigned> UnrollMaxPercentThresholdBoost(
-    "unroll-max-percent-threshold-boost", cl::init(400), cl::Hidden,
+    "sroa-unroll-max-percent-threshold-boost", cl::init(400), cl::Hidden,
     cl::desc("The maximum 'boost' (represented as a percentage >= 100) applied "
              "to the threshold when aggressively unrolling a loop due to the "
              "dynamic cost savings. If completely unrolling a loop will reduce "
@@ -56,57 +57,57 @@ static cl::opt<unsigned> UnrollMaxPercentThresholdBoost(
              "X/Y). This limit avoids excessive code bloat."));
 
 static cl::opt<unsigned> UnrollMaxIterationsCountToAnalyze(
-    "unroll-max-iteration-count-to-analyze", cl::init(10), cl::Hidden,
+    "sroa-unroll-max-iteration-count-to-analyze", cl::init(10), cl::Hidden,
     cl::desc("Don't allow loop unrolling to simulate more than this number of"
              "iterations when checking full unroll profitability"));
 
 static cl::opt<unsigned> UnrollCount(
-    "unroll-count", cl::Hidden,
+    "sroa-unroll-count", cl::Hidden,
     cl::desc("Use this unroll count for all loops including those with "
              "unroll_count pragma values, for testing purposes"));
 
 static cl::opt<unsigned> UnrollMaxCount(
-    "unroll-max-count", cl::Hidden,
+    "sroa-unroll-max-count", cl::Hidden,
     cl::desc("Set the max unroll count for partial and runtime unrolling, for"
              "testing purposes"));
 
 static cl::opt<unsigned> UnrollFullMaxCount(
-    "unroll-full-max-count", cl::Hidden,
+    "sroa-unroll-full-max-count", cl::Hidden,
     cl::desc(
         "Set the max unroll count for full unrolling, for testing purposes"));
 
 static cl::opt<bool>
-    UnrollAllowPartial("unroll-allow-partial", cl::Hidden,
+    UnrollAllowPartial("sroa-unroll-allow-partial", cl::Hidden,
                        cl::desc("Allows loops to be partially unrolled until "
                                 "-unroll-threshold loop size is reached."));
 
 static cl::opt<bool> UnrollAllowRemainder(
-    "unroll-allow-remainder", cl::Hidden,
+    "sroa-unroll-allow-remainder", cl::Hidden,
     cl::desc("Allow generation of a loop remainder (extra iterations) "
              "when unrolling a loop."));
 
 static cl::opt<bool>
-    UnrollRuntime("unroll-runtime", cl::ZeroOrMore, cl::Hidden,
+    UnrollRuntime("sroa-unroll-runtime", cl::ZeroOrMore, cl::Hidden,
                   cl::desc("Unroll loops with run-time trip counts"));
 
 static cl::opt<unsigned> UnrollMaxUpperBound(
-    "unroll-max-upperbound", cl::init(8), cl::Hidden,
+    "sroa-unroll-max-upperbound", cl::init(8), cl::Hidden,
     cl::desc(
         "The max of trip count upper bound that is considered in unrolling"));
 
 static cl::opt<unsigned> PragmaUnrollThreshold(
-    "pragma-unroll-threshold", cl::init(16 * 1024), cl::Hidden,
+    "sroa-pragma-unroll-threshold", cl::init(16 * 1024), cl::Hidden,
     cl::desc("Unrolled size limit for loops with an unroll(full) or "
              "unroll_count pragma."));
 
 static cl::opt<unsigned> FlatLoopTripCountThreshold(
-    "flat-loop-tripcount-threshold", cl::init(5), cl::Hidden,
+    "sroa-flat-loop-tripcount-threshold", cl::init(5), cl::Hidden,
     cl::desc("If the runtime tripcount for the loop is lower than the "
              "threshold, the loop is considered as flat and will be less "
              "aggressively unrolled."));
 
 static cl::opt<bool>
-    UnrollAllowPeeling("unroll-allow-peeling", cl::Hidden,
+    UnrollAllowPeeling("sroa-unroll-allow-peeling", cl::Hidden,
                        cl::desc("Allows loops to be peeled when the dynamic "
                                 "trip count is known to be low."));
 
@@ -1031,10 +1032,10 @@ static bool tryToUnrollLoop(Loop *L, DominatorTree &DT, LoopInfo *LI,
 }
 
 namespace {
-class LoopUnroll : public LoopPass {
+class SROALoopUnroll : public LoopPass {
 public:
   static char ID; // Pass ID, replacement for typeid
-  LoopUnroll(Optional<unsigned> Threshold = None,
+  SROALoopUnroll(Optional<unsigned> Threshold = None,
              Optional<unsigned> Count = None,
              Optional<bool> AllowPartial = None, Optional<bool> Runtime = None,
              Optional<bool> UpperBound = None)
@@ -1053,7 +1054,7 @@ public:
   bool runOnLoop(Loop *L, LPPassManager &) override {
     if (skipLoop(L))
       return false;
-
+return false; // TODO remove
     if (!HasUnrollFullPragma(L)) {
       return false;
     }
@@ -1091,49 +1092,17 @@ public:
 };
 }
 
-char LoopUnroll::ID = 0;
-INITIALIZE_PASS_BEGIN(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_DEPENDENCY(LoopPass)
-INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
-INITIALIZE_PASS_END(LoopUnroll, "loop-unroll", "Unroll loops", false, false)
+char SROALoopUnroll::ID = 0;
 
-Pass *llvm::createLoopUnrollPass(int Threshold, int Count, int AllowPartial,
-                                 int Runtime, int UpperBound) {
+Pass *llvm::createSROALoopUnrollPass(int Threshold, int Count, int AllowPartial,
+                                     int Runtime, int UpperBound) {
   // TODO: It would make more sense for this function to take the optionals
   // directly, but that's dangerous since it would silently break out of tree
   // callers.
-  return new LoopUnroll(Threshold == -1 ? None : Optional<unsigned>(Threshold),
+  return new SROALoopUnroll(Threshold == -1 ? None : Optional<unsigned>(Threshold),
                         Count == -1 ? None : Optional<unsigned>(Count),
                         AllowPartial == -1 ? None
                                            : Optional<bool>(AllowPartial),
                         Runtime == -1 ? None : Optional<bool>(Runtime),
                         UpperBound == -1 ? None : Optional<bool>(UpperBound));
-}
-
-Pass *llvm::createSimpleLoopUnrollPass() {
-  return llvm::createLoopUnrollPass(-1, -1, 0, 0, 0);
-}
-
-PreservedAnalyses LoopUnrollPass::run(Loop &L, LoopAnalysisManager &AM,
-                                      LoopStandardAnalysisResults &AR,
-                                      LPMUpdater &) {
-  const auto &FAM =
-      AM.getResult<FunctionAnalysisManagerLoopProxy>(L, AR).getManager();
-  Function *F = L.getHeader()->getParent();
-
-  auto *ORE = FAM.getCachedResult<OptimizationRemarkEmitterAnalysis>(*F);
-  // FIXME: This should probably be optional rather than required.
-  if (!ORE)
-    report_fatal_error("LoopUnrollPass: OptimizationRemarkEmitterAnalysis not "
-                       "cached at a higher level");
-
-  bool Changed = tryToUnrollLoop(&L, AR.DT, &AR.LI, &AR.SE, AR.TTI, AR.AC, *ORE,
-                                 /*PreserveLCSSA*/ true, ProvidedCount,
-                                 ProvidedThreshold, ProvidedAllowPartial,
-                                 ProvidedRuntime, ProvidedUpperBound);
-
-  if (!Changed)
-    return PreservedAnalyses::all();
-  return getLoopPassPreservedAnalyses();
 }

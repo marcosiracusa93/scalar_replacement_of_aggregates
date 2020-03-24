@@ -46,7 +46,7 @@ using namespace llvm;
 #define DEBUG_TYPE "loop-rotate"
 
 static cl::opt<unsigned> DefaultRotationThreshold(
-    "rotation-max-header-size", cl::init(16), cl::Hidden,
+    "sroa-rotation-max-header-size", cl::init(16), cl::Hidden,
     cl::desc("The default maximum header size for automatic loop rotation"));
 
 STATISTIC(NumRotated, "Number of loops rotated");
@@ -702,11 +702,6 @@ private:
 }
 
 char LoopRotateLegacyPass::ID = 0;
-INITIALIZE_PASS_BEGIN(LoopRotateLegacyPass, "sroa-loop-rotate", "Selectively Rotate Loops", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_DEPENDENCY(LoopPass)
-INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass)
-INITIALIZE_PASS_END(LoopRotateLegacyPass, "sroa-loop-rotate", "Selectively Rotate Loops", false, false)
 
 Pass *createSROALoopRotatePass() {
   return new LoopRotateLegacyPass(16);
