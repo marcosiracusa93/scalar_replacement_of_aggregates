@@ -40,15 +40,19 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/Pass.h>
 #include <llvm/Analysis/LoopInfo.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 
 enum SROA_optimizations
 {
+   SROA_cleanLCSSA,
+   SROA_gepiExplicitation,
+   SROA_codeSimplification,
    SROA_ptrIteratorSimplification,
    SROA_chunkOperationsLowering,
    SROA_bitcastVectorRemoval,
    SROA_removeLifetime,
-   SROA_select_lowering,
-   SROA_canonical_idxs
+   SROA_selectLowering,
+   SROA_canonicalIdxs
 };
 
 class GepiCanonicalizationPass : public llvm::FunctionPass
@@ -73,8 +77,15 @@ class GepiCanonicalizationPass : public llvm::FunctionPass
    {
       AU.setPreservesCFG();
       AU.addRequiredTransitive<llvm::LoopInfoWrapperPass>();
+      AU.addRequiredTransitive<llvm::ScalarEvolutionWrapperPass>();
    }
 };
+
+GepiCanonicalizationPass* createCleanLCSSA();
+
+GepiCanonicalizationPass* createGepiExplicitation();
+
+GepiCanonicalizationPass* createCodeSimplificationPass();
 
 GepiCanonicalizationPass* createPtrIteratorSimplificationPass();
 
