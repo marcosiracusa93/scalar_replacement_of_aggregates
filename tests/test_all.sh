@@ -25,7 +25,7 @@ for filename in *.ll; do
 
     echo RUNNING TEST
     start_time2="$(date -u +%s)"
-    ../bins/"$filename".out
+    time ../bins/"$filename".out
     end_time2="$(date -u +%s)"
     elapsed2="$(($end_time2-$start_time2))"
     echo "Running performed in $elapsed2 seconds"

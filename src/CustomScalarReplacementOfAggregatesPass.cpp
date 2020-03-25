@@ -1354,7 +1354,7 @@ I* get_related_inst(I* inst, llvm::Function* new_function)
       exit(-1);
    }
 }
-
+/*
 void initialize_callsites(llvm::Instruction* call_inst,
                           std::vector<llvm::Instruction*>& call_trace,
                           const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool>& operands_expandability_map,
@@ -1382,7 +1382,7 @@ void initialize_callsites(llvm::Instruction* call_inst,
       call_trace.pop_back();
    }
 }
-
+*/
 void update_calls_rec(llvm::Instruction* call_inst,
                       llvm::Function* parent_versioned_function,
                       std::vector<llvm::Instruction*>& call_trace,
@@ -1640,9 +1640,9 @@ void compute_function_versioning_profit(const std::map<llvm::Instruction*, std::
 void perform_function_versioning(std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
                                  llvm::Function* kernel_function,
                                  const std::map<llvm::Use*, llvm::Value*>& point_to_set_map,
-                                 const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool>& operands_expandability_map,
-                                 const std::map<llvm::AllocaInst*, bool>& allocas_expandability_map,
-                                 const std::map<llvm::GlobalVariable*, bool>& globals_expandability_map,
+                                 const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, Expandability>& operands_expandability_map,
+                                 const std::map<llvm::AllocaInst*, Expandability>& allocas_expandability_map,
+                                 const std::map<llvm::GlobalVariable*, Expandability>& globals_expandability_map,
                                  const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& operands_dimensions_map,
                                  std::map<llvm::Argument*, bool>& arg_exp_map, std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map,
                                  std::set<llvm::Function*>& function_worklist_to_ret,
@@ -1710,7 +1710,7 @@ void perform_function_versioning(std::map<llvm::Instruction*, std::vector<llvm::
       const std::vector<llvm::Instruction*>& call_trace = op_key.first;
       auto call_user = llvm::dyn_cast<llvm::Instruction>(op_key.second->getUser());
       unsigned long long operand_no = op_key.second->getOperandNo();
-      bool expandability = op_exp_it->second;
+      bool expandability = op_exp_it->second.expandability;
       const std::vector<unsigned long long>& dimension = op_dim_it->second;
 
       std::vector<std::pair<bool, std::vector<unsigned long long>>>& call_exp_and_dim_vec = op_exp_and_dim_by_callsite.at(call_user).at(call_trace);
@@ -1852,7 +1852,7 @@ void perform_function_versioning(std::map<llvm::Instruction*, std::vector<llvm::
 
 bool check_function_versioning(const std::map<llvm::Instruction*, std::vector<llvm::Instruction*>>& compact_callgraph,
                                llvm::Function* kernel_function,
-                               const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool>& operands_expandability_map,
+                               const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, Expandability>& operands_expandability_map,
                                const std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>>& operands_dimensions_map,
                                std::map<llvm::Argument*, bool>& arg_exp_map,
                                std::map<llvm::Argument*, std::vector<unsigned long long>>& arg_dims_map,
@@ -1920,7 +1920,7 @@ bool check_function_versioning(const std::map<llvm::Instruction*, std::vector<ll
       const std::vector<llvm::Instruction*>& call_trace = op_key.first;
       llvm::Instruction* call_user = llvm::dyn_cast<llvm::Instruction>(op_key.second->getUser());
       unsigned long long operand_no = op_key.second->getOperandNo();
-      bool expandability = op_exp_it->second;
+      bool expandability = op_exp_it->second.expandability;
       const std::vector<unsigned long long>& dimension = op_dim_it->second;
 
       std::vector<std::pair<bool, std::vector<unsigned long long>>>& call_exp_and_dim_vec = op_exp_and_dim_by_callsite.at(call_user).at(call_trace);
@@ -4686,29 +4686,12 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::Argument*, bool> arguments_expandability_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
 
-
-
-      std::map<llvm::AllocaInst*, bool> allocas_expandability_map2;
-      std::map<llvm::GlobalVariable*, bool> globals_expandability_map2;
-      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool> operands_expandability_map2;
-      for (auto op_it : allocas_expandability_map) {
-         allocas_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-      for (auto op_it : globals_expandability_map) {
-         globals_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-      for (auto op_it : operands_expandability_map) {
-         operands_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-
-
-
       std::set<llvm::Function*> function_worklist;
       std::map<llvm::Function*, bool> function_versioning_profitability;
 
       compute_function_versioning_profit(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, function_versioning_profitability, false);
 
-      perform_function_versioning(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map2, allocas_expandability_map2, globals_expandability_map2, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map,
+      perform_function_versioning(compact_callgraph, kernel_function, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map,
                                   function_worklist, function_versioning_profitability);
 
       propagate_constant_arguments(function_worklist);
@@ -4749,23 +4732,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::Argument*, bool> arguments_expandability_map;
       std::map<llvm::Argument*, std::vector<unsigned long long>> arguments_dimensions_map;
 
-
-
-      std::map<llvm::AllocaInst*, bool> allocas_expandability_map2;
-      std::map<llvm::GlobalVariable*, bool> globals_expandability_map2;
-      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool> operands_expandability_map2;
-      for (auto op_it : allocas_expandability_map) {
-         allocas_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-      for (auto op_it : globals_expandability_map) {
-         globals_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-      for (auto op_it : operands_expandability_map) {
-         operands_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-
-
-
       std::set<llvm::Function*> function_worklist;
       std::map<llvm::Function*, bool> function_versioning_profitability;
 
@@ -4782,7 +4748,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       compute_op_exp_and_dims(compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, function_versioning_profitability);
 
 
-      if(!check_function_versioning(compact_callgraph, kernel_function, operands_expandability_map2, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map, function_versioning_profitability))
+      if(!check_function_versioning(compact_callgraph, kernel_function, operands_expandability_map, operands_dimensions_map, arguments_expandability_map, arguments_dimensions_map, function_versioning_profitability))
       {
          llvm::errs() << "ERR: Wrong versioning in disaggregation\n";
          exit(-1);
