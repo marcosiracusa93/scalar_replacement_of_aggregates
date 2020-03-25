@@ -2537,7 +2537,7 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
    {
       // The alloca becomes the base address
       base_address = alloca_inst;
-      llvm::ConstantInt* zero_ci = llvm::ConstantInt::get(llvm::Type::getInt32Ty(alloca_inst->getContext()), 0);
+      llvm::ConstantInt* zero_ci = llvm::ConstantInt::get(llvm::Type::getInt64Ty(alloca_inst->getContext()), 0);
       idx_chain.push_back(std::make_pair(alloca_inst->getAllocatedType(), zero_ci));
 
       return true;
@@ -2546,7 +2546,7 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
    {
       // The global variable becomes the base address
       base_address = g_var;
-      llvm::ConstantInt* zero_ci = llvm::ConstantInt::get(llvm::Type::getInt32Ty(g_var->getContext()), 0);
+      llvm::ConstantInt* zero_ci = llvm::ConstantInt::get(llvm::Type::getInt64Ty(g_var->getContext()), 0);
       idx_chain.push_back(std::make_pair(g_var->getType()->getPointerElementType(), zero_ci));
 
       return true;
@@ -2555,7 +2555,7 @@ bool compute_base_and_idxs(llvm::Use* ptr_use, llvm::Value*& base_address, std::
    {
       // The argument becomes the base address
       base_address = arg;
-      llvm::ConstantInt* zero_ci = llvm::ConstantInt::get(llvm::Type::getInt32Ty(arg->getContext()), 0);
+      llvm::ConstantInt* zero_ci = llvm::ConstantInt::get(llvm::Type::getInt64Ty(arg->getContext()), 0);
       idx_chain.push_back(std::make_pair(arg->getType()->getPointerElementType(), zero_ci));
       idx_chain.push_back(std::make_pair(arg->getType()->getPointerElementType(), zero_ci));
 
@@ -2686,12 +2686,12 @@ static void gen_gepi_map(llvm::Value* gepi_base, llvm::Argument* arg, llvm::Use*
 
          if(!already_decay)
          {
-            llvm::Type* op1_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
+            llvm::Type* op1_ty = llvm::IntegerType::get(gepi_base->getContext(), 64);
             llvm::Constant* op1 = llvm::ConstantInt::get(op1_ty, 0, false);
             gepi_ops.push_back(op1);
          }
 
-         llvm::Type* op2_ty = llvm::IntegerType::get(gepi_base->getContext(), 32);
+         llvm::Type* op2_ty = llvm::IntegerType::get(gepi_base->getContext(), 64);
          llvm::Constant* op2 = llvm::ConstantInt::get(op2_ty, idx, false);
          gepi_ops.push_back(op2);
 
@@ -2951,7 +2951,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                }
             };
 
-            llvm::APInt zero_ai = llvm::APInt((unsigned int)32, 0, false);
+            llvm::APInt zero_ai = llvm::APInt((unsigned int)64, 0, false);
             llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), zero_ai);
             llvm::Value* idx_sum = zero_c;
 
@@ -2983,7 +2983,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                         offset += CountSublements::count(base_type_rec->getStructElementType(i));
                      }
 
-                     llvm::APInt offset_ap = llvm::APInt((unsigned int)32, offset, false);
+                     llvm::APInt offset_ap = llvm::APInt((unsigned int)64, offset, false);
                      llvm::ConstantInt* offset_c = llvm::ConstantInt::get(base_address->getContext(), offset_ap);
                      std::string add_name = ptr_u->getUser()->getName().str() + ".add" + idx_name;
                      idx_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, idx_sum, offset_c, add_name, user_inst);
@@ -3007,14 +3007,14 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                         idx_name += ".x";
                         std::string mul_name = ptr_u->getUser()->getName().str() + ".mul" + idx_name;
                         std::string add_name = mul_name + ".add";
-                        llvm::APInt sub_count_ap = llvm::APInt(32, CountSublements::count(ty), false);
+                        llvm::APInt sub_count_ap = llvm::APInt(64, CountSublements::count(ty), false);
                         llvm::ConstantInt* sub_count_ci = llvm::ConstantInt::get(base_address->getContext(), sub_count_ap);
 
-                        if(idx_val->getType()->isIntegerTy(64))
+                        if(idx_val->getType()->isIntegerTy(32))
                         {
-                           llvm::Type* int32_ty = llvm::Type::getInt32Ty(user_inst->getContext());
+                           llvm::Type* int64_ty = llvm::Type::getInt64Ty(user_inst->getContext());
                            std::string sext_name = mul_name + ".sext";
-                           idx_val = llvm::CastInst::Create(llvm::Instruction::CastOps::Trunc, idx_val, int32_ty, sext_name, user_inst);
+                           idx_val = llvm::SExtInst::Create(llvm::Instruction::CastOps::SExt, idx_val, int64_ty, sext_name, user_inst);
                         }
                         llvm::BinaryOperator* mul = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Mul, sub_count_ci, idx_val, mul_name, user_inst);
                         idx_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, idx_sum, mul, add_name, user_inst);
@@ -3041,14 +3041,14 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
                   std::string mul_name = ptr_u->getUser()->getName().str() + ".mul" + idx_name;
                   std::string add_name = mul_name + ".add";
-                  llvm::APInt sub_count_ap = llvm::APInt(32, CountSublements::count(base_type_rec->getArrayElementType()), false);
+                  llvm::APInt sub_count_ap = llvm::APInt(64, CountSublements::count(base_type_rec->getArrayElementType()), false);
                   llvm::ConstantInt* sub_count_ci = llvm::ConstantInt::get(base_address->getContext(), sub_count_ap);
 
-                  if(idx_val->getType()->isIntegerTy(64))
+                  if(idx_val->getType()->isIntegerTy(32))
                   {
-                     llvm::Type* int32_ty = llvm::Type::getInt32Ty(user_inst->getContext());
+                     llvm::Type* int64_ty = llvm::Type::getInt64Ty(user_inst->getContext());
                      std::string sext_name = mul_name + ".sext";
-                     idx_val = llvm::CastInst::Create(llvm::Instruction::CastOps::Trunc, idx_val, int32_ty, sext_name, user_inst);
+                     idx_val = llvm::SExtInst::Create(llvm::Instruction::CastOps::SExt, idx_val, int64_ty, sext_name, user_inst);
                   }
                   llvm::BinaryOperator* mul = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Mul, sub_count_ci, idx_val, mul_name, user_inst);
                   idx_sum = llvm::BinaryOperator::Create(llvm::Instruction::BinaryOps::Add, idx_sum, mul, add_name, user_inst);
@@ -3164,7 +3164,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
 
                llvm::Value* curr_idx = &*arg_offset_it;
 
-               llvm::APInt type_idx_ai = llvm::APInt(32, type_idx++, false);
+               llvm::APInt type_idx_ai = llvm::APInt(64, type_idx++, false);
                llvm::Type* ty1 = exp_ty;
                llvm::Type* ty2 = ptr_u->get()->getType()->getPointerElementType();
                if(ty1 != ty2)
@@ -3251,7 +3251,7 @@ void process_single_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::se
                double idx_rec = type_idx_ai.getSExtValue();
                for(unsigned long long gepi_idx : gepi_chain)
                {
-                  llvm::APInt gepi_idx_ap = llvm::APInt(32, gepi_idx);
+                  llvm::APInt gepi_idx_ap = llvm::APInt(64, gepi_idx);
                   llvm::ConstantInt* gepi_idx_ci = llvm::ConstantInt::get(user_inst->getContext(), gepi_idx_ap);
                   el_idx_chain.push_back(std::make_pair(nullptr, gepi_idx_ci));
                }
@@ -3390,7 +3390,7 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
 
          if(idx_chain.empty())
          {
-            llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(32, (unsigned long long)0));
+            llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(64, (unsigned long long)0));
             idx_chain.push_back(std::make_pair(arg_u->getType()->getPointerElementType(), zero_c));
          }
          else
@@ -3399,7 +3399,7 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
 
             if(idx_chain.empty())
             {
-               llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(32, (unsigned long long)0));
+               llvm::ConstantInt* zero_c = llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(64, (unsigned long long)0));
                idx_chain.push_back(std::make_pair(arg_u->getType()->getPointerElementType(), zero_c));
             }
             else
@@ -3484,10 +3484,10 @@ void process_arg_pointer(llvm::Use* ptr_u, llvm::BasicBlock*& new_bb, std::set<l
                      if(!llvm::isa<llvm::Argument>(exp_val))
                      {
                         std::vector<llvm::Value*> gepi_ops = std::vector<llvm::Value*>();
-                        llvm::Type* op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 32);
+                        llvm::Type* op1_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
                         llvm::Constant* op1 = llvm::ConstantInt::get(op1_ty, 0, false);
                         gepi_ops.push_back(op1);
-                        llvm::Type* op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 32);
+                        llvm::Type* op2_ty = llvm::IntegerType::get(exp_arg_u->getContext(), 64);
                         llvm::Constant* op2 = llvm::ConstantInt::get(op2_ty, 0, false);
                         gepi_ops.push_back(op2);
 
