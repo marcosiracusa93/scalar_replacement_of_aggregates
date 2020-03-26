@@ -55,6 +55,7 @@
 #include <stack>
 
 #include <cxxabi.h>
+#include <llvm/ADT/Statistic.h>
 
 #define DEBUG_TYPE "csroa"
 
@@ -62,12 +63,32 @@
 
 #define DEBUG_CSROA
 
+STATISTIC(TotalAllocaBytes, "Total amount of aggregate bytes by alloca instructions");
+STATISTIC(TotalGlobalBytes, "Total amount of aggregate bytes by Global variables");
+STATISTIC(TotalOperandBytes, "Total amount of aggregate bytes as function operands");
+STATISTIC(DisaggregatedAllocaBytes, "Disaggregated amount of aggregate bytes by alloca instructions");
+STATISTIC(DisaggregatedGlobalBytes, "Disaggregated amount of aggregate bytes by Global variables");
+STATISTIC(DisaggregatedOperandBytes, "Disaggregated amount of aggregate bytes as function operands");
+
 /// ************************************************************************************** ///
 /// *** Utilities and callbacks for computing cost and expandability of aggregate base *** ///
 /// ************************************************************************************** ///
 
 unsigned long MaxNumScalarTypes = 32;
 unsigned long MaxTypeByteSize = 128;
+
+unsigned long long get_first_type_bitwidth(llvm::Type *ty) {
+   unsigned long long bitwidth = 0;
+   if (ty->isIntegerTy()) {
+      bitwidth = ty->getIntegerBitWidth();
+   } else if (ty->isFloatTy()) {
+      bitwidth = 32;
+   }  else if (ty->isDoubleTy()) {
+      bitwidth = 64;
+   }
+
+   return bitwidth;
+}
 
 unsigned long get_num_elements(llvm::Type *ty, unsigned long decayed_dim_if_any = 1)
 {
@@ -125,13 +146,13 @@ Expandability compute_alloca_expandability_profit(llvm::AllocaInst *alloca_inst,
       msg = "# aggregate types is " + std::to_string(num_elements) + " (allowed " + std::to_string(MaxNumScalarTypes) + ") and allocates size is " + std::to_string(size) + "(allowed " + std::to_string(MaxTypeByteSize) + ")";
    }
 
-   double area_revenue = 0.0;
-   double area_cost = 0.0;
-   double area_profit = 100.0;//area_revenue - area_cost;
+   double area_revenue = (double)size * 8.0;
+   double area_cost = (double)size * 8.0; // TODO what about here? It's always 0
+   double area_profit = area_revenue - area_cost;
 
    double latency_revenue = 0.0;
    double latency_cost = 0.0;
-   double latency_profit = 100.0;//latency_revenue - latency_cost;
+   double latency_profit = latency_revenue - latency_cost;
 
    return Expandability(expandable_size, area_profit, latency_profit);
 }
@@ -151,14 +172,13 @@ Expandability compute_global_expandability_profit(llvm::GlobalVariable *g_var,
       msg = "# aggregate types is " + std::to_string(num_elements) + " (allowed " + std::to_string(MaxNumScalarTypes) + ") and allocates size is " + std::to_string(size) + "(allowed " + std::to_string(MaxTypeByteSize) + ")";
    }
 
-   double area_revenue = 0.0;
-   double area_cost = 0.0;
-   double area_profit = 100.0;//area_revenue - area_cost;
+   double area_revenue = (double)size * 8.0;
+   double area_cost = (double)size * 8.0; // TODO what about here? It's always 0
+   double area_profit = area_revenue - area_cost;
 
    double latency_revenue = 0.0;
    double latency_cost = 0.0;
-   double latency_profit = 100.0;//latency_revenue - latency_cost;
-
+   double latency_profit = latency_revenue - latency_cost;
    return Expandability(expandable_size, area_profit, latency_profit);
 }
 
@@ -178,13 +198,13 @@ Expandability compute_operand_expandability_profit(llvm::Use *op_use,
       msg = "# aggregate types is " + std::to_string(num_elements) + " (allowed " + std::to_string(MaxNumScalarTypes) + ") and allocates size is " + std::to_string(size) + "(allowed " + std::to_string(MaxTypeByteSize) + ")";
    }
 
-   double area_revenue = 0.0;
+   double area_revenue = (double)size * 8.0; // TODO sure about that?
    double area_cost = 0.0;
-   double area_profit = 100.0;//area_revenue - area_cost;
+   double area_profit = area_revenue - area_cost;
 
    double latency_revenue = 0.0;
    double latency_cost = 0.0;
-   double latency_profit = 100.0;//latency_revenue - latency_cost;
+   double latency_profit = latency_revenue - latency_cost;
 
    return Expandability(expandable_size, area_profit, latency_profit);
 }
@@ -194,21 +214,21 @@ Expandability compute_gepi_expandability_profit(llvm::GEPOperator *gep_op, std::
    if (gep_op->hasAllConstantIndices()) {
       double area_revenue = 0.0;
       double area_cost = 0.0;
-      double area_profit = 100.0;//area_revenue - area_cost;
+      double area_profit = area_revenue - area_cost;
 
       double latency_revenue = 0.0;
       double latency_cost = 0.0;
-      double latency_profit =  100.0;//latency_revenue - latency_cost;
+      double latency_profit =  latency_revenue - latency_cost;
 
       return Expandability(true,  area_profit, latency_profit);
    } else {
-      double area_revenue = 0.0;
+      double area_revenue = 3.0 * 32.0 * gep_op->getNumIndices();
       double area_cost = 0.0;
-      double area_profit = 100.0;//area_revenue - area_cost;
+      double area_profit = area_revenue - area_cost;
 
       double latency_revenue = 0.0;
       double latency_cost = 0.0;
-      double latency_profit = 100.0;//latency_revenue - latency_cost;
+      double latency_profit = latency_revenue - latency_cost;
 
       return Expandability(true, area_profit, latency_profit);
    }
@@ -216,7 +236,69 @@ Expandability compute_gepi_expandability_profit(llvm::GEPOperator *gep_op, std::
 
 Expandability compute_function_versioning_cost(llvm::Function *function)
 {
-   return Expandability(true, 1000000.0, 1000000.0);
+   unsigned long long area_cost = 0;
+   unsigned long long latency_cost = 0;
+
+   for (llvm::BasicBlock &bb : *function) {
+      for (llvm::Instruction & i : bb) {
+         if (i.isBinaryOp()) {
+            bool all_const_ops = true;
+
+            for (llvm::Use &op : i.operands()) {
+               if (!llvm::isa<llvm::Constant>(op.get())) {
+                  all_const_ops = false;
+                  break;
+               }
+            }
+
+            if (!all_const_ops) {
+               unsigned long long inst_cost = get_first_type_bitwidth(i.getType());
+
+               if (i.isShift()) {
+                  inst_cost *= 0;
+               } else if (i.getOpcodeName() == "add" or i.getOpcodeName() == "fadd") {
+                  inst_cost *= 1;
+               } else if (i.getOpcodeName() == "sub" or i.getOpcodeName() == "fsub") {
+                  inst_cost *= 1;
+               } else if (i.getOpcodeName() == "mul" or i.getOpcodeName() == "fmul") {
+                  inst_cost *= 100;
+               } else {
+                  inst_cost *= 200;
+               }
+
+               area_cost += inst_cost;
+            }
+         }
+      }
+   }
+
+   return Expandability(true, area_cost, latency_cost);
+}
+
+Expandability compute_load_expandability_profit(llvm::LoadInst *load_inst, std::string &msg)
+{
+   double area_revenue = 3.0 * get_first_type_bitwidth(load_inst->getType());
+   double area_cost = 0.0;
+   double area_profit = area_revenue - area_cost;
+
+   double latency_revenue = 0.0;//2.0 * get_first_type_bitwidth(load_inst->getType());
+   double latency_cost = 0.0;
+   double latency_profit = latency_revenue - latency_cost;
+
+   return Expandability(true, area_profit, latency_profit);
+}
+
+Expandability compute_store_expandability_profit(llvm::StoreInst *store_inst, std::string &msg)
+{
+   double area_revenue = 2.0 * get_first_type_bitwidth(store_inst->getType());
+   double area_cost = 0.0;
+   double area_profit = area_revenue - area_cost;
+
+   double latency_revenue = 0.0;
+   double latency_cost = 0.0;//get_first_type_bitwidth(store_inst->getType());
+   double latency_profit = latency_revenue - latency_cost;
+
+   return Expandability(true, area_profit, latency_profit);
 }
 
 /// ************************************************************************************** ///
@@ -367,7 +449,7 @@ class Utilities
             }
 
             auto exp_it = op_expandability_map.find(std::make_pair(call_trace, &op));
-            std::string exp_str = (exp_it != op_expandability_map.end() ? std::to_string(exp_it->second.expandability) + ", " + std::to_string(exp_it->second.area_profit) + ", " + std::to_string(exp_it->second.latency_profit) : "-");
+            std::string exp_str = (exp_it != op_expandability_map.end() ? exp_it->second.get_string() : "-");
 
             auto dim_it = op_dimensions_map.find(std::make_pair(call_trace, &op));
             std::string dim_str = "-";
@@ -599,7 +681,8 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
             gepop_rec = llvm::dyn_cast<llvm::GEPOperator>(gepop_rec->getPointerOperand());
          }
 
-         Expandability expandability(true, 0.0, 0.0);
+         std::string str = "";
+         Expandability expandability = compute_gepi_expandability_profit(gep_op, str);
          for(llvm::Use& use : gep_op->uses())
          {
             Expandability ptr_exp = get_ptr_expandability(use, base_ptr, operands_expandability_map, point_to_set_map,
@@ -625,14 +708,21 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
           llvm::dbgs() << "    " << get_val_string(load_inst) << " inhibits user expansion\n";
       }
 
-      return Expandability(ptr_use.getOperandNo() == load_inst->getPointerOperandIndex(), 0.0, 0.0);
+      std::string msg = "";
+      Expandability load_expandability = compute_load_expandability_profit(load_inst, msg);
+      load_expandability.expandability = ptr_use.getOperandNo() == load_inst->getPointerOperandIndex();
+      return load_expandability;
    }
    else if(llvm::StoreInst* store_inst = llvm::dyn_cast<llvm::StoreInst>(ptr_use.getUser()))
    {
       if (ptr_use.getOperandNo() != store_inst->getPointerOperandIndex()) {
          llvm::dbgs() << "    " << get_val_string(store_inst) << " inhibits user expansion\n";
       }
-      return Expandability(ptr_use.getOperandNo() == store_inst->getPointerOperandIndex(), 0.0, 0.0);
+
+      std::string msg = "";
+      Expandability store_expandability = compute_store_expandability_profit(store_inst, msg);
+      store_expandability.expandability = ptr_use.getOperandNo() == store_inst->getPointerOperandIndex();
+      return store_expandability;
    }
    else if(llvm::isa<llvm::CallInst>(ptr_use.getUser()) || llvm::isa<llvm::InvokeInst>(ptr_use.getUser()))
    {
@@ -674,7 +764,7 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
          }
 
          if (!expandability.expandability) {
-            llvm::dbgs() << "    Use #" << ptr_use.getOperandNo() << " in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion (non constant gepi chain in call)\n";
+            llvm::dbgs() << "    Use #" << ptr_use.getOperandNo() << " in " << get_val_string(ptr_use.getUser()) << " inhibits user expansion\n";
          }
 
          llvm::Argument* ptr_arg = &*std::next(called_function->arg_begin(), ptr_use.getOperandNo());
@@ -692,6 +782,12 @@ Expandability get_ptr_expandability(llvm::Use &ptr_use,
             }
          }
          call_trace.pop_back();
+
+         double profit = expandability.area_profit;
+         bool got_casted = expandability.cast();
+         if (got_casted) {
+            llvm::dbgs() << "INFO: not profitable (" << profit << ") to expand use #" << ptr_use.getOperandNo() << " in " << get_val_string(ptr_use.getUser()) << "\n";
+         }
 
          if(!operands_expandability_map.insert(std::make_pair(std::make_pair(call_trace, &ptr_use), expandability)).second)
          {
@@ -790,6 +886,12 @@ void compute_allocas_expandability_rec(llvm::Instruction* call_inst,
                   if (!ptr_exp.expandability) {
                      llvm::dbgs() << "WAR: " << get_val_string(alloca_inst) << " in " << alloca_inst->getFunction()->getName() << " cannot expand because of use #" << use.getOperandNo() << " in " << get_val_string(use.getUser()) << "\n";
                   }
+               }
+
+               double profit = expandability.area_profit;
+               bool got_casted = expandability.cast();
+               if (got_casted) {
+                  llvm::dbgs() << "INFO: not profitable (" << profit << ") to expand " << get_val_string(alloca_inst) << "\n";
                }
 
                allocas_expandability_map.insert(std::make_pair(alloca_inst, expandability));
@@ -916,6 +1018,12 @@ void compute_aggregates_expandability(llvm::Function* kernel_function,
                if (!ptr_exp.expandability) {
                   llvm::dbgs() << "WAR: " << get_val_string(&global_var) << " cannot expand because of use #" << use.getOperandNo() << " in " << get_val_string(use.getUser()) << "\n";
                }
+            }
+
+            double profit = expandability.area_profit;
+            bool got_casted = expandability.cast();
+            if (got_casted) {
+               llvm::dbgs() << "INFO: not profitable (" << profit << ") to expand " << global_var.getName() << "\n";
             }
 
             globals_expandability_map.insert(std::make_pair(&global_var, expandability));
@@ -1577,7 +1685,6 @@ void compute_function_versioning_profit(const std::map<llvm::Instruction*, std::
    }
 
    for(llvm::Function* function : function_worklist) {
-
       std::set<std::pair<std::vector<bool>, std::vector<std::vector<unsigned long long>>>> versions_set;
 
       for (llvm::User *user : function->users()) {
@@ -1625,15 +1732,16 @@ void compute_function_versioning_profit(const std::map<llvm::Instruction*, std::
       Expandability versioning_profit = versioning_revenue;
       versioning_profit -= versioning_cost;
       versioning_profit.expandability = true;
-      llvm::dbgs() << "INFO: Estimated versioning profit of " << versioning_profit.get_string() << " for function " << function->getName() << "\n";
+      llvm::dbgs() << "INFO: Estimated profit of " << versioning_profit.get_string() << " for versioning function " << function->getName() << " #" << num_versions << " times\n";
+
       versioning_profit.cast();
-      bool is_expandable = versioning_profit.expandability or num_versions <= 1;
+      bool is_expandable = versioning_profit.expandability and !force_no_versioning or num_versions <= 0;
 
       if (!is_expandable) {
-         llvm::dbgs() << "WAR: Not versioning function " << function->getName() << " since not profitable\n";
+         llvm::dbgs() << "INFO: Not versioning function " << function->getName() << " since not profitable\n";
       }
 
-      versioning_cost_map[function] = !force_no_versioning and versioning_profit.expandability;
+      versioning_cost_map[function] = versioning_profit.expandability;
    }
 }
 
@@ -2162,9 +2270,20 @@ void expand_allocas(const std::set<llvm::Function*>& function_worklist,
          {
             if(llvm::AllocaInst* alloca_inst = llvm::dyn_cast<llvm::AllocaInst>(&i))
             {
+               if (alloca_inst->getAllocatedType()->isAggregateType()) {
+                  TotalAllocaBytes += DL.getTypeAllocSize(alloca_inst->getAllocatedType());
+               }
+
                if(allocas_expandability_map.at(alloca_inst).expandability)
                {
                   alloca_vec.push_back(alloca_inst);
+
+                  llvm::dbgs() << "INFO: expanding alloca " << get_val_string(alloca_inst) << "\n";
+                  DisaggregatedAllocaBytes += DL.getTypeAllocSize(alloca_inst->getAllocatedType());
+               } else {
+                  if (alloca_inst->getAllocatedType()->isAggregateType()) {
+                     llvm::dbgs() << "INFO: not expanding alloca " << get_val_string(alloca_inst) << "\n";
+                  }
                }
             }
          }
@@ -2173,7 +2292,6 @@ void expand_allocas(const std::set<llvm::Function*>& function_worklist,
          {
             if(alloca_inst->getAllocatedType()->isAggregateType())
             {
-               llvm::dbgs() << "INFO: expanding alloca " << get_val_string(alloca_inst) << "\n";
                expand_alloca(alloca_inst, DL, exp_allocas_map);
             }
          }
@@ -2191,11 +2309,20 @@ void expand_globals(llvm::Module* module,
 
    for(llvm::GlobalVariable& g_var : module->globals())
    {
+      if (g_var.getValueType()->isAggregateType()) {
+         TotalGlobalBytes += DL.getTypeAllocSize(g_var.getValueType());
+      }
+
       if(globals_expandability_map.at(&g_var).expandability)
       {
-         llvm::dbgs() << "INFO: expanding global named " << g_var.getName() << "\n";
-
          globals_to_exp.push_back(&g_var);
+
+         llvm::dbgs() << "INFO: expanding global named " << g_var.getName() << "\n";
+         DisaggregatedGlobalBytes += DL.getTypeAllocSize(g_var.getValueType());
+      } else {
+         if (g_var.getValueType()->isAggregateType()) {
+            llvm::dbgs() << "INFO: not expanding global named " << g_var.getName() << "\n";
+         }
       }
    }
 
@@ -2437,6 +2564,17 @@ void expand_signatures_and_call_sites(std::set<llvm::Function*>& function_workli
             ExpArgs::exp_arg(new_arg_ty, (arg_dimensions.empty() ? 0 : arg_dimensions.front()), new_arg, mock_exp_args_map, newMockFunctionArgs, exp_ops);
          }
          exp_ops_map.insert(std::make_pair(arg, exp_ops));
+
+         if (arg->getType()->isPointerTy()) {
+            unsigned long long arg_size = arg->getParent()->getParent()->getDataLayout().getTypeAllocSize(arg->getType()->getPointerElementType());
+            if (!arg_dimensions_map.at(arg).empty()) {
+               arg_size *= arg_dimensions_map.at(arg).front();
+            }
+            TotalOperandBytes += arg_size;
+            if (arg_expandability) {
+               DisaggregatedOperandBytes += arg_size;
+            }
+         }
       }
 
       for(auto& a : newMockFunctionArgs)
@@ -4545,123 +4683,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       exit(-1);
    }
-/*
-   if(sroa_phase == SROA_codeSimplification) {
-      llvm::errs() << "\n ***********************************************";
-      llvm::errs() << "\n ********** BEGIN CODE SIMPLIFICATION **********";
-      llvm::errs() << "\n *********************************************** \n";
-
-      const llvm::DataLayout DL = module.getDataLayout();
-
-      std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
-
-      std::map<llvm::AllocaInst*, Expandability> allocas_expandability_map;
-      std::map<llvm::GlobalVariable*, Expandability> globals_expandability_map;
-      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, Expandability> operands_expandability_map;
-      std::map<llvm::Use*, llvm::Value*> point_to_set_map;
-      std::map<llvm::Function*, bool> empty_function_versioning_profitability;
-
-      compute_aggregates_expandability(kernel_function, &module, allocas_expandability_map, globals_expandability_map, operands_expandability_map, point_to_set_map, compact_callgraph, DL, empty_function_versioning_profitability);
-
-
-      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, std::vector<unsigned long long>> operands_dimensions_map;
-      compute_op_exp_and_dims(compact_callgraph, point_to_set_map, operands_expandability_map, allocas_expandability_map, globals_expandability_map, operands_dimensions_map, DL, empty_function_versioning_profitability);
-
-
-      std::map<llvm::AllocaInst*, bool> allocas_expandability_map2;
-      std::map<llvm::GlobalVariable*, bool> globals_expandability_map2;
-      std::map<std::pair<std::vector<llvm::Instruction*>, llvm::Use*>, bool> operands_expandability_map2;
-      for (auto op_it : allocas_expandability_map) {
-         allocas_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-      for (auto op_it : globals_expandability_map) {
-         globals_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-      for (auto op_it : operands_expandability_map) {
-         operands_expandability_map2[op_it.first] = op_it.second.expandability;
-      }
-
-      std::map<llvm::Function*, std::map<llvm::Use*, llvm::Value*>> point_to_set_by_function_map;
-      for(auto pts_it : point_to_set_map) {
-         llvm::Use *use = pts_it.first;
-         llvm::Value *base = pts_it.second;
-
-         if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use->getUser())) {
-            point_to_set_by_function_map[user_inst->getFunction()].insert(std::make_pair(use, base));
-         }
-      }
-
-      for(auto p_it : point_to_set_by_function_map) {
-         llvm::Function *function = p_it.first;
-         const std::map<llvm::Use*, llvm::Value*> &point_to_set_map = p_it.second;
-
-         llvm::ScalarEvolution &SE = getAnalysis<llvm::ScalarEvolutionWrapperPass>(*function).getSE();
-         llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>(*function).getLoopInfo();
-
-         std::map<const llvm::Loop *, unsigned long long> non_const_idxs_per_loop;
-         std::map<const llvm::CallInst *, unsigned long long> non_const_idxs_per_call;
-
-         for (auto pts_it : point_to_set_map) {
-            llvm::Use *use = pts_it.first;
-            llvm::Value *base = pts_it.second;
-
-            if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use->getUser())) {
-               if (llvm::isa<llvm::CallInst>(user_inst) and
-                           !llvm::dyn_cast<llvm::CallInst>(user_inst)->getCalledFunction()->isIntrinsic() or
-                       llvm::isa<llvm::LoadInst>(user_inst) or
-                       llvm::isa<llvm::StoreInst>(user_inst)) {
-                  if (SE.isSCEVable(use->get()->getType())) {
-                     use->get()->dump();
-                     use->getUser()->dump();
-                     llvm::errs() << "F: " << function->getName() << "\n";
-                     const llvm::SCEV *use_scev = SE.getSCEV(use->get());
-
-                     const llvm::SCEV *scev_rec = use_scev;
-                     while (const llvm::SCEVAddRecExpr *use_add_rec_scev_rec = llvm::dyn_cast<llvm::SCEVAddRecExpr>(
-                             scev_rec)) {
-                        const llvm::Loop *loop = use_add_rec_scev_rec->getLoop();
-
-                        if (loop) {
-                           auto i_it = non_const_idxs_per_loop.insert(std::make_pair(loop, 0));
-                           if (!i_it.second) {
-                              i_it.first->second += 1;
-                           }
-
-                           if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user_inst)) {
-                              non_const_idxs_per_call[call_inst] += 1;
-                           }
-                        }
-                        scev_rec = use_add_rec_scev_rec->evaluateAtIteration(
-                                SE.getZero(llvm::Type::getInt32Ty(module.getContext())), SE);
-                     }
-                  }
-               }
-            }
-         }
-
-
-         for (auto loop_it : non_const_idxs_per_loop) {
-            const llvm::Loop *loop = loop_it.first;
-            llvm::MDNode *loopID = llvm::MDNode::get(module.getContext(),
-                                                     llvm::MDString::get(module.getContext(), "llvm.loop.unroll.full"));
-
-            std::vector<llvm::Metadata *> metas;
-            metas.push_back(loopID);
-            metas.push_back(loopID);
-            llvm::MDTuple *tuple = llvm::MDTuple::getDistinct(module.getContext(), metas);
-            tuple->replaceOperandWith(0, tuple);
-
-            loop->setLoopID(tuple);
-         }
-      }
-
-      llvm::errs() << "\n *********************************************";
-      llvm::errs() << "\n ********** END CODS SIMPLIFICATION **********";
-      llvm::errs() << "\n ********************************************* \n";
-
-      return true;
-   }
-*/
    if(sroa_phase == SROA_functionVersioning)
    {
       llvm::dbgs() << "\n ***********************************************";
@@ -4845,6 +4866,13 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       if(CSROAMaxTransformations != -1)
          llvm::dbgs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
+
+      llvm::dbgs() << "Total amount of aggregate bytes by alloca instructions " << TotalAllocaBytes << "\n";
+      llvm::dbgs() << "Total amount of aggregate bytes by Global variables " << TotalGlobalBytes << "\n";
+      llvm::dbgs() << "Total amount of aggregate bytes as function operands " << TotalOperandBytes << "\n";
+      llvm::dbgs() << "Disaggregated amount of aggregate bytes by alloca instructions " << DisaggregatedAllocaBytes << "\n";
+      llvm::dbgs() << "Disaggregated amount of aggregate bytes by Global variables " << DisaggregatedGlobalBytes << "\n";
+      llvm::dbgs() << "Disaggregated amount of aggregate bytes as function operands " << DisaggregatedOperandBytes << "\n";
 
       llvm::dbgs() << "\n ****************************************";
       llvm::dbgs() << "\n ********** END DISAGGREGATION **********";

@@ -75,9 +75,10 @@ int main(int argc, char** argv)
 
     char progName[] = "progName";
     char debug[] = "-debug";
+    char stats[] = "-stats";
     char print_after_all[] = "-print-after-all";
 
-    //char* opt_argv[] = {progName, debug/*, print_after_all*/};
+    char* opt_argv[] = {progName, /*debug,*/ stats, /*print_after_all*/};
     //llvm::cl::ParseCommandLineOptions(2, opt_argv, "");
 
 

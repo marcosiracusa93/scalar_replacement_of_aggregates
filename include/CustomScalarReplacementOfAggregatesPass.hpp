@@ -77,10 +77,15 @@ public:
     Expandability(bool expandability, double area_profit, double latency_profit) :
             expandability(expandability), area_profit(area_profit), latency_profit(latency_profit) {}
 
-    void cast() {
-       expandability = expandability and (area_profit + latency_profit) > 0;
+    bool cast() {
+       bool profitable = (area_profit + latency_profit) >= 0;
+       bool got_casted = expandability and !profitable;
+
+       expandability = expandability and profitable;
        area_profit = 0.0;
        latency_profit = 0.0;
+
+       return got_casted;
     }
 
     Expandability get_casted() {
@@ -116,7 +121,7 @@ public:
        latency_profit -= exp.latency_profit;
     }
 
-    std::string get_string() {
+    std::string get_string() const {
        std::string ret = "<" + std::to_string(expandability) + "," + std::to_string(area_profit) + "," + std::to_string(latency_profit) + ">";
        return ret;
     }
