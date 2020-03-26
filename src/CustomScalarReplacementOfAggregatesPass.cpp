@@ -4688,6 +4688,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       llvm::dbgs() << "\n ***********************************************";
       llvm::dbgs() << "\n ********** BEGIN FUNCTION VERSIONING **********";
       llvm::dbgs() << "\n *********************************************** \n";
+      auto t_begin = std::chrono::high_resolution_clock::now();
       const llvm::DataLayout DL = module.getDataLayout();
 
       std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
@@ -4724,6 +4725,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
          llvm::dbgs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
 
+      auto t_end = std::chrono::high_resolution_clock::now();
+      double duration = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_begin).count();
+      llvm::dbgs() << "\nINFO: Function versioning took " << duration * 1e-9 << " seconds to complete";
       llvm::dbgs() << "\n *********************************************";
       llvm::dbgs() << "\n ********** END FUNCTION VERSIONING **********";
       llvm::dbgs() << "\n ********************************************* \n";
@@ -4736,6 +4740,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       llvm::dbgs() << "\n ******************************************";
       llvm::dbgs() << "\n ********** BEGIN DISAGGREGATION **********";
       llvm::dbgs() << "\n ****************************************** \n";
+      auto t_begin = std::chrono::high_resolution_clock::now();
       const llvm::DataLayout DL = module.getDataLayout();
 
       std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
@@ -4874,6 +4879,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       llvm::dbgs() << "Disaggregated amount of aggregate bytes by Global variables " << DisaggregatedGlobalBytes << "\n";
       llvm::dbgs() << "Disaggregated amount of aggregate bytes as function operands " << DisaggregatedOperandBytes << "\n";
 
+      auto t_end = std::chrono::high_resolution_clock::now();
+      double duration = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_begin).count();
+      llvm::dbgs() << "\nINFO: Disaggregation took " << duration * 1e-9 << " seconds to complete";
       llvm::dbgs() << "\n ****************************************";
       llvm::dbgs() << "\n ********** END DISAGGREGATION **********";
       llvm::dbgs() << "\n **************************************** \n";
@@ -4886,6 +4894,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       llvm::dbgs() << "\n ********************************************";
       llvm::dbgs() << "\n ********** BEGIN WRAPPER INLINING **********";
       llvm::dbgs() << "\n ******************************************** \n";
+      auto t_begin = std::chrono::high_resolution_clock::now();
 
       std::map<llvm::Instruction*, std::vector<llvm::Instruction*>> compact_callgraph;
 
@@ -4920,6 +4929,9 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
          llvm::dbgs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
 #endif
 
+      auto t_end = std::chrono::high_resolution_clock::now();
+      double duration = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_begin).count();
+      llvm::dbgs() << "\nINFO: Wrapper inlining took " << duration * 1e-9 << " seconds to complete";
       llvm::dbgs() << "\n ******************************************";
       llvm::dbgs() << "\n ********** END WRAPPER INLINING **********";
       llvm::dbgs() << "\n ****************************************** \n";

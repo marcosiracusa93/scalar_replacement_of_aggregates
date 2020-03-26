@@ -55,6 +55,16 @@ enum SROA_optimizations
    SROA_canonicalIdxs
 };
 
+
+static const char* optimization_names[] = {"LCSSA cleanup",
+                                           "GEPOP to GEPI",
+                                           "Force unroll",
+                                           "Chunk operations lowering",
+                                           "Bitcast vector removal",
+                                           "Remove lifetime intrinsic",
+                                           "Select lowering",
+                                           "Canonical indexes"};
+
 class GepiCanonicalizationPass : public llvm::FunctionPass
 {
  public:
@@ -62,6 +72,7 @@ class GepiCanonicalizationPass : public llvm::FunctionPass
 
  private:
    unsigned short optimization_selection = 0;
+
 
  public:
    explicit GepiCanonicalizationPass(char& _ID, unsigned short optimization_selection) : llvm::FunctionPass(_ID), optimization_selection(optimization_selection)

@@ -1512,38 +1512,52 @@ bool clean_lcssa(llvm::Function &function) {
 
 bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
 {
+   auto t_begin = std::chrono::high_resolution_clock::now();
+   bool result = false;
    switch(optimization_selection)
    {
       case SROA_cleanLCSSA:
-         return clean_lcssa(function);
+         result = clean_lcssa(function);
+         break;
       case SROA_gepiExplicitation:
-         return gepi_explicitation(function);
+         result = gepi_explicitation(function);
+         break;
       case SROA_codeSimplification: {
          // Check CHStone adpcm for examples
          llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
          llvm::ScalarEvolution &SE = getAnalysis<llvm::ScalarEvolutionWrapperPass>().getSE();
-         return code_simplification(function, LI, SE);
+         result = code_simplification(function, LI, SE);
+         break;
       }
       case SROA_ptrIteratorSimplification: {
          // Check CHStone adpcm for examples
          llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
-         return ptr_iterator_simplification(function, LI);
+         result = ptr_iterator_simplification(function, LI);
+         break;
       }
       case SROA_chunkOperationsLowering:
-         return chunk_operations_lowering(function);
+         result = chunk_operations_lowering(function);
+         break;
       case SROA_bitcastVectorRemoval:
-         return bitcast_vector_removal(function);
+         result = bitcast_vector_removal(function);
+         break;
       case SROA_removeLifetime:
-         return remove_lifetime(function);
+         result = remove_lifetime(function);
+         break;
       case SROA_selectLowering:
-         return select_lowering(function);
+         result = select_lowering(function);
+         break;
       case SROA_canonicalIdxs:
-         return canonical_idxs(function);
+         result = canonical_idxs(function);
+         break;
       default:
          llvm::errs() << "ERR: No optimization found\n";
          exit(-1);
    }
-   return false;
+   auto t_end = std::chrono::high_resolution_clock::now();
+   double duration = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_begin).count();
+   llvm::dbgs() << "INFO: " << optimization_names[optimization_selection] << " of " << function.getName() << " took " << duration * 1e-9 << " seconds to complete\n";
+   return result;
 }
 
 GepiCanonicalizationPass* createCleanLCSSA() {

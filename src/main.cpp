@@ -132,11 +132,9 @@ int main(int argc, char** argv)
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplificationPass());
-/*
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createSelectLoweringPass());
-*/
       passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f3_after_canonicalization.ll"));
 
