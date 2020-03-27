@@ -1508,7 +1508,7 @@ void compute_function_versioning_profit(const std::map<llvm::Instruction*, std::
       llvm::dbgs() << "INFO: Estimated profit of " << versioning_profit.get_string() << " for versioning function " << function->getName() << " #" << num_versions << " times\n";
 
       versioning_profit.cast();
-      bool is_expandable = versioning_profit.expandability and !force_no_versioning or num_versions <= 0;
+      bool is_expandable = (versioning_profit.expandability and !force_no_versioning) or num_versions <= 0;
 
       if (!is_expandable) {
          llvm::dbgs() << "INFO: Not versioning function " << function->getName() << " since not profitable\n";

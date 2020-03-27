@@ -167,8 +167,8 @@ Expandability compute_gepi_expandability_profit(llvm::GEPOperator *gep_op, std::
 
 Expandability compute_function_versioning_cost(llvm::Function *function)
 {
-   double area_cost = -1.0;
-   double latency_cost = -1.0;
+   double area_cost = 1.0;
+   double latency_cost = 1.0;
 
    return Expandability(true, area_cost, latency_cost);
 }
