@@ -591,6 +591,8 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
          if (gepi_0 and gepi_1) {
             if (gepi_0->getPointerOperand() == gepi_1->getPointerOperand()) {
                if (gepi_0->getNumIndices() == 1 and gepi_1->getNumIndices() == 1) {
+                  gepi_0->dump();
+                  gepi_1->dump();
                   llvm::CmpInst *new_cmp_inst = llvm::CmpInst::Create(llvm::CmpInst::OtherOps::ICmp,
                                                                       cmp_inst->getPredicate(),
                                                                       gepi_0->getOperand(1),
@@ -1297,8 +1299,15 @@ bool canonical_idxs(llvm::Function& function)
       for (llvm::Instruction &i : bb) {
          if (llvm::GetElementPtrInst *gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(&i)) {
             for (unsigned long i = 0; i < gepi->getNumIndices(); ++i) {
-               if (llvm::ConstantInt *c_idx = llvm::dyn_cast<llvm::ConstantInt>(gepi->getOperand(i+1))) {
+               llvm::Value *operand = gepi->getOperand(i+1);
+               if (llvm::ConstantInt *c_idx = llvm::dyn_cast<llvm::ConstantInt>(operand)) {
                   gepi->setOperand(i+1, llvm::ConstantInt::get(idx_ty, c_idx->getSExtValue(), true));
+               } else {
+                  if (operand->getType()->getIntegerBitWidth() > 32) {
+                     std::string name = gepi->getName().str() + "." + std::to_string(i) + ".sext";
+                     llvm::CastInst *trunc_inst = llvm::TruncInst::Create(llvm::CastInst::Trunc, operand, idx_ty, name, gepi);
+                     gepi->setOperand(i+1, trunc_inst);
+                  }
                }
             }
          }

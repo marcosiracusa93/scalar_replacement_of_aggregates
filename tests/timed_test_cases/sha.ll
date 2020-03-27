@@ -10,8 +10,8 @@ target triple = "x86_64-apple-macosx10.13.0"
 @sha_info_count_hi = common global i32 0, align 4
 @sha_info_data = common global [16 x i32] zeroinitializer, align 16
 @outData = constant [5 x i32] [i32 6969911, i32 -1814260603, i32 742465810, i32 1677179459, i32 -1384908510], align 16
-@.str = private unnamed_addr constant [10 x i8] c"Time: %f\0A\00", align 1
-@.str.1 = private unnamed_addr constant [12 x i8] c"Result: %d\0A\00", align 1
+@.str = private unnamed_addr constant [11 x i8] c"\0ATime: %f\0A\00", align 1
+@.str.1 = private unnamed_addr constant [13 x i8] c"\0AResult: %d\0A\00", align 1
 
 ; Function Attrs: noinline nounwind ssp uwtable
 define void @local_memset(i32* %s, i32 %c, i32 %n, i32 %e) #0 {
@@ -370,9 +370,9 @@ for.end:                                          ; preds = %for.cond
   %div = fdiv double %sub, 1.000000e+06
   store double %div, double* %time_taken, align 8
   %9 = load double, double* %time_taken, align 8
-  %call7 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([10 x i8], [10 x i8]* @.str, i32 0, i32 0), double %9)
+  %call7 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %9)
   %10 = load i32, i32* %main_result, align 4
-  %call8 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @.str.1, i32 0, i32 0), i32 %10)
+  %call8 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %10)
   %11 = load i32, i32* %main_result, align 4
   ret i32 %11
 }

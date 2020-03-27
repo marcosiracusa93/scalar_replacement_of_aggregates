@@ -28,6 +28,6 @@ for filename in *.ll; do
     clang -O3 ../bins/final_"$filename" -o ../bins/final_"$filename".out
 
     echo RUNNING TEST
-    ../bins/first_"$filename".out | grep "Result:"
-    ../bins/final_"$filename".out | grep "Result:"
+    ../bins/first_"$filename".out | grep -- 'Time:\|Result:'
+    ../bins/final_"$filename".out | grep -- 'Time:\|Result:'
 done

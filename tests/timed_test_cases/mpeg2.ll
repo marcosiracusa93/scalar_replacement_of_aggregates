@@ -19,8 +19,8 @@ target triple = "x86_64-apple-macosx10.13.0"
 @MVtab1 = constant [8 x [2 x i8]] [[2 x i8] c"\FF\00", [2 x i8] c"\FF\00", [2 x i8] c"\FF\00", [2 x i8] c"\07\06", [2 x i8] c"\06\06", [2 x i8] c"\05\06", [2 x i8] c"\04\05", [2 x i8] c"\04\05"], align 16
 @MVtab2 = constant [12 x [2 x i8]] [[2 x i8] c"\10\09", [2 x i8] c"\0F\09", [2 x i8] c"\0E\09", [2 x i8] c"\0D\09", [2 x i8] c"\0C\09", [2 x i8] c"\0B\09", [2 x i8] c"\0A\08", [2 x i8] c"\0A\08", [2 x i8] c"\09\08", [2 x i8] c"\09\08", [2 x i8] c"\08\08", [2 x i8] c"\08\08"], align 16
 @evalue = common global i32 0, align 4
-@.str = private unnamed_addr constant [10 x i8] c"Time: %f\0A\00", align 1
-@.str.1 = private unnamed_addr constant [12 x i8] c"Result: %d\0A\00", align 1
+@.str = private unnamed_addr constant [11 x i8] c"\0ATime: %f\0A\00", align 1
+@.str.1 = private unnamed_addr constant [13 x i8] c"\0AResult: %d\0A\00", align 1
 
 ; Function Attrs: noinline nounwind ssp uwtable
 define i32 @read(i8* %s1, i8* %s2, i32 %n) #0 {
@@ -1130,9 +1130,9 @@ for.end77:                                        ; preds = %for.cond35
   %div = fdiv double %sub, 1.000000e+06
   store double %div, double* %time_taken, align 8
   %50 = load double, double* %time_taken, align 8
-  %call81 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([10 x i8], [10 x i8]* @.str, i32 0, i32 0), double %50)
+  %call81 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %50)
   %51 = load i32, i32* %main_result, align 4
-  %call82 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @.str.1, i32 0, i32 0), i32 %51)
+  %call82 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %51)
   %52 = load i32, i32* %main_result, align 4
   ret i32 %52
 }

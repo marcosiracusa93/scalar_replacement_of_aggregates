@@ -106,8 +106,8 @@ target triple = "x86_64-apple-macosx10.13.0"
 @OutData_comp_vpos = common global [3 x i32] zeroinitializer, align 4
 @OutData_comp_hpos = common global [3 x i32] zeroinitializer, align 4
 @JpegFileBuf = common global [5310 x i8] zeroinitializer, align 16
-@.str.27 = private unnamed_addr constant [10 x i8] c"Time: %f\0A\00", align 1
-@.str.28 = private unnamed_addr constant [12 x i8] c"Result: %d\0A\00", align 1
+@.str.27 = private unnamed_addr constant [11 x i8] c"\0ATime: %f\0A\00", align 1
+@.str.28 = private unnamed_addr constant [13 x i8] c"\0AResult: %d\0A\00", align 1
 @.str.29 = private unnamed_addr constant [32 x i8] c"Unanticipated marker detected.\0A\00", align 1
 
 ; Function Attrs: noinline nounwind ssp uwtable
@@ -3645,9 +3645,9 @@ entry:
   %div = fdiv double %sub, 1.000000e+06
   store double %div, double* %time_taken, align 8
   %2 = load double, double* %time_taken, align 8
-  %call4 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([10 x i8], [10 x i8]* @.str.27, i32 0, i32 0), double %2)
+  %call4 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str.27, i32 0, i32 0), double %2)
   %3 = load i32, i32* @main_result, align 4
-  %call5 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @.str.28, i32 0, i32 0), i32 %3)
+  %call5 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.28, i32 0, i32 0), i32 %3)
   %4 = load i32, i32* @main_result, align 4
   ret i32 %4
 }
