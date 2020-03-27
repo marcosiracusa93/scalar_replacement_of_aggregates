@@ -77,8 +77,8 @@ Expandability compute_alloca_expandability_profit(llvm::AllocaInst *alloca_inst,
       msg = "# aggregate types is " + std::to_string(num_elements) + " (allowed " + std::to_string(MaxNumScalarTypes) + ") and allocates size is " + std::to_string(size) + "(allowed " + std::to_string(MaxTypeByteSize) + ")";
    }
 
-   double area_revenue = (double)size * 8.0;
-   double area_cost = (double)size * 8.0; // TODO what about here? It's always 0
+   double area_revenue = 0.0;//(double)size * 8.0;
+   double area_cost = 0.0;//(double)size * 8.0; // TODO what about here? It's always 0
    double area_profit = area_revenue - area_cost;
 
    double latency_revenue = 0.0;
@@ -103,8 +103,8 @@ Expandability compute_global_expandability_profit(llvm::GlobalVariable *g_var,
       msg = "# aggregate types is " + std::to_string(num_elements) + " (allowed " + std::to_string(MaxNumScalarTypes) + ") and allocates size is " + std::to_string(size) + "(allowed " + std::to_string(MaxTypeByteSize) + ")";
    }
 
-   double area_revenue = (double)size * 8.0;
-   double area_cost = (double)size * 8.0; // TODO what about here? It's always 0
+   double area_revenue = 0.0;//(double)size * 8.0;
+   double area_cost = 0.0;//(double)size * 8.0; // TODO what about here? It's always 0
    double area_profit = area_revenue - area_cost;
 
    double latency_revenue = 0.0;
@@ -129,7 +129,7 @@ Expandability compute_operand_expandability_profit(llvm::Use *op_use,
       msg = "# aggregate types is " + std::to_string(num_elements) + " (allowed " + std::to_string(MaxNumScalarTypes) + ") and allocates size is " + std::to_string(size) + "(allowed " + std::to_string(MaxTypeByteSize) + ")";
    }
 
-   double area_revenue = (double)size * 8.0; // TODO sure about that?
+   double area_revenue = 0.0;//(double)size * 8.0; // TODO sure about that?
    double area_cost = 0.0;
    double area_profit = area_revenue - area_cost;
 
@@ -143,7 +143,7 @@ Expandability compute_operand_expandability_profit(llvm::Use *op_use,
 Expandability compute_gepi_expandability_profit(llvm::GEPOperator *gep_op, std::string &msg)
 {
    if (gep_op->hasAllConstantIndices()) {
-      double area_revenue = 0.0;
+      double area_revenue = 2.0 * gep_op->getNumIndices();
       double area_cost = 0.0;
       double area_profit = area_revenue - area_cost;
 
@@ -153,8 +153,8 @@ Expandability compute_gepi_expandability_profit(llvm::GEPOperator *gep_op, std::
 
       return Expandability(true,  area_profit, latency_profit);
    } else {
-      double area_revenue = 3.0 * 32.0 * gep_op->getNumIndices();
-      double area_cost = 0.0;
+      double area_revenue = 0.0;
+      double area_cost = 10.0;
       double area_profit = area_revenue - area_cost;
 
       double latency_revenue = 0.0;
@@ -167,48 +167,15 @@ Expandability compute_gepi_expandability_profit(llvm::GEPOperator *gep_op, std::
 
 Expandability compute_function_versioning_cost(llvm::Function *function)
 {
-   unsigned long long area_cost = 0;
-   unsigned long long latency_cost = 0;
-
-   for (llvm::BasicBlock &bb : *function) {
-      for (llvm::Instruction & i : bb) {
-         if (i.isBinaryOp()) {
-            bool all_const_ops = true;
-
-            for (llvm::Use &op : i.operands()) {
-               if (!llvm::isa<llvm::Constant>(op.get())) {
-                  all_const_ops = false;
-                  break;
-               }
-            }
-
-            if (!all_const_ops) {
-               unsigned long long inst_cost = get_first_type_bitwidth(i.getType());
-
-               if (i.isShift()) {
-                  inst_cost *= 0;
-               } else if (i.getOpcodeName() == "add" or i.getOpcodeName() == "fadd") {
-                  inst_cost *= 1;
-               } else if (i.getOpcodeName() == "sub" or i.getOpcodeName() == "fsub") {
-                  inst_cost *= 1;
-               } else if (i.getOpcodeName() == "mul" or i.getOpcodeName() == "fmul") {
-                  inst_cost *= 100;
-               } else {
-                  inst_cost *= 200;
-               }
-
-               area_cost += inst_cost;
-            }
-         }
-      }
-   }
+   double area_cost = -1.0;
+   double latency_cost = -1.0;
 
    return Expandability(true, area_cost, latency_cost);
 }
 
 Expandability compute_load_expandability_profit(llvm::LoadInst *load_inst, std::string &msg)
 {
-   double area_revenue = 3.0 * get_first_type_bitwidth(load_inst->getType());
+   double area_revenue = 0.0;//3.0 * get_first_type_bitwidth(load_inst->getType());
    double area_cost = 0.0;
    double area_profit = area_revenue - area_cost;
 
@@ -221,7 +188,7 @@ Expandability compute_load_expandability_profit(llvm::LoadInst *load_inst, std::
 
 Expandability compute_store_expandability_profit(llvm::StoreInst *store_inst, std::string &msg)
 {
-   double area_revenue = 2.0 * get_first_type_bitwidth(store_inst->getType());
+   double area_revenue = 0.0;//2.0 * get_first_type_bitwidth(store_inst->getType());
    double area_cost = 0.0;
    double area_profit = area_revenue - area_cost;
 

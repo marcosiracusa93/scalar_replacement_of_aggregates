@@ -3624,13 +3624,17 @@ if.end38:                                         ; preds = %if.then36, %if.end3
 }
 
 ; Function Attrs: noinline nounwind ssp uwtable
-define i32 @main() #0 {
+define i32 @main(i32 %argc, i8** %argv) #0 {
 entry:
   %retval = alloca i32, align 4
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
   %t_begin = alloca i64, align 8
   %t_end = alloca i64, align 8
   %time_taken = alloca double, align 8
   store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
   %call = call i64 @"\01_clock"()
   store i64 %call, i64* %t_begin, align 8
   store i32 0, i32* @main_result, align 4

@@ -316,68 +316,105 @@ for.end:                                          ; preds = %for.cond
 }
 
 ; Function Attrs: noinline nounwind ssp uwtable
-define i32 @main() #0 {
+define i32 @main(i32 %argc, i8** %argv) #0 {
 entry:
   %retval = alloca i32, align 4
-  %t_begin = alloca i64, align 8
-  %i = alloca i32, align 4
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
   %main_result = alloca i32, align 4
+  %t_begin = alloca i64, align 8
+  %iters = alloca i32, align 4
+  %idx = alloca i32, align 4
+  %i = alloca i32, align 4
+  %main_result2 = alloca i32, align 4
   %t_end = alloca i64, align 8
   %time_taken = alloca double, align 8
   store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
+  store i32 0, i32* %main_result, align 4
   %call = call i64 @"\01_clock"()
   store i64 %call, i64* %t_begin, align 8
-  store i32 0, i32* %main_result, align 4
-  call void @sha_stream()
-  store i32 0, i32* %i, align 4
+  %0 = load i8**, i8*** %argv.addr, align 8
+  %arrayidx = getelementptr inbounds i8*, i8** %0, i64 1
+  %1 = load i8*, i8** %arrayidx, align 8
+  %call1 = call i32 @atoi(i8* %1)
+  store i32 %call1, i32* %iters, align 4
+  store i32 0, i32* %idx, align 4
   br label %for.cond
 
-for.cond:                                         ; preds = %for.inc, %entry
-  %0 = load i32, i32* %i, align 4
-  %cmp = icmp slt i32 %0, 5
-  br i1 %cmp, label %for.body, label %for.end
+for.cond:                                         ; preds = %for.inc10, %entry
+  %2 = load i32, i32* %idx, align 4
+  %3 = load i32, i32* %iters, align 4
+  %cmp = icmp slt i32 %2, %3
+  br i1 %cmp, label %for.body, label %for.end12
 
 for.body:                                         ; preds = %for.cond
-  %1 = load i32, i32* %i, align 4
-  %idxprom = sext i32 %1 to i64
-  %arrayidx = getelementptr inbounds [5 x i32], [5 x i32]* @sha_info_digest, i64 0, i64 %idxprom
-  %2 = load i32, i32* %arrayidx, align 4
-  %3 = load i32, i32* %i, align 4
-  %idxprom1 = sext i32 %3 to i64
-  %arrayidx2 = getelementptr inbounds [5 x i32], [5 x i32]* @outData, i64 0, i64 %idxprom1
-  %4 = load i32, i32* %arrayidx2, align 4
-  %cmp3 = icmp ne i32 %2, %4
-  %conv = zext i1 %cmp3 to i32
-  %5 = load i32, i32* %main_result, align 4
-  %add = add nsw i32 %5, %conv
-  store i32 %add, i32* %main_result, align 4
+  store i32 0, i32* %main_result2, align 4
+  call void @sha_stream()
+  store i32 0, i32* %i, align 4
+  br label %for.cond3
+
+for.cond3:                                        ; preds = %for.inc, %for.body
+  %4 = load i32, i32* %i, align 4
+  %cmp4 = icmp slt i32 %4, 5
+  br i1 %cmp4, label %for.body5, label %for.end
+
+for.body5:                                        ; preds = %for.cond3
+  %5 = load i32, i32* %i, align 4
+  %idxprom = sext i32 %5 to i64
+  %arrayidx6 = getelementptr inbounds [5 x i32], [5 x i32]* @sha_info_digest, i64 0, i64 %idxprom
+  %6 = load i32, i32* %arrayidx6, align 4
+  %7 = load i32, i32* %i, align 4
+  %idxprom7 = sext i32 %7 to i64
+  %arrayidx8 = getelementptr inbounds [5 x i32], [5 x i32]* @outData, i64 0, i64 %idxprom7
+  %8 = load i32, i32* %arrayidx8, align 4
+  %cmp9 = icmp ne i32 %6, %8
+  %conv = zext i1 %cmp9 to i32
+  %9 = load i32, i32* %main_result2, align 4
+  %add = add nsw i32 %9, %conv
+  store i32 %add, i32* %main_result2, align 4
   br label %for.inc
 
-for.inc:                                          ; preds = %for.body
-  %6 = load i32, i32* %i, align 4
-  %inc = add nsw i32 %6, 1
+for.inc:                                          ; preds = %for.body5
+  %10 = load i32, i32* %i, align 4
+  %inc = add nsw i32 %10, 1
   store i32 %inc, i32* %i, align 4
+  br label %for.cond3
+
+for.end:                                          ; preds = %for.cond3
+  br label %for.inc10
+
+for.inc10:                                        ; preds = %for.end
+  %11 = load i32, i32* %idx, align 4
+  %inc11 = add nsw i32 %11, 1
+  store i32 %inc11, i32* %idx, align 4
   br label %for.cond
 
-for.end:                                          ; preds = %for.cond
-  %call4 = call i64 @"\01_clock"()
-  store i64 %call4, i64* %t_end, align 8
-  %7 = load i64, i64* %t_end, align 8
-  %conv5 = uitofp i64 %7 to double
-  %8 = load i64, i64* %t_begin, align 8
-  %conv6 = uitofp i64 %8 to double
-  %sub = fsub double %conv5, %conv6
+for.end12:                                        ; preds = %for.cond
+  %call13 = call i64 @"\01_clock"()
+  store i64 %call13, i64* %t_end, align 8
+  %12 = load i64, i64* %t_end, align 8
+  %conv14 = uitofp i64 %12 to double
+  %13 = load i64, i64* %t_begin, align 8
+  %conv15 = uitofp i64 %13 to double
+  %sub = fsub double %conv14, %conv15
   %div = fdiv double %sub, 1.000000e+06
-  store double %div, double* %time_taken, align 8
-  %9 = load double, double* %time_taken, align 8
-  %call7 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %9)
-  %10 = load i32, i32* %main_result, align 4
-  %call8 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %10)
-  %11 = load i32, i32* %main_result, align 4
-  ret i32 %11
+  %14 = load i32, i32* %iters, align 4
+  %conv16 = sitofp i32 %14 to double
+  %div17 = fdiv double %div, %conv16
+  store double %div17, double* %time_taken, align 8
+  %15 = load double, double* %time_taken, align 8
+  %call18 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %15)
+  %16 = load i32, i32* %main_result, align 4
+  %call19 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %16)
+  %17 = load i32, i32* %main_result, align 4
+  ret i32 %17
 }
 
 declare i64 @"\01_clock"() #1
+
+declare i32 @atoi(i8*) #1
 
 declare i32 @printf(i8*, ...) #1
 

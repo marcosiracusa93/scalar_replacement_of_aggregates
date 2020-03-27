@@ -2148,37 +2148,72 @@ while.end33:                                      ; preds = %while.cond
 }
 
 ; Function Attrs: noinline nounwind ssp uwtable
-define i32 @main() #0 {
+define i32 @main(i32 %argc, i8** %argv) #0 {
 entry:
   %retval = alloca i32, align 4
-  %t_begin = alloca i64, align 8
+  %argc.addr = alloca i32, align 4
+  %argv.addr = alloca i8**, align 8
   %main_result = alloca i32, align 4
+  %t_begin = alloca i64, align 8
+  %iters = alloca i32, align 4
+  %idx = alloca i32, align 4
   %t_end = alloca i64, align 8
   %time_taken = alloca double, align 8
   store i32 0, i32* %retval, align 4
+  store i32 %argc, i32* %argc.addr, align 4
+  store i8** %argv, i8*** %argv.addr, align 8
+  store i32 0, i32* %main_result, align 4
   %call = call i64 @"\01_clock"()
   store i64 %call, i64* %t_begin, align 8
-  store i32 0, i32* %main_result, align 4
-  %call1 = call i32 @blowfish_main()
-  store i32 %call1, i32* %main_result, align 4
-  %call2 = call i64 @"\01_clock"()
-  store i64 %call2, i64* %t_end, align 8
-  %0 = load i64, i64* %t_end, align 8
-  %conv = uitofp i64 %0 to double
-  %1 = load i64, i64* %t_begin, align 8
-  %conv3 = uitofp i64 %1 to double
-  %sub = fsub double %conv, %conv3
+  %0 = load i8**, i8*** %argv.addr, align 8
+  %arrayidx = getelementptr inbounds i8*, i8** %0, i64 1
+  %1 = load i8*, i8** %arrayidx, align 8
+  %call1 = call i32 @atoi(i8* %1)
+  store i32 %call1, i32* %iters, align 4
+  store i32 0, i32* %idx, align 4
+  br label %for.cond
+
+for.cond:                                         ; preds = %for.inc, %entry
+  %2 = load i32, i32* %idx, align 4
+  %3 = load i32, i32* %iters, align 4
+  %cmp = icmp slt i32 %2, %3
+  br i1 %cmp, label %for.body, label %for.end
+
+for.body:                                         ; preds = %for.cond
+  %call2 = call i32 @blowfish_main()
+  store i32 %call2, i32* %main_result, align 4
+  br label %for.inc
+
+for.inc:                                          ; preds = %for.body
+  %4 = load i32, i32* %idx, align 4
+  %inc = add nsw i32 %4, 1
+  store i32 %inc, i32* %idx, align 4
+  br label %for.cond
+
+for.end:                                          ; preds = %for.cond
+  %call3 = call i64 @"\01_clock"()
+  store i64 %call3, i64* %t_end, align 8
+  %5 = load i64, i64* %t_end, align 8
+  %conv = uitofp i64 %5 to double
+  %6 = load i64, i64* %t_begin, align 8
+  %conv4 = uitofp i64 %6 to double
+  %sub = fsub double %conv, %conv4
   %div = fdiv double %sub, 1.000000e+06
-  store double %div, double* %time_taken, align 8
-  %2 = load double, double* %time_taken, align 8
-  %call4 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %2)
-  %3 = load i32, i32* %main_result, align 4
-  %call5 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %3)
-  %4 = load i32, i32* %main_result, align 4
-  ret i32 %4
+  %7 = load i32, i32* %iters, align 4
+  %conv5 = sitofp i32 %7 to double
+  %div6 = fdiv double %div, %conv5
+  store double %div6, double* %time_taken, align 8
+  %8 = load double, double* %time_taken, align 8
+  %call7 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %8)
+  %9 = load i32, i32* %main_result, align 4
+  %call8 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %9)
+  %10 = load i32, i32* %main_result, align 4
+  ret i32 %10
 }
 
 declare i64 @"\01_clock"() #1
+
+declare i32 @atoi(i8*) #1
 
 declare i32 @printf(i8*, ...) #1
 
