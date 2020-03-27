@@ -107,27 +107,22 @@ int main(int argc, char** argv)
       passManager->add(new llvm::DominatorTreeWrapperPass());
       passManager->add(new llvm::AssumptionCacheTracker());
       passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
-
       passManager->add(createPrintModulePass("./f0_first.ll"));
 
-      passManager->add(createCodeSimplificationPass());
 
+      passManager->add(createCodeSimplificationPass());
       passManager->add(createPrintModulePass("./f1_after_simplification.ll"));
+
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(createSROALoopRotatePass());
-      passManager->add(new llvm::ScalarEvolutionWrapperPass());
-      passManager->add(new llvm::LoopInfoWrapperPass());
-      passManager->add(new llvm::DominatorTreeWrapperPass());
-      passManager->add(new llvm::AssumptionCacheTracker());
-      passManager->add(new llvm::TargetTransformInfoWrapperPass());
       passManager->add(llvm::createSROALoopUnrollPass());
       passManager->add(createCleanLCSSA());
+      passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f2_after_unrolling.ll"));
 
+
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
-      //passManager->add(llvm::createScalarizerPass());
-      passManager->add(new llvm::LoopInfoWrapperPass());
       passManager->add(createGepiCanonicalIdxs());
       passManager->add(createRemoveIntrinsicPass());
       passManager->add(llvm::createExpandMemOpsPass());
@@ -138,8 +133,6 @@ int main(int argc, char** argv)
       passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f3_after_canonicalization.ll"));
 
-      passManager->add(new llvm::ScalarEvolutionWrapperPass());
-      passManager->add(llvm::createTargetTransformInfoWrapperPass(TIRA));
 
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
       passManager->add(createPrintModulePass("./f4_after_versioning.ll"));
@@ -165,11 +158,14 @@ int main(int argc, char** argv)
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createSelectLoweringPass());
       passManager->add(createGepiExplicitation());
+      passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f5_after_canonicalization.ll"));
 
+
       passManager->add(createSROADisaggregationPass(args_info.target_function));
-      passManager->add(createPrintModulePass("./f6_after_disaggregation.ll"));
       passManager->add(llvm::createVerifierPass());
+      passManager->add(createPrintModulePass("./f6_after_disaggregation.ll"));
+
 
       // Insert -O3 in chain
       {
@@ -185,12 +181,11 @@ int main(int argc, char** argv)
 
       passManager->add(createPrintModulePass("./f7_after_optimization.ll"));
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
-      passManager->add(createPrintModulePass("./f8_after_inlining.ll"));
       passManager->add(llvm::createVerifierPass());
+      passManager->add(createPrintModulePass("./f8_after_inlining.ll"));
 
       // Insert -O3 in chain
       {
-         passManager->add(llvm::createVerifierPass());
          llvm::PassManagerBuilder passManagerBuilder;
          passManagerBuilder.OptLevel = 3;
          passManagerBuilder.DisableUnrollLoops = true;
