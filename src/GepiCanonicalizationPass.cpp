@@ -1406,6 +1406,7 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
       }
    }
 
+   unsigned long long inlined_count = 0;
    for (auto call_it : non_const_idxs_per_call) {
       llvm::CallInst *call_inst = const_cast<llvm::CallInst*>(call_it.first);
       unsigned long long idx_count = call_it.second;
@@ -1438,12 +1439,13 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
                }
 
                llvm::dbgs() << "INFO: Inlining call to " << called_function->getName() << " in function " << call_inst->getFunction()->getName() << "\n";
+               inlined_count++;
             }
          }
       }
    }
 
-   return true;
+   return inlined_count > 0;
 }
 
 bool gepi_explicitation(llvm::Function &function) {
