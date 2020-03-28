@@ -1094,7 +1094,7 @@ return false; // TODO remove
 
 char SROALoopUnroll::ID = 0;
 
-Pass *llvm::createSROALoopUnrollPass(int Threshold, int Count, int AllowPartial,
+Pass *createSROALoopUnrollPass(int Threshold, int Count, int AllowPartial,
                                      int Runtime, int UpperBound) {
   // TODO: It would make more sense for this function to take the optionals
   // directly, but that's dangerous since it would silently break out of tree

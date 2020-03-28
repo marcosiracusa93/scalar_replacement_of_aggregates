@@ -3,6 +3,7 @@
 #include <GepiCanonicalizationPass.hpp>
 #include <PrintModulePass.hpp>
 #include <SROA_LoopRotation.h>
+#include <SROA_LoopUnrollPass.h>
 #include <iostream>
 #include <sys/time.h>
 
@@ -18,7 +19,6 @@
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
-#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 
 #include "llvm/IR/Verifier.h"
 
@@ -116,7 +116,7 @@ int main(int argc, char** argv)
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(createSROALoopRotatePass());
-      passManager->add(llvm::createSROALoopUnrollPass());
+      passManager->add(createSROALoopUnrollPass());
       passManager->add(createCleanLCSSA());
       passManager->add(llvm::createVerifierPass());
       passManager->add(createPrintModulePass("./f2_after_unrolling.ll"));
