@@ -67,7 +67,7 @@ int Get_dmvector _ANSI_ARGS_ ((void));
 int Get_coded_block_pattern _ANSI_ARGS_ ((void));
 
 
-/* motion.c */
+/* mpeg2.c */
 void motion_vector
 _ANSI_ARGS_ ((int *PMV, int *dmvector, int h_r_size, int v_r_size, int dmv,
 	      int mvscale, int full_pel_vector));

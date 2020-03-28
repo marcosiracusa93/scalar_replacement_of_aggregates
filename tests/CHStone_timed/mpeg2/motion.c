@@ -16,7 +16,7 @@
 |    4. Please follow the copyright of each benchmark program.             |
 +--------------------------------------------------------------------------+
 */
-/* motion.c, motion vector decoding                                         */
+/* mpeg2.c, mpeg2 vector decoding                                         */
 
 /* Copyright (C) 1996, MPEG Software Simulation Group. All Rights Reserved. */
 
@@ -71,7 +71,7 @@ motion_vectors (PMV, dmvector, motion_vertical_field_select, s,
       motion_vector (PMV[0][s], dmvector, h_r_size, v_r_size, dmv, mvscale,
 		     0);
 
-      /* update other motion vector predictors */
+      /* update other mpeg2 vector predictors */
       PMV[1][s][0] = PMV[0][s][0];
       PMV[1][s][1] = PMV[0][s][1];
     }
@@ -89,7 +89,7 @@ motion_vectors (PMV, dmvector, motion_vertical_field_select, s,
     }
 }
 
-/* get and decode motion vector and differential motion vector 
+/* get and decode mpeg2 vector and differential mpeg2 vector
    for one prediction */
 void
 motion_vector (PMV, dmvector, h_r_size, v_r_size, dmv, mvscale,
@@ -98,7 +98,7 @@ motion_vector (PMV, dmvector, h_r_size, v_r_size, dmv, mvscale,
      int *dmvector;
      int h_r_size;
      int v_r_size;
-     int dmv;			/* MPEG-2 only: get differential motion vectors */
+     int dmv;			/* MPEG-2 only: get differential mpeg2 vectors */
      int mvscale;		/* MPEG-2 only: field vector in frame pic */
      int full_pel_vector;	/* MPEG-1 only */
 {
@@ -138,8 +138,8 @@ motion_vector (PMV, dmvector, h_r_size, v_r_size, dmv, mvscale,
 
 }
 
-/* calculate motion vector component */
-/* ISO/IEC 13818-2 section 7.6.3.1: Decoding the motion vectors */
+/* calculate mpeg2 vector component */
+/* ISO/IEC 13818-2 section 7.6.3.1: Decoding the mpeg2 vectors */
 /* Note: the arithmetic here is more elegant than that which is shown 
    in 7.6.3.1.  The end results (PMV[][][]) should, however, be the same.  */
 

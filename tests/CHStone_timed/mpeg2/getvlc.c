@@ -78,7 +78,7 @@ Get_motion_code ()
   return Get_Bits1 ()? -MVtab2[code][0] : MVtab2[code][0];
 }
 
-/* get differential motion vector (for dual prime prediction) */
+/* get differential mpeg2 vector (for dual prime prediction) */
 int
 Get_dmvector ()
 {

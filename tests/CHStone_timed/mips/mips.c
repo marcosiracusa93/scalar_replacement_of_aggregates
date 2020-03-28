@@ -98,10 +98,14 @@ const int outData[8] = {-17, -9, 0, 3, 5, 11, 22, 38};
 #define IADDR(x)   (((x)&0x000000ff)>>2)
 #define DADDR(x)   (((x)&0x000000ff)>>2)
 
+#include <sys/time.h>
+
 int main(int argc, char **argv) {
    int main_result = 0;
 
-   clock_t t_begin = clock();
+   struct timeval start;
+   gettimeofday(&start, NULL);
+
    int iters = atoi(argv[1]);
    for (int idx = 0; idx < iters; ++idx) {
       long long hilo;
@@ -298,8 +302,14 @@ int main(int argc, char **argv) {
             main_result += (dmem[j] != outData[j]);
          }
 
-         clock_t t_end = clock();
-         double time_taken = (((double)t_end - (double)t_begin)/CLOCKS_PER_SEC)/(double)iters;
+         struct timeval end;
+         gettimeofday(&end, NULL);
+
+         double time_taken;
+         time_taken = (end.tv_sec - start.tv_sec) * 1e6;
+         time_taken = (time_taken + (end.tv_usec - start.tv_usec)) * 1e-6;
+         time_taken /= (double) iters;
+
          printf("\nTime: %f\n", time_taken);
          printf("\nResult: %d\n", main_result);
          return main_result;

@@ -89,7 +89,7 @@ motion_vectors (PMV, dmvector, motion_vertical_field_select, s,
     }
 }
 
-/* get and decode motion vector and differential motion vector 
+/* get and decode motion vector and differential motion vector
    for one prediction */
 void
 motion_vector (PMV, dmvector, h_r_size, v_r_size, dmv, mvscale,

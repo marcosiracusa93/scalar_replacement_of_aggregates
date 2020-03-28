@@ -88,11 +88,14 @@ const word outData[N] =
 
 const word outLARc[M] = {32, 33, 22, 13, 7, 5, 3, 2};
 
+#include <sys/time.h>
 
 int main(int argc, char **argv) {
    int main_result = 0;
 
-   clock_t t_begin = clock();
+   struct timeval start;
+   gettimeofday(&start, NULL);
+
    int iters = atoi(argv[1]);
    for (int idx = 0; idx < iters; ++idx) {
       int i;
@@ -110,8 +113,15 @@ int main(int argc, char **argv) {
       for (i = 0; i < M; i++)
          main_result += (LARc[i] != outLARc[i]);
    }
-   clock_t t_end = clock();
-   double time_taken = (((double)t_end - (double)t_begin)/CLOCKS_PER_SEC)/(double)iters;
+
+   struct timeval end;
+   gettimeofday(&end, NULL);
+
+   double time_taken;
+   time_taken = (end.tv_sec - start.tv_sec) * 1e6;
+   time_taken = (time_taken + (end.tv_usec - start.tv_usec)) * 1e-6;
+   time_taken /= (double) iters;
+
    printf("\nTime: %f\n", time_taken);
    printf("\nResult: %d\n", main_result);
    return main_result;
