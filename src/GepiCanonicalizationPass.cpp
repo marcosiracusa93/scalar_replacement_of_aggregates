@@ -43,6 +43,7 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Transforms/Utils/UnrollLoop.h>
 
 llvm::PHINode* get_last_phi(llvm::BasicBlock* bb)
 {
@@ -349,7 +350,7 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
       gepi_inst->replaceAllUsesWith(new_gepi);
 
       for (llvm::Use &use : new_gepi->uses()) {
-         llvm::dbgs() << "      Replaced use in user: "; use.getUser()->dump();
+         llvm::dbgs() << "      Replaced use #" << use.getOperandNo() << " in user: "; use.getUser()->dump();
          iterator_canonicalization(use, ptr_iter_init, new_idx, first_phi_node, new_phi_node, encountered_cmps,
                                    encountered_phis, inst_to_remove);
       }
@@ -378,7 +379,7 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
          phi_node->replaceAllUsesWith(new_gepi);
 
          for (llvm::Use &use : new_gepi->uses()) {
-            llvm::dbgs() << "      Replaced use in user: "; use.getUser()->dump();
+            llvm::dbgs() << "      Replaced use# " << use.getOperandNo() << " in user: "; use.getUser()->dump();
             iterator_canonicalization(use, ptr_iter_init, new_phi, first_phi_node, new_phi_node, encountered_cmps,
                                       encountered_phis, inst_to_remove);
          }
@@ -398,7 +399,7 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
       }
    }
 */
-   return ;
+   return;
 }
 
 bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
@@ -1354,9 +1355,7 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
 
                   if (loop) {
                      auto i_it = non_const_idxs_per_loop.insert(std::make_pair(loop, 0));
-                     if (!i_it.second) {
-                        i_it.first->second += 1;
-                     }
+                     non_const_idxs_per_loop.at(loop) += 1;
 
                      if (llvm::CallInst *call_inst = llvm::dyn_cast<llvm::CallInst>(user_inst)) {
                         non_const_idxs_per_call[call_inst] += 1;
@@ -1389,21 +1388,23 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
       bool cost_threshold = cost_value <= 32;
       bool trip_count_limit = trip_count > 0 and trip_count <= 32;
       bool inst_limit = inst_count <= 32;
+
+      llvm::MDNode *loopID = nullptr;
       if (cost_threshold and trip_count_limit and inst_limit) {
-         llvm::MDNode *loopID = llvm::MDNode::get(function.getContext(),
-                                                  llvm::MDString::get(function.getContext(), "llvm.loop.unroll.full"));
-
-         std::vector<llvm::Metadata *> metas;
-         metas.push_back(loopID);
-         metas.push_back(loopID);
-         llvm::MDTuple *tuple = llvm::MDTuple::getDistinct(function.getContext(), metas);
-         tuple->replaceOperandWith(0, tuple);
-
-         loop->setLoopID(tuple);
+         loopID = llvm::MDNode::get(function.getContext(), llvm::MDString::get(function.getContext(), "llvm.loop.unroll.full"));
          llvm::dbgs() << "INFO: Force unroll of loop " << loop->getName() << " in function " << function.getName() << "(TripCount: " << trip_count << ", CostValue: " << cost_value << ", InstCount: " << inst_count << ")\n";
       } else {
-         llvm::dbgs() << "INFO: Cannot force unroll of loop " << loop->getName() << " in function " << function.getName() << "(TripCount: " << trip_count << ", CostValue: " << cost_value << ", InstCount: " << inst_count << ")\n";
+         loopID = llvm::MDNode::get(function.getContext(), llvm::MDString::get(function.getContext(), "llvm.loop.unroll.disable"));
+         llvm::dbgs() << "INFO: Disable unroll of loop " << loop->getName() << " in function " << function.getName() << "(TripCount: " << trip_count << ", CostValue: " << cost_value << ", InstCount: " << inst_count << ")\n";
       }
+
+      std::vector<llvm::Metadata *> metas;
+      metas.push_back(loopID);
+      metas.push_back(loopID);
+      llvm::MDTuple *tuple = llvm::MDTuple::getDistinct(function.getContext(), metas);
+      tuple->replaceOperandWith(0, tuple);
+
+      loop->setLoopID(tuple);
    }
 
    unsigned long long inlined_count = 0;
@@ -1468,12 +1469,17 @@ bool gepi_explicitation(llvm::Function &function) {
       if (llvm::GEPOperator *gep_op = llvm::dyn_cast<llvm::GEPOperator>(use->get())) {
          std::string gepi_name = "gepi." + std::to_string(gepi_idx);
          if (llvm::Instruction *user_inst = llvm::dyn_cast<llvm::Instruction>(use->getUser())) {
+            llvm::Instruction *insert_point_inst = user_inst;
+            if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(use->getUser())) {
+               insert_point_inst = phi_node->getIncomingBlock(*use)->getTerminator();
+            }
+
             std::vector<llvm::Value *> idxs = std::vector<llvm::Value *>(gep_op->idx_begin(), gep_op->idx_end());
             llvm::GetElementPtrInst *gepi = nullptr;
             if (gep_op->isInBounds()) {
-               gepi = llvm::GetElementPtrInst::CreateInBounds(gep_op->getPointerOperand(), idxs, gepi_name, user_inst);
+               gepi = llvm::GetElementPtrInst::CreateInBounds(gep_op->getPointerOperand(), idxs, gepi_name, insert_point_inst);
             } else {
-               gepi = llvm::GetElementPtrInst::Create(nullptr, gep_op->getPointerOperand(), idxs, gepi_name, user_inst);
+               gepi = llvm::GetElementPtrInst::Create(nullptr, gep_op->getPointerOperand(), idxs, gepi_name, insert_point_inst);
             }
 
             user_inst->setOperand(use->getOperandNo(), gepi);

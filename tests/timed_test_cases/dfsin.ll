@@ -1,9 +1,10 @@
-; ModuleID = 'dfsin.c'
-source_filename = "dfsin.c"
+; ModuleID = 'dfsin/dfsin.c'
+source_filename = "dfsin/dfsin.c"
 target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-apple-macosx10.13.0"
 
 %union.anon = type { double }
+%struct.timeval = type { i64, i32 }
 
 @float_rounding_mode = global i32 0, align 4
 @float_exception_flags = global i32 0, align 4
@@ -2174,19 +2175,18 @@ entry:
   %argc.addr = alloca i32, align 4
   %argv.addr = alloca i8**, align 8
   %main_result = alloca i32, align 4
-  %t_begin = alloca i64, align 8
+  %start = alloca %struct.timeval, align 8
   %iters = alloca i32, align 4
   %idx = alloca i32, align 4
   %i = alloca i32, align 4
   %result = alloca i64, align 8
-  %t_end = alloca i64, align 8
+  %end = alloca %struct.timeval, align 8
   %time_taken = alloca double, align 8
   store i32 0, i32* %retval, align 4
   store i32 %argc, i32* %argc.addr, align 4
   store i8** %argv, i8*** %argv.addr, align 8
   store i32 0, i32* %main_result, align 4
-  %call = call i64 @"\01_clock"()
-  store i64 %call, i64* %t_begin, align 8
+  %call = call i32 @gettimeofday(%struct.timeval* %start, i8* null)
   %0 = load i8**, i8*** %argv.addr, align 8
   %arrayidx = getelementptr inbounds i8*, i8** %0, i64 1
   %1 = load i8*, i8** %arrayidx, align 8
@@ -2246,27 +2246,39 @@ for.inc10:                                        ; preds = %for.end
   br label %for.cond
 
 for.end12:                                        ; preds = %for.cond
-  %call13 = call i64 @"\01_clock"()
-  store i64 %call13, i64* %t_end, align 8
-  %13 = load i64, i64* %t_end, align 8
-  %conv14 = uitofp i64 %13 to double
-  %14 = load i64, i64* %t_begin, align 8
-  %conv15 = uitofp i64 %14 to double
-  %sub = fsub double %conv14, %conv15
-  %div = fdiv double %sub, 1.000000e+06
-  %15 = load i32, i32* %iters, align 4
-  %conv16 = sitofp i32 %15 to double
-  %div17 = fdiv double %div, %conv16
-  store double %div17, double* %time_taken, align 8
-  %16 = load double, double* %time_taken, align 8
-  %call18 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %16)
-  %17 = load i32, i32* %main_result, align 4
-  %call19 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %17)
-  %18 = load i32, i32* %main_result, align 4
-  ret i32 %18
+  %call13 = call i32 @gettimeofday(%struct.timeval* %end, i8* null)
+  %tv_sec = getelementptr inbounds %struct.timeval, %struct.timeval* %end, i32 0, i32 0
+  %13 = load i64, i64* %tv_sec, align 8
+  %tv_sec14 = getelementptr inbounds %struct.timeval, %struct.timeval* %start, i32 0, i32 0
+  %14 = load i64, i64* %tv_sec14, align 8
+  %sub = sub nsw i64 %13, %14
+  %conv15 = sitofp i64 %sub to double
+  %mul = fmul double %conv15, 1.000000e+06
+  store double %mul, double* %time_taken, align 8
+  %15 = load double, double* %time_taken, align 8
+  %tv_usec = getelementptr inbounds %struct.timeval, %struct.timeval* %end, i32 0, i32 1
+  %16 = load i32, i32* %tv_usec, align 8
+  %tv_usec16 = getelementptr inbounds %struct.timeval, %struct.timeval* %start, i32 0, i32 1
+  %17 = load i32, i32* %tv_usec16, align 8
+  %sub17 = sub nsw i32 %16, %17
+  %conv18 = sitofp i32 %sub17 to double
+  %add19 = fadd double %15, %conv18
+  %mul20 = fmul double %add19, 1.000000e-06
+  store double %mul20, double* %time_taken, align 8
+  %18 = load i32, i32* %iters, align 4
+  %conv21 = sitofp i32 %18 to double
+  %19 = load double, double* %time_taken, align 8
+  %div = fdiv double %19, %conv21
+  store double %div, double* %time_taken, align 8
+  %20 = load double, double* %time_taken, align 8
+  %call22 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i32 0, i32 0), double %20)
+  %21 = load i32, i32* %main_result, align 4
+  %call23 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str.1, i32 0, i32 0), i32 %21)
+  %22 = load i32, i32* %main_result, align 4
+  ret i32 %22
 }
 
-declare i64 @"\01_clock"() #1
+declare i32 @gettimeofday(%struct.timeval*, i8*) #1
 
 declare i32 @atoi(i8*) #1
 
