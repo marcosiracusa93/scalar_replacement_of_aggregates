@@ -11,6 +11,22 @@
 
 class PtrIteratorSimplifyPass : public llvm::LoopPass {
 
+    std::string get_val_string(llvm::Value* value)
+    {
+       std::string str;
+       llvm::raw_string_ostream rso(str);
+       value->print(rso);
+       return rso.str();
+    }
+
+    std::string get_ty_string(llvm::Type* ty)
+    {
+       std::string str;
+       llvm::raw_string_ostream rso(str);
+       ty->print(rso);
+       return rso.str();
+    }
+
     void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instructions along the path
                                    llvm::Value *ptr_iter_init, /// pointer iterator initialization
                                    llvm::Value *int_ind_var, /// integer iterator
@@ -359,6 +375,16 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
        return transformation_count > 0;
     }
 
+
+
+
+
+
+
+
+
+
+
     bool get_reachables_and_externals(llvm::Use *use_rec,
                                       const std::set<llvm::BasicBlock*> &blocks,
                                       std::set<llvm::Use*> &reachables,
@@ -378,10 +404,11 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
              }
 
              if (use_rec->getOperandNo() == user_as_gepi->getPointerOperandIndex()) {
-
-                /// No big deal, just keep iterating
-                for (llvm::Use &gepi_use : user_as_gepi->uses()) {
-                   get_reachables_and_externals(&gepi_use, blocks, reachables, externals);
+                if (user_as_gepi->getNumIndices() == 1) {
+                   /// No big deal, just keep iterating
+                   for (llvm::Use &gepi_use : user_as_gepi->uses()) {
+                      get_reachables_and_externals(&gepi_use, blocks, reachables, externals);
+                   }
                 }
              }
           } else if (llvm::PHINode *user_as_phi = llvm::dyn_cast<llvm::PHINode>(use_rec->getUser())) {
@@ -421,12 +448,77 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
        return true;
     }
 
+
+
+    llvm::Value *accumulate_index(llvm::Value *lhs_idx, llvm::Value *rhs_idx, llvm::Instruction *insert_point, llvm::Type *idx_ty) {
+       if (llvm::ConstantInt *constant_idx = llvm::dyn_cast<llvm::ConstantInt>(rhs_idx)) {
+          if (llvm::ConstantInt *constant_offset = llvm::dyn_cast<llvm::ConstantInt>(lhs_idx)) {
+             unsigned long value = constant_idx->getSExtValue() + constant_offset->getSExtValue();
+             lhs_idx = llvm::ConstantInt::get(idx_ty, 0);
+          } else {
+             if (constant_idx->getSExtValue() == 0) {
+                lhs_idx = rhs_idx;
+             } else {
+                llvm::BinaryOperator *add_op = llvm::BinaryOperator::Create(
+                        llvm::BinaryOperator::BinaryOps::Add,
+                        rhs_idx,
+                        lhs_idx,
+                        "offset",
+                        insert_point);
+                lhs_idx = add_op;
+             }
+          }
+       } else {
+          if (llvm::ConstantInt *constant_offset = llvm::dyn_cast<llvm::ConstantInt>(lhs_idx)) {
+             if (constant_offset->getSExtValue() == 0) {
+                lhs_idx = rhs_idx;
+             } else {
+                llvm::BinaryOperator *add_op = llvm::BinaryOperator::Create(
+                        llvm::BinaryOperator::BinaryOps::Add,
+                        rhs_idx,
+                        lhs_idx,
+                        "offset",
+                        insert_point);
+                lhs_idx = add_op;
+             }
+          } else {
+             llvm::BinaryOperator *add_op = llvm::BinaryOperator::Create(llvm::BinaryOperator::BinaryOps::Add,
+                                                                         rhs_idx,
+                                                                         lhs_idx,
+                                                                         "offset",
+                                                                         insert_point);
+             lhs_idx = add_op;
+          }
+       }
+
+       return lhs_idx;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public:
     static char ID; // Pass ID, replacement for typeid
     PtrIteratorSimplifyPass() : LoopPass(ID) {}
 
     bool runOnLoop(llvm::Loop *L, llvm::LPPassManager &) override {
 
+       llvm::Type *idx_ty = llvm::Type::getInt32Ty(L->getHeader()->getContext());
+
+       unsigned long expanded_phis = 0;
        std::set<llvm::BasicBlock*> blocks(L->block_begin(), L->block_end());
 
        /// Go through all the header instruction looking for candidate phi nodes (type is pointer)
@@ -442,13 +534,12 @@ public:
 
        /// For each phi candidate, compute the reachable instructions (gepis and phis)
        /// For each of those instructions, track the operands coming from outside the loop
-       for (llvm::PHINode *phi_candidate : phi_candidates) {
-llvm::errs() << "CANDIDATE: "; phi_candidate->dump();
+       for (llvm::PHINode *candidate_phi : phi_candidates) {
           std::set<llvm::Use*> reachable_uses;
           std::set<llvm::Use*> external_uses;
           bool feasible = true;
 
-          for (llvm::Use &phi_candidate_use : phi_candidate->uses()) {
+          for (llvm::Use &phi_candidate_use : candidate_phi->uses()) {
              feasible = get_reachables_and_externals(&phi_candidate_use, blocks, reachable_uses, external_uses) and feasible;
           }
 
@@ -467,8 +558,7 @@ llvm::errs() << "CANDIDATE: "; phi_candidate->dump();
                 vec_ptr_addr_set.back().second.insert(external_use->get());
              }
 
-             /// The common external to be checked (stays null if not found)
-             llvm::Value *common_external = nullptr;
+             llvm::Value *common_external = nullptr; /// The common external to be checked (stays null if not found)
              bool iterate = true;
              do {
                 iterate = true;
@@ -509,12 +599,180 @@ llvm::errs() << "CANDIDATE: "; phi_candidate->dump();
              } while (iterate);
 
              if (common_external) {
-llvm::errs() << "COMMON: "; common_external->dump();
+
+                expanded_phis++;
+                std::set<llvm::Instruction*> inst_to_remove;
+                std::set<llvm::GetElementPtrInst*> inserted_gepis;
+
+                /// Compute the offset of each external wrt the common one
+                std::map<llvm::Use*, llvm::Value*> external_offset_map;
+
+                for (llvm::Use *external_use : external_uses) {
+                   auto insert_it = external_offset_map.insert(std::make_pair(external_use, llvm::ConstantInt::get(llvm::Type::getInt32Ty(L->getHeader()->getContext()), 0)));
+
+                   llvm::Value *&external_offset_ref = insert_it.first->second;
+
+                   llvm::Use* use_rec = external_use;
+                   while (llvm::GetElementPtrInst *use_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_rec->get())) {
+                      llvm::Use &single_idx = *use_as_gepi->idx_begin();
+                      use_rec = &use_as_gepi->getOperandUse(use_as_gepi->getPointerOperandIndex());
+
+                      external_offset_ref = accumulate_index(external_offset_ref, single_idx, use_as_gepi, idx_ty);
+                   }
+                }
+
+                llvm::dbgs() << "INFO: Canonicalizing " << get_val_string(candidate_phi) << "\n";
+                llvm::dbgs() << "      With reachable uses: \n";
+                for (llvm::Use *reachable_use : reachable_uses) {
+                   llvm::dbgs() << "          #" << reachable_use->getOperandNo() << " in " << get_val_string(reachable_use->getUser()) << "\n";
+                }
+                llvm::dbgs() << "      With external uses: \n";
+                for (llvm::Use *external_use : external_uses) {
+                   llvm::dbgs() << "          #" << external_use->getOperandNo() << " in " << get_val_string(external_use->getUser()) << " (with offset " << get_val_string(external_offset_map.at(external_use)) << ")\n";
+                }
+                llvm::dbgs() << "      With common external: \n";
+                llvm::dbgs() << "          " << get_val_string(common_external) << "\n";
+
+                /// Transform all phi nodes and then the gepi uses
+                std::map<llvm::PHINode*, llvm::PHINode*> phi_map; /// Phi map containing the transformated nodes
+                std::set<llvm::Use*> uses_to_set;
+                for (llvm::Use *reachable_use : reachable_uses) {
+                   if (llvm::PHINode *user_as_phi = llvm::dyn_cast<llvm::PHINode>(reachable_use->getUser())) {
+                      phi_map[user_as_phi] = nullptr;
+                   }
+                }
+
+                /// Transform all the phi nodes
+                for (std::pair<llvm::PHINode* const, llvm::PHINode*> &phi_pair : phi_map) {
+                   llvm::PHINode *phi_iter = phi_pair.first;
+                   llvm::PHINode *phi_index = llvm::PHINode::Create(idx_ty,
+                                                                    phi_iter->getNumIncomingValues(),
+                                                                    phi_iter->getName().str() + ".idx",
+                                                                    phi_iter);
+                   phi_pair.second = phi_index;
+
+                   for (llvm::Use &phi_incoming : phi_iter->incoming_values()) {
+                      llvm::BasicBlock *incoming_bb = phi_iter->getIncomingBlock(phi_incoming);
+                      auto ext_it = external_offset_map.find(&phi_incoming);
+
+                      if (ext_it != external_offset_map.end()) {
+                         phi_index->addIncoming(ext_it->second, incoming_bb);
+                      } else {
+                         phi_index->addIncoming(llvm::UndefValue::get(idx_ty), incoming_bb);
+                         uses_to_set.insert(&phi_incoming);
+                      }
+                   }
+                   llvm::dbgs() << "      Transforming PHI " << get_val_string(phi_iter) << "\n";
+                   llvm::dbgs() << "            in new PHI " << get_val_string(phi_index) << "\n";
+                }
+
+                /// Transform all the gepis out of the phi nodes
+                std::vector<llvm::Use *> uses_to_process;
+                for (std::pair<llvm::PHINode* const, llvm::PHINode*> &phi_pair : phi_map) {
+                   llvm::PHINode *phi_iter = phi_pair.first;
+                   llvm::PHINode *phi_index = phi_pair.second;
+
+                   std::vector<llvm::Value *> idxs;
+                   idxs.push_back(phi_index);
+                   llvm::GetElementPtrInst *first_gepi = llvm::GetElementPtrInst::CreateInBounds(common_external,
+                                                                                                 idxs,
+                                                                                                 phi_iter->getName().str() +
+                                                                                                 ".firstgepi",
+                                                                                                 &*phi_iter->getParent()->getFirstInsertionPt());
+                   phi_iter->replaceAllUsesWith(first_gepi);
+                   for (llvm::Use &gepi_use : first_gepi->uses()) {
+                      uses_to_process.push_back(&gepi_use);
+                   }
+                }
+
+                for (unsigned long i = 0; i < uses_to_process.size(); i++) {
+                   llvm::Use *use_to_process = uses_to_process.at(i);
+
+                   llvm::dbgs() << "      Transforming use #" << use_to_process->getOperandNo() << " of " << get_val_string(use_to_process->getUser()) << "\n";
+                   if (llvm::GetElementPtrInst *use_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_to_process->get())) {
+                      if (llvm::PHINode *user_as_phi = llvm::dyn_cast<llvm::PHINode>(use_to_process->getUser())) {
+                         auto phi_it = phi_map.find(user_as_phi);
+                         if (phi_it != phi_map.end()){
+                            llvm::PHINode *phi_index = phi_map.at(user_as_phi);
+                            int incoming_value_idx = user_as_phi->getBasicBlockIndex(user_as_phi->getIncomingBlock(*use_to_process));
+                            phi_index->setIncomingValue(incoming_value_idx, use_as_gepi->getOperand(1));
+                            llvm::dbgs() << "            as " << get_val_string(phi_index) << "\n";
+                         } else {
+                            llvm::dbgs() << "            as " << get_val_string(user_as_phi) << "\n";
+                         }
+                         uses_to_set.erase(use_to_process);
+                      } else if (llvm::GetElementPtrInst *user_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_to_process->getUser())) {
+                         llvm::Value *new_idx = accumulate_index(use_as_gepi->getOperand(1),
+                                                                 user_as_gepi->getOperand(1),
+                                                                 user_as_gepi,
+                                                                 idx_ty);
+
+                         std::vector<llvm::Value *> idxs;
+                         idxs.push_back(new_idx);
+                         llvm::GetElementPtrInst *new_gepi = llvm::GetElementPtrInst::CreateInBounds(common_external,
+                                                                                                       idxs,
+                                                                                                       user_as_gepi->getName().str() +
+                                                                                                       ".gepi",
+                                                                                                       user_as_gepi);
+
+
+                         llvm::dbgs() << "            as " << get_val_string(new_gepi) << "\n";
+
+                         for(llvm::Use &gepi_use : user_as_gepi->uses()) {
+                            unsigned long operand_no = gepi_use.getOperandNo();
+                            uses_to_set.erase(&gepi_use);
+                            gepi_use.getUser()->setOperand(operand_no, new_gepi);
+                            uses_to_process.push_back(&gepi_use.getUser()->getOperandUse(operand_no));
+                         }
+                         inst_to_remove.insert(user_as_gepi);
+                         inserted_gepis.insert(new_gepi);
+                      }
+                   } else {
+                      llvm::errs() << "ERR: Use should be a gepi\n";
+                      exit(-1);
+                   }
+                }
+
+                for(std::pair<llvm::PHINode*, llvm::PHINode*> phi_pair : phi_map) {
+                   phi_pair.first->eraseFromParent();
+                }
+
+                unsigned long num_deletion = 0;
+                std::set<llvm::Instruction*> remove_set = inst_to_remove;
+                do {
+                   num_deletion = 0;
+                   std::set<llvm::Instruction*> removed_set;
+
+                   for (llvm::Instruction *inst_to_erase : remove_set) {
+                      if (!inst_to_erase->hasNUsesOrMore(1)) {
+                         removed_set.insert(inst_to_erase);
+                      }
+                   }
+
+                   for (llvm::Instruction *inst_to_erase : removed_set) {
+                      remove_set.erase(inst_to_erase);
+                      inst_to_erase->eraseFromParent();
+                   }
+
+                   num_deletion = removed_set.size();
+                } while (num_deletion > 0);
+
+                for(llvm::GetElementPtrInst *gepi : inserted_gepis) {
+                   if (gepi->getNumUses() == 0) {
+                      gepi->eraseFromParent();
+                   }
+                }
+
+                //assert("All uses replaced" && uses_to_set.empty());
+             } else {
+                llvm::dbgs() << "INFO: Cannot canonicalize (no common)" << get_val_string(candidate_phi) << "\n";
              }
+          } else {
+             llvm::dbgs() << "INFO: Cannot canonicalize (unfeasible)" << get_val_string(candidate_phi) << "\n";
           }
        }
 
-       return false;
+       return expanded_phis > 0;
     }
 
     void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
