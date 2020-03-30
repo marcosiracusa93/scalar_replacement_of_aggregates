@@ -304,7 +304,9 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
                                llvm::PHINode *new_phi_node,
                                std::map<llvm::CmpInst *, std::vector<llvm::Use *>> &encountered_cmps,
                                std::set<llvm::PHINode *> &encountered_phis,
-                               std::set<llvm::Instruction *> &inst_to_remove) {
+                               std::set<llvm::Instruction *> &inst_to_remove,
+                               llvm::LoopInfo &LI,
+                               const llvm::Loop *loop) {
 
    llvm::User *user = iter_use.getUser();
    unsigned long op_num = iter_use.getOperandNo();
@@ -352,7 +354,7 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
       for (llvm::Use &use : new_gepi->uses()) {
          llvm::dbgs() << "      Replaced use #" << use.getOperandNo() << " in user: "; use.getUser()->dump();
          iterator_canonicalization(use, ptr_iter_init, new_idx, first_phi_node, new_phi_node, encountered_cmps,
-                                   encountered_phis, inst_to_remove);
+                                   encountered_phis, inst_to_remove, LI, loop);
       }
 
       inst_to_remove.insert(gepi_inst);
@@ -364,10 +366,20 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
          llvm::dbgs() << "      Setting init PHI: "; new_phi_node->dump();
          return;
       } else {
+         if (LI.getLoopFor(phi_node->getParent()) != loop) {
+            return;
+         }
+
          llvm::dbgs() << "      Expanding conditional PHI: "; new_phi_node->dump();
          llvm::PHINode *new_phi = llvm::PHINode::Create(int_ind_var->getType(), 2, phi_node->getName().str() + ".phi", phi_node);
-         new_phi->addIncoming(llvm::ConstantInt::get(int_ind_var->getType(), 0, true), phi_node->getIncomingBlock(0));
-         new_phi->addIncoming(int_ind_var, phi_node->getIncomingBlock(1));
+         if (phi_node->getIncomingValue(0) == ptr_iter_init) {
+            new_phi->addIncoming(llvm::ConstantInt::get(int_ind_var->getType(), 0, true), phi_node->getIncomingBlock(0));
+            new_phi->addIncoming(int_ind_var, phi_node->getIncomingBlock(1));
+         } else {
+            new_phi->addIncoming(int_ind_var, phi_node->getIncomingBlock(0));
+            new_phi->addIncoming(llvm::ConstantInt::get(int_ind_var->getType(), 0, true), phi_node->getIncomingBlock(1));
+         }
+
          inst_to_remove.insert(phi_node);
 
          std::vector<llvm::Value*> new_gepi_idx_vec;
@@ -381,7 +393,7 @@ void iterator_canonicalization(llvm::Use &iter_use, /// the gepi or cmp instruct
          for (llvm::Use &use : new_gepi->uses()) {
             llvm::dbgs() << "      Replaced use# " << use.getOperandNo() << " in user: "; use.getUser()->dump();
             iterator_canonicalization(use, ptr_iter_init, new_phi, first_phi_node, new_phi_node, encountered_cmps,
-                                      encountered_phis, inst_to_remove);
+                                      encountered_phis, inst_to_remove, LI, loop);
          }
          return;
       }
@@ -415,27 +427,24 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
       std::vector<llvm::PHINode*> one_op_phi_vec;
       std::vector<llvm::PHINode*> two_op_phi_vec;
 
-      for(llvm::Instruction& instruction : *header)
-      {
-         if(llvm::PHINode* phi_node = llvm::dyn_cast<llvm::PHINode>(&instruction))
-         {
-            if(phi_node->getType()->isPointerTy())
-            {
-               if (!phi_node->getType()->getPointerElementType()->isAggregateType()) {
-                  switch (phi_node->getNumOperands()) {
-                     case 1:
-                        one_op_phi_vec.push_back(phi_node);
-                        break;
-                     case 2:
-                        two_op_phi_vec.push_back(phi_node);
-                        break;
+      for (llvm::BasicBlock *bb : loop->blocks()) {
+         for (llvm::Instruction &instruction : *bb) {
+            if (llvm::PHINode *phi_node = llvm::dyn_cast<llvm::PHINode>(&instruction)) {
+               if (phi_node->getType()->isPointerTy()) {
+                  if (!phi_node->getType()->getPointerElementType()->isAggregateType()) {
+                     switch (phi_node->getNumOperands()) {
+                        case 1:
+                           one_op_phi_vec.push_back(phi_node);
+                           break;
+                        case 2:
+                           two_op_phi_vec.push_back(phi_node);
+                           break;
+                     }
                   }
                }
+            } else {
+               break;
             }
-         }
-         else
-         {
-            break;
          }
       }
 
@@ -568,7 +577,7 @@ bool ptr_iterator_simplification(llvm::Function& function, llvm::LoopInfo &LI)
 
             for (llvm::Use &use : phi_node->uses()) {
                iterator_canonicalization(use, init_ptr, new_phi_node, phi_node, new_phi_node, encountered_cmps,
-                                         encountered_phis, inst_to_remove);
+                                         encountered_phis, inst_to_remove, LI, loop);
             }
 
             inst_to_remove.insert(phi_node);
@@ -1390,7 +1399,7 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
       bool inst_limit = inst_count <= 32;
 
       llvm::MDNode *loopID = nullptr;
-      if (cost_threshold and trip_count_limit and inst_limit) {
+      if (false and cost_threshold and trip_count_limit and inst_limit) { // TODO REMOVE FALSE
          loopID = llvm::MDNode::get(function.getContext(), llvm::MDString::get(function.getContext(), "llvm.loop.unroll.full"));
          llvm::dbgs() << "INFO: Force unroll of loop " << loop->getName() << " in function " << function.getName() << "(TripCount: " << trip_count << ", CostValue: " << cost_value << ", InstCount: " << inst_count << ")\n";
       } else {
@@ -1529,7 +1538,7 @@ bool clean_lcssa(llvm::Function &function) {
 
 bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
 {
-   auto t_begin = std::chrono::high_resolution_clock::now();
+   //auto t_begin = std::chrono::high_resolution_clock::now();
    bool result = false;
    switch(optimization_selection)
    {
@@ -1549,7 +1558,7 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
       case SROA_ptrIteratorSimplification: {
          // Check CHStone adpcm for examples
          llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
-         result = ptr_iterator_simplification(function, LI);
+         result = false;//ptr_iterator_simplification(function, LI); // TODO REMOVE
          break;
       }
       case SROA_chunkOperationsLowering:
@@ -1571,9 +1580,9 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
          llvm::errs() << "ERR: No optimization found\n";
          exit(-1);
    }
-   auto t_end = std::chrono::high_resolution_clock::now();
-   double duration = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_begin).count();
-   llvm::dbgs() << "INFO: " << optimization_names[optimization_selection] << " of " << function.getName() << " took " << duration * 1e-9 << " seconds to complete\n";
+   //auto t_end = std::chrono::high_resolution_clock::now();
+   //double duration = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_begin).count();
+   //llvm::dbgs() << "INFO: " << optimization_names[optimization_selection] << " of " << function.getName() << " took " << duration * 1e-9 << " seconds to complete\n";
    return result;
 }
 

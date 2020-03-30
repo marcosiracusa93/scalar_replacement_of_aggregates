@@ -59,6 +59,7 @@ enum SROA_optimizations
 static const char* optimization_names[] = {"LCSSA cleanup",
                                            "GEPOP to GEPI",
                                            "Force unroll",
+                                           "Pointer Iterator Simplification"
                                            "Chunk operations lowering",
                                            "Bitcast vector removal",
                                            "Remove lifetime intrinsic",

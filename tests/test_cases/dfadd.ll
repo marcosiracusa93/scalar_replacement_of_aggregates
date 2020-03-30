@@ -1,29 +1,29 @@
-; ModuleID = 'dfadd.c'
-source_filename = "dfadd.c"
-target datalayout = "e-m:o-p:32:32-f64:32:64-f80:128-n8:16:32-S128"
-target triple = "i386-apple-macosx10.13.0"
+; ModuleID = 'dfadd/dfadd.c'
+source_filename = "dfadd/dfadd.c"
+target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-apple-macosx10.13.0"
 
 %union.anon = type { double }
 
 @float_rounding_mode = global i32 0, align 4
 @float_exception_flags = global i32 0, align 4
-@a_input = constant [46 x i64] [i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4611686018427387904, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656, i64 9221120237041090560, i64 9218868437227405312, i64 0, i64 4609434218613702656, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4611686018427387904, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 -2251799813685248, i64 -4503599627370496, i64 -9223372036854775808, i64 -4613937818241073152, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4611686018427387904, i64 -4503599627370496, i64 -4503599627370496, i64 -4616189618054758400, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4611686018427387904], align 8
-@b_input = constant [46 x i64] [i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656, i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4611686018427387904, i64 9218868437227405312, i64 9218868437227405312, i64 0, i64 4607182418800017408, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4611686018427387904, i64 -4503599627370496, i64 -4503599627370496, i64 -9223372036854775808, i64 -4616189618054758400, i64 -4503599627370496, i64 -4503599627370496, i64 -4616189618054758400, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4611686018427387904, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4611686018427387904, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656], align 8
-@z_output = constant [46 x i64] [i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4615063718147915776, i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4615063718147915776, i64 9221120237041090560, i64 9218868437227405312, i64 0, i64 4612811918334230528, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4608308318706860032, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4608308318706860032, i64 -2251799813685248, i64 -4503599627370496, i64 -9223372036854775808, i64 -4610560118520545280, i64 9221120237041090560, i64 9223372036854775807, i64 0, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4620693217682128896, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4602678819172646912, i64 9221120237041090560, i64 9223372036854775807, i64 0, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4602678819172646912, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4620693217682128896], align 8
+@a_input = constant [46 x i64] [i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4611686018427387904, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656, i64 9221120237041090560, i64 9218868437227405312, i64 0, i64 4609434218613702656, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4611686018427387904, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 -2251799813685248, i64 -4503599627370496, i64 -9223372036854775808, i64 -4613937818241073152, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4611686018427387904, i64 -4503599627370496, i64 -4503599627370496, i64 -4616189618054758400, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4611686018427387904], align 16
+@b_input = constant [46 x i64] [i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656, i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4611686018427387904, i64 9218868437227405312, i64 9218868437227405312, i64 0, i64 4607182418800017408, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4611686018427387904, i64 -4503599627370496, i64 -4503599627370496, i64 -9223372036854775808, i64 -4616189618054758400, i64 -4503599627370496, i64 -4503599627370496, i64 -4616189618054758400, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4611686018427387904, i64 -4616189618054758400, i64 -4616189618054758400, i64 -9223372036854775808, i64 -4613937818241073152, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4611686018427387904, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4609434218613702656], align 16
+@z_output = constant [46 x i64] [i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4615063718147915776, i64 9221120237041090560, i64 9218868437227405312, i64 4611686018427387904, i64 4615063718147915776, i64 9221120237041090560, i64 9218868437227405312, i64 0, i64 4612811918334230528, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4608308318706860032, i64 -2251799813685248, i64 -4503599627370496, i64 -4611686018427387904, i64 -4608308318706860032, i64 -2251799813685248, i64 -4503599627370496, i64 -9223372036854775808, i64 -4610560118520545280, i64 9221120237041090560, i64 9223372036854775807, i64 0, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4620693217682128896, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4602678819172646912, i64 9221120237041090560, i64 9223372036854775807, i64 0, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 4602678819172646912, i64 -2251799813685248, i64 -4503599627370496, i64 -4616189618054758400, i64 -4620693217682128896], align 16
 @.str = private unnamed_addr constant [71 x i8] c"a_input=%016llx b_input=%016llx expected=%016llx output=%016llx (%lf)\0A\00", align 1
 @.str.1 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
-@countLeadingZeros32.countLeadingZerosHigh = internal constant [256 x i32] [i32 8, i32 7, i32 6, i32 6, i32 5, i32 5, i32 5, i32 5, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0], align 4
+@countLeadingZeros32.countLeadingZerosHigh = internal constant [256 x i32] [i32 8, i32 7, i32 6, i32 6, i32 5, i32 5, i32 5, i32 5, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0], align 16
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @shift64RightJamming(i64 %a, i32 %count, i64* %zPtr) #0 {
 entry:
   %a.addr = alloca i64, align 8
   %count.addr = alloca i32, align 4
-  %zPtr.addr = alloca i64*, align 4
+  %zPtr.addr = alloca i64*, align 8
   %z = alloca i64, align 8
   store i64 %a, i64* %a.addr, align 8
   store i32 %count, i32* %count.addr, align 4
-  store i64* %zPtr, i64** %zPtr.addr, align 4
+  store i64* %zPtr, i64** %zPtr.addr, align 8
   %0 = load i32, i32* %count.addr, align 4
   %cmp = icmp eq i32 %0, 0
   br i1 %cmp, label %if.then, label %if.else
@@ -69,12 +69,12 @@ if.end:                                           ; preds = %if.else6, %if.then2
 
 if.end10:                                         ; preds = %if.end, %if.then
   %8 = load i64, i64* %z, align 8
-  %9 = load i64*, i64** %zPtr.addr, align 4
-  store i64 %8, i64* %9, align 4
+  %9 = load i64*, i64** %zPtr.addr, align 8
+  store i64 %8, i64* %9, align 8
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @float_raise(i32 %flags) #0 {
 entry:
   %flags.addr = alloca i32, align 4
@@ -86,7 +86,7 @@ entry:
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @float64_is_nan(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -98,7 +98,7 @@ entry:
   ret i32 %conv
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @float64_is_signaling_nan(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -121,7 +121,7 @@ land.end:                                         ; preds = %land.rhs, %entry
   ret i32 %land.ext
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i64 @extractFloat64Frac(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -131,7 +131,7 @@ entry:
   ret i64 %and
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @extractFloat64Exp(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -143,7 +143,7 @@ entry:
   ret i32 %conv
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @extractFloat64Sign(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -154,7 +154,7 @@ entry:
   ret i32 %conv
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i64 @packFloat64(i32 %zSign, i32 %zExp, i64 %zSig) #0 {
 entry:
   %zSign.addr = alloca i32, align 4
@@ -175,10 +175,10 @@ entry:
   ret i64 %add3
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i64 @float64_add(i64 %a, i64 %b) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %a.addr = alloca i64, align 8
   %b.addr = alloca i64, align 8
   %aSign = alloca i32, align 4
@@ -201,7 +201,7 @@ if.then:                                          ; preds = %entry
   %5 = load i64, i64* %b.addr, align 8
   %6 = load i32, i32* %aSign, align 4
   %call2 = call i64 @addFloat64Sigs(i64 %4, i64 %5, i32 %6)
-  store i64 %call2, i64* %retval, align 4
+  store i64 %call2, i64* %retval, align 8
   br label %return
 
 if.else:                                          ; preds = %entry
@@ -209,18 +209,18 @@ if.else:                                          ; preds = %entry
   %8 = load i64, i64* %b.addr, align 8
   %9 = load i32, i32* %aSign, align 4
   %call3 = call i64 @subFloat64Sigs(i64 %7, i64 %8, i32 %9)
-  store i64 %call3, i64* %retval, align 4
+  store i64 %call3, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %if.else, %if.then
-  %10 = load i64, i64* %retval, align 4
+  %10 = load i64, i64* %retval, align 8
   ret i64 %10
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @addFloat64Sigs(i64 %a, i64 %b, i32 %zSign) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %a.addr = alloca i64, align 8
   %b.addr = alloca i64, align 8
   %zSign.addr = alloca i32, align 4
@@ -274,12 +274,12 @@ if.then7:                                         ; preds = %if.then6
   %11 = load i64, i64* %a.addr, align 8
   %12 = load i64, i64* %b.addr, align 8
   %call8 = call i64 @propagateFloat64NaN(i64 %11, i64 %12)
-  store i64 %call8, i64* %retval, align 4
+  store i64 %call8, i64* %retval, align 8
   br label %return
 
 if.end:                                           ; preds = %if.then6
   %13 = load i64, i64* %a.addr, align 8
-  store i64 %13, i64* %retval, align 4
+  store i64 %13, i64* %retval, align 8
   br label %return
 
 if.end9:                                          ; preds = %if.then
@@ -326,13 +326,13 @@ if.then19:                                        ; preds = %if.then17
   %23 = load i64, i64* %a.addr, align 8
   %24 = load i64, i64* %b.addr, align 8
   %call20 = call i64 @propagateFloat64NaN(i64 %23, i64 %24)
-  store i64 %call20, i64* %retval, align 4
+  store i64 %call20, i64* %retval, align 8
   br label %return
 
 if.end21:                                         ; preds = %if.then17
   %25 = load i32, i32* %zSign.addr, align 4
   %call22 = call i64 @packFloat64(i32 %25, i32 2047, i64 0)
-  store i64 %call22, i64* %retval, align 4
+  store i64 %call22, i64* %retval, align 8
   br label %return
 
 if.end23:                                         ; preds = %if.then15
@@ -377,12 +377,12 @@ if.then35:                                        ; preds = %if.then32
   %35 = load i64, i64* %a.addr, align 8
   %36 = load i64, i64* %b.addr, align 8
   %call36 = call i64 @propagateFloat64NaN(i64 %35, i64 %36)
-  store i64 %call36, i64* %retval, align 4
+  store i64 %call36, i64* %retval, align 8
   br label %return
 
 if.end37:                                         ; preds = %if.then32
   %37 = load i64, i64* %a.addr, align 8
-  store i64 %37, i64* %retval, align 4
+  store i64 %37, i64* %retval, align 8
   br label %return
 
 if.end38:                                         ; preds = %if.else30
@@ -397,7 +397,7 @@ if.then40:                                        ; preds = %if.end38
   %add = add i64 %40, %41
   %shr = lshr i64 %add, 9
   %call41 = call i64 @packFloat64(i32 %39, i32 0, i64 %shr)
-  store i64 %call41, i64* %retval, align 4
+  store i64 %call41, i64* %retval, align 8
   br label %return
 
 if.end42:                                         ; preds = %if.end38
@@ -447,18 +447,18 @@ roundAndPack:                                     ; preds = %if.end55, %if.end42
   %54 = load i32, i32* %zExp, align 4
   %55 = load i64, i64* %zSig, align 8
   %call56 = call i64 @roundAndPackFloat64(i32 %53, i32 %54, i64 %55)
-  store i64 %call56, i64* %retval, align 4
+  store i64 %call56, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %roundAndPack, %if.then40, %if.end37, %if.then35, %if.end21, %if.then19, %if.end, %if.then7
-  %56 = load i64, i64* %retval, align 4
+  %56 = load i64, i64* %retval, align 8
   ret i64 %56
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @subFloat64Sigs(i64 %a, i64 %b, i32 %zSign) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %a.addr = alloca i64, align 8
   %b.addr = alloca i64, align 8
   %zSign.addr = alloca i32, align 4
@@ -525,12 +525,12 @@ if.then10:                                        ; preds = %if.then9
   %13 = load i64, i64* %a.addr, align 8
   %14 = load i64, i64* %b.addr, align 8
   %call11 = call i64 @propagateFloat64NaN(i64 %13, i64 %14)
-  store i64 %call11, i64* %retval, align 4
+  store i64 %call11, i64* %retval, align 8
   br label %return
 
 if.end12:                                         ; preds = %if.then9
   call void @float_raise(i32 16)
-  store i64 9223372036854775807, i64* %retval, align 4
+  store i64 9223372036854775807, i64* %retval, align 8
   br label %return
 
 if.end13:                                         ; preds = %if.end7
@@ -566,7 +566,7 @@ if.end22:                                         ; preds = %if.end19
   %cmp23 = icmp eq i32 %20, 3
   %conv = zext i1 %cmp23 to i32
   %call24 = call i64 @packFloat64(i32 %conv, i32 0, i64 0)
-  store i64 %call24, i64* %retval, align 4
+  store i64 %call24, i64* %retval, align 8
   br label %return
 
 bExpBigger:                                       ; preds = %if.then6
@@ -583,14 +583,14 @@ if.then29:                                        ; preds = %if.then27
   %23 = load i64, i64* %a.addr, align 8
   %24 = load i64, i64* %b.addr, align 8
   %call30 = call i64 @propagateFloat64NaN(i64 %23, i64 %24)
-  store i64 %call30, i64* %retval, align 4
+  store i64 %call30, i64* %retval, align 8
   br label %return
 
 if.end31:                                         ; preds = %if.then27
   %25 = load i32, i32* %zSign.addr, align 4
   %xor = xor i32 %25, 1
   %call32 = call i64 @packFloat64(i32 %xor, i32 2047, i64 0)
-  store i64 %call32, i64* %retval, align 4
+  store i64 %call32, i64* %retval, align 8
   br label %return
 
 if.end33:                                         ; preds = %bExpBigger
@@ -646,12 +646,12 @@ if.then47:                                        ; preds = %if.then45
   %38 = load i64, i64* %a.addr, align 8
   %39 = load i64, i64* %b.addr, align 8
   %call48 = call i64 @propagateFloat64NaN(i64 %38, i64 %39)
-  store i64 %call48, i64* %retval, align 4
+  store i64 %call48, i64* %retval, align 8
   br label %return
 
 if.end49:                                         ; preds = %if.then45
   %40 = load i64, i64* %a.addr, align 8
-  store i64 %40, i64* %retval, align 4
+  store i64 %40, i64* %retval, align 8
   br label %return
 
 if.end50:                                         ; preds = %aExpBigger
@@ -697,29 +697,29 @@ normalizeRoundAndPack:                            ; preds = %aBigger, %bBigger
   %52 = load i32, i32* %zExp, align 4
   %53 = load i64, i64* %zSig, align 8
   %call60 = call i64 @normalizeRoundAndPackFloat64(i32 %51, i32 %52, i64 %53)
-  store i64 %call60, i64* %retval, align 4
+  store i64 %call60, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %normalizeRoundAndPack, %if.end49, %if.then47, %if.end31, %if.then29, %if.end22, %if.end12, %if.then10
-  %54 = load i64, i64* %retval, align 4
+  %54 = load i64, i64* %retval, align 8
   ret i64 %54
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define double @ullong_to_double(i64 %x) #0 {
 entry:
   %x.addr = alloca i64, align 8
-  %t = alloca %union.anon, align 4
+  %t = alloca %union.anon, align 8
   store i64 %x, i64* %x.addr, align 8
   %0 = load i64, i64* %x.addr, align 8
   %ll = bitcast %union.anon* %t to i64*
-  store i64 %0, i64* %ll, align 4
+  store i64 %0, i64* %ll, align 8
   %d = bitcast %union.anon* %t to double*
-  %1 = load double, double* %d, align 4
+  %1 = load double, double* %d, align 8
   ret double %1
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @main() #0 {
 entry:
   %retval = alloca i32, align 4
@@ -740,12 +740,14 @@ for.cond:                                         ; preds = %for.inc, %entry
 
 for.body:                                         ; preds = %for.cond
   %1 = load i32, i32* %i, align 4
-  %arrayidx = getelementptr inbounds [46 x i64], [46 x i64]* @a_input, i32 0, i32 %1
+  %idxprom = sext i32 %1 to i64
+  %arrayidx = getelementptr inbounds [46 x i64], [46 x i64]* @a_input, i64 0, i64 %idxprom
   %2 = load i64, i64* %arrayidx, align 8
   store i64 %2, i64* %x1, align 8
   %3 = load i32, i32* %i, align 4
-  %arrayidx1 = getelementptr inbounds [46 x i64], [46 x i64]* @b_input, i32 0, i32 %3
-  %4 = load i64, i64* %arrayidx1, align 8
+  %idxprom1 = sext i32 %3 to i64
+  %arrayidx2 = getelementptr inbounds [46 x i64], [46 x i64]* @b_input, i64 0, i64 %idxprom1
+  %4 = load i64, i64* %arrayidx2, align 8
   store i64 %4, i64* %x2, align 8
   %5 = load i64, i64* %x1, align 8
   %6 = load i64, i64* %x2, align 8
@@ -753,26 +755,30 @@ for.body:                                         ; preds = %for.cond
   store i64 %call, i64* %result, align 8
   %7 = load i64, i64* %result, align 8
   %8 = load i32, i32* %i, align 4
-  %arrayidx2 = getelementptr inbounds [46 x i64], [46 x i64]* @z_output, i32 0, i32 %8
-  %9 = load i64, i64* %arrayidx2, align 8
-  %cmp3 = icmp ne i64 %7, %9
-  %conv = zext i1 %cmp3 to i32
+  %idxprom3 = sext i32 %8 to i64
+  %arrayidx4 = getelementptr inbounds [46 x i64], [46 x i64]* @z_output, i64 0, i64 %idxprom3
+  %9 = load i64, i64* %arrayidx4, align 8
+  %cmp5 = icmp ne i64 %7, %9
+  %conv = zext i1 %cmp5 to i32
   %10 = load i32, i32* %main_result, align 4
   %add = add nsw i32 %10, %conv
   store i32 %add, i32* %main_result, align 4
   %11 = load i32, i32* %i, align 4
-  %arrayidx4 = getelementptr inbounds [46 x i64], [46 x i64]* @a_input, i32 0, i32 %11
-  %12 = load i64, i64* %arrayidx4, align 8
+  %idxprom6 = sext i32 %11 to i64
+  %arrayidx7 = getelementptr inbounds [46 x i64], [46 x i64]* @a_input, i64 0, i64 %idxprom6
+  %12 = load i64, i64* %arrayidx7, align 8
   %13 = load i32, i32* %i, align 4
-  %arrayidx5 = getelementptr inbounds [46 x i64], [46 x i64]* @b_input, i32 0, i32 %13
-  %14 = load i64, i64* %arrayidx5, align 8
+  %idxprom8 = sext i32 %13 to i64
+  %arrayidx9 = getelementptr inbounds [46 x i64], [46 x i64]* @b_input, i64 0, i64 %idxprom8
+  %14 = load i64, i64* %arrayidx9, align 8
   %15 = load i32, i32* %i, align 4
-  %arrayidx6 = getelementptr inbounds [46 x i64], [46 x i64]* @z_output, i32 0, i32 %15
-  %16 = load i64, i64* %arrayidx6, align 8
+  %idxprom10 = sext i32 %15 to i64
+  %arrayidx11 = getelementptr inbounds [46 x i64], [46 x i64]* @z_output, i64 0, i64 %idxprom10
+  %16 = load i64, i64* %arrayidx11, align 8
   %17 = load i64, i64* %result, align 8
   %18 = load i64, i64* %result, align 8
-  %call7 = call double @ullong_to_double(i64 %18)
-  %call8 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([71 x i8], [71 x i8]* @.str, i32 0, i32 0), i64 %12, i64 %14, i64 %16, i64 %17, double %call7)
+  %call12 = call double @ullong_to_double(i64 %18)
+  %call13 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([71 x i8], [71 x i8]* @.str, i32 0, i32 0), i64 %12, i64 %14, i64 %16, i64 %17, double %call12)
   br label %for.inc
 
 for.inc:                                          ; preds = %for.body
@@ -783,14 +789,14 @@ for.inc:                                          ; preds = %for.body
 
 for.end:                                          ; preds = %for.cond
   %20 = load i32, i32* %main_result, align 4
-  %call9 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), i32 %20)
+  %call14 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), i32 %20)
   %21 = load i32, i32* %main_result, align 4
   ret i32 %21
 }
 
 declare i32 @printf(i8*, ...) #1
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @propagateFloat64NaN(i64 %a, i64 %b) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -873,10 +879,10 @@ cond.end15:                                       ; preds = %cond.end13, %cond.t
   ret i64 %cond16
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @roundAndPackFloat64(i32 %zSign, i32 %zExp, i64 %zSig) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %zSign.addr = alloca i32, align 4
   %zExp.addr = alloca i32, align 4
   %zSig.addr = alloca i64, align 8
@@ -982,7 +988,7 @@ if.then30:                                        ; preds = %land.lhs.true, %if.
   %conv32 = zext i1 %cmp31 to i32
   %conv33 = sext i32 %conv32 to i64
   %sub = sub i64 %call, %conv33
-  store i64 %sub, i64* %retval, align 4
+  store i64 %sub, i64* %retval, align 8
   br label %return
 
 if.end34:                                         ; preds = %land.lhs.true, %lor.lhs.false
@@ -1062,15 +1068,15 @@ if.end61:                                         ; preds = %if.then60, %if.end5
   %30 = load i32, i32* %zExp.addr, align 4
   %31 = load i64, i64* %zSig.addr, align 8
   %call62 = call i64 @packFloat64(i32 %29, i32 %30, i64 %31)
-  store i64 %call62, i64* %retval, align 4
+  store i64 %call62, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %if.end61, %if.then30
-  %32 = load i64, i64* %retval, align 4
+  %32 = load i64, i64* %retval, align 8
   ret i64 %32
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @normalizeRoundAndPackFloat64(i32 %zSign, i32 %zExp, i64 %zSig) #0 {
 entry:
   %zSign.addr = alloca i32, align 4
@@ -1096,7 +1102,7 @@ entry:
   ret i64 %call2
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i32 @countLeadingZeros64(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -1130,7 +1136,7 @@ if.end:                                           ; preds = %if.else, %if.then
   ret i32 %5
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i32 @countLeadingZeros32(i32 %a) #0 {
 entry:
   %a.addr = alloca i32, align 4
@@ -1167,7 +1173,8 @@ if.then2:                                         ; preds = %if.end
 if.end5:                                          ; preds = %if.then2, %if.end
   %6 = load i32, i32* %a.addr, align 4
   %shr = lshr i32 %6, 24
-  %arrayidx = getelementptr inbounds [256 x i32], [256 x i32]* @countLeadingZeros32.countLeadingZerosHigh, i32 0, i32 %shr
+  %idxprom = zext i32 %shr to i64
+  %arrayidx = getelementptr inbounds [256 x i32], [256 x i32]* @countLeadingZeros32.countLeadingZerosHigh, i64 0, i64 %idxprom
   %7 = load i32, i32* %arrayidx, align 4
   %8 = load i32, i32* %shiftCount, align 4
   %add6 = add nsw i32 %8, %7
@@ -1176,7 +1183,7 @@ if.end5:                                          ; preds = %if.then2, %if.end
   ret i32 %9
 }
 
-attributes #0 = { noinline nounwind ssp "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { noinline nounwind ssp uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !llvm.module.flags = !{!0}

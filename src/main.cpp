@@ -6,6 +6,7 @@
 #include <llvm/Transforms/Scalar/LoopUnrollPass.h>
 #include <iostream>
 #include <sys/time.h>
+#include <PtrIteratorSimplifyPass.hpp>
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/SourceMgr.h"
@@ -110,39 +111,30 @@ int main(int argc, char** argv)
       passManager->add(createPrintModulePass("./f0_first.ll"));
 
 
-      passManager->add(llvm::createPromoteMemoryToRegisterPass());
-      passManager->add(createGepiExplicitation());
-      passManager->add(createGepiCanonicalIdxs());
-      passManager->add(createRemoveIntrinsicPass());
-      passManager->add(llvm::createExpandMemOpsPass());
-      passManager->add(createPtrIteratorSimplificationPass());
-      passManager->add(createChunkOperationsLoweringPass());
-      passManager->add(createBitcastVectorRemovalPass());
-      passManager->add(createSelectLoweringPass());
-      passManager->add(createPrintModulePass("./f1_after_canonicalization.ll"));
-      passManager->add(llvm::createVerifierPass());
-
-
       passManager->add(createCodeSimplificationPass());
-      passManager->add(createPrintModulePass("./f2_after_simplification.ll"));
+      passManager->add(createPrintModulePass("./f1_after_simplification.ll"));
 
 
       passManager->add(llvm::createPromoteMemoryToRegisterPass());
       passManager->add(llvm::createLoopRotatePass());
       passManager->add(llvm::createLoopUnrollPass());
-      passManager->add(createCleanLCSSA());
-      passManager->add(createPrintModulePass("./f3_after_unrolling.ll"));
+      passManager->add(createPrintModulePass("./f2_after_unrolling.ll"));
       passManager->add(llvm::createVerifierPass());
 
 
-      passManager->add(createGepiCanonicalIdxs());
-      passManager->add(createGepiExplicitation());
       passManager->add(createRemoveIntrinsicPass());
+      passManager->add(createGepiExplicitation());
+      passManager->add(createGepiCanonicalIdxs());
       passManager->add(llvm::createExpandMemOpsPass());
-      passManager->add(createPtrIteratorSimplificationPass());
+      passManager->add(createPtrIteratorSimplifyPass());
+      passManager->add(createCleanLCSSA());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createSelectLoweringPass());
+      passManager->add(createPrintModulePass("./f4_after_caonicalization.ll"));
+      passManager->add(llvm::createVerifierPass());
+
+
       passManager->add(createSROAFunctionVersioningPass(args_info.target_function));
       passManager->add(createPrintModulePass("./f4_after_versioning.ll"));
       passManager->add(llvm::createVerifierPass());
@@ -158,14 +150,7 @@ int main(int argc, char** argv)
          passManagerBuilder.populateModulePassManager(*passManager);
       }
 
-      passManager->add(createGepiCanonicalIdxs());
-      passManager->add(createGepiExplicitation());
-      passManager->add(createRemoveIntrinsicPass());
-      passManager->add(llvm::createExpandMemOpsPass());
-      passManager->add(createPtrIteratorSimplificationPass());
-      passManager->add(createChunkOperationsLoweringPass());
-      passManager->add(createBitcastVectorRemovalPass());
-      passManager->add(createSelectLoweringPass());
+
       passManager->add(createPrintModulePass("./f5_after_canonicalization.ll"));
       passManager->add(llvm::createVerifierPass());
 
@@ -178,7 +163,7 @@ int main(int argc, char** argv)
       // Insert -O3 in chain
       {
          llvm::PassManagerBuilder passManagerBuilder;
-         passManagerBuilder.OptLevel = 1;
+         passManagerBuilder.OptLevel = 2;
          passManagerBuilder.DisableUnrollLoops = true;
          passManagerBuilder.BBVectorize = false;
          passManagerBuilder.LoopVectorize = false;
@@ -187,9 +172,11 @@ int main(int argc, char** argv)
       }
       passManager->add(createPrintModulePass("./f7_after_optimization.ll"));
 
+
       passManager->add(createSROAWrapperInliningPass(args_info.target_function));
       passManager->add(createPrintModulePass("./f8_after_inlining.ll"));
       passManager->add(llvm::createVerifierPass());
+
 
       // Insert -O3 in chain
       {

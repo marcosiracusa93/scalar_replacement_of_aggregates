@@ -718,14 +718,44 @@ public:
 
                          llvm::dbgs() << "            as " << get_val_string(new_gepi) << "\n";
 
-                         for(llvm::Use &gepi_use : user_as_gepi->uses()) {
+                         user_as_gepi->replaceAllUsesWith(new_gepi);
+                         for(llvm::Use &gepi_use : new_gepi->uses()) {
                             unsigned long operand_no = gepi_use.getOperandNo();
                             uses_to_set.erase(&gepi_use);
-                            gepi_use.getUser()->setOperand(operand_no, new_gepi);
-                            uses_to_process.push_back(&gepi_use.getUser()->getOperandUse(operand_no));
+                            uses_to_process.push_back(&gepi_use);
                          }
                          inst_to_remove.insert(user_as_gepi);
                          inserted_gepis.insert(new_gepi);
+                      } else if (llvm::CmpInst *user_as_cmp = llvm::dyn_cast<llvm::CmpInst>(use_to_process->getUser())) {
+                         unsigned int other_idx = (use_to_process->getOperandNo() == 0 ? 1 : 0);
+                         llvm::Use &other_use = user_as_cmp->getOperandUse(other_idx);
+
+                         llvm::Use* use_rec = &other_use;
+                         llvm::Value *offset = llvm::ConstantInt::get(idx_ty, 0);
+                         if (other_use == common_external) {
+
+                         } else {
+                            while (llvm::GetElementPtrInst *use_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_rec->get())) {
+                               llvm::Use &single_idx = *use_as_gepi->idx_begin();
+                               use_rec = &use_as_gepi->getOperandUse(use_as_gepi->getPointerOperandIndex());
+
+                               offset = accumulate_index(offset, single_idx, use_as_gepi, idx_ty);
+
+                               if (use_as_gepi->getPointerOperand() == common_external) {
+                                  continue;
+                               }
+                            }
+                         }
+
+                         llvm::CmpInst *new_cmp = llvm::CmpInst::Create(llvm::CmpInst::ICmp,
+                                                                        user_as_cmp->getPredicate(),
+                                                                        use_as_gepi->getOperand(1),
+                                                                        offset,
+                                                                        user_as_cmp->getName() + ".idx",
+                                                                        user_as_cmp);
+
+                         user_as_cmp->replaceAllUsesWith(new_cmp);
+                         inst_to_remove.insert(user_as_cmp);
                       }
                    } else {
                       llvm::errs() << "ERR: Use should be a gepi\n";
@@ -763,7 +793,7 @@ public:
                    }
                 }
 
-                //assert("All uses replaced" && uses_to_set.empty());
+                assert("All uses replaced" && uses_to_set.empty());
              } else {
                 llvm::dbgs() << "INFO: Cannot canonicalize (no common)" << get_val_string(candidate_phi) << "\n";
              }

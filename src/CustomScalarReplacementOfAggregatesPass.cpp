@@ -70,12 +70,13 @@ STATISTIC(DisaggregatedAllocaBytes, "Disaggregated amount of aggregate bytes by 
 STATISTIC(DisaggregatedGlobalBytes, "Disaggregated amount of aggregate bytes by Global variables");
 STATISTIC(DisaggregatedOperandBytes, "Disaggregated amount of aggregate bytes as function operands");
 
-#define platform CPU
+#define FPGA
 
-#if platform == CPU
-   #include "cpu_callbacks.hpp"
-#elif platform == FPGA
-   #include "fpga_callbacks.hpp"
+#ifdef CPU
+#include "cpu_callbacks.hpp"
+#endif
+#ifdef FPGA
+#include "fpga_callbacks.hpp"
 #endif
 
 enum output_streams {OUTS, ERRS, NULLS};
@@ -4491,8 +4492,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       propagate_constant_arguments(function_worklist);
 
-      assert(!llvm::verifyModule(module, &llvm::errs()));
-
 #ifdef DEBUG_CSROA
       if(CSROAMaxTransformations != -1)
          llvm::dbgs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
@@ -4638,8 +4637,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       cleanup(module, exp_fun_map, function_worklist, inst_to_remove, arguments_expansion_map, globals_expansion_map, allocas_expansion_map);
 
-      assert(!llvm::verifyModule(module, &llvm::errs()));
-
 #ifdef DEBUG_CSROA
       if(CSROAMaxTransformations != -1)
          llvm::dbgs() << "Number of alloca expanded " << recorded_expanded_aggregates.size() << "\n";
@@ -4694,8 +4691,6 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
       std::map<llvm::GlobalVariable*, std::vector<llvm::GlobalVariable*>> exp_globals_map;
       std::map<llvm::Function*, llvm::Function*> exp_fun_map;
       cleanup(module, exp_fun_map, function_worklist, inst_to_remove, exp_args_map, exp_globals_map, exp_allocas_map);
-
-      assert(!llvm::verifyModule(module, &llvm::errs()));
 
 #ifdef DEBUG_CSROA
       if(CSROAMaxTransformations != -1)

@@ -1,29 +1,29 @@
-; ModuleID = 'dfdiv.c'
-source_filename = "dfdiv.c"
-target datalayout = "e-m:o-p:32:32-f64:32:64-f80:128-n8:16:32-S128"
-target triple = "i386-apple-macosx10.13.0"
+; ModuleID = 'dfdiv/dfdiv.c'
+source_filename = "dfdiv/dfdiv.c"
+target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-apple-macosx10.13.0"
 
 %union.anon = type { double }
 
 @float_rounding_mode = global i32 0, align 4
 @float_exception_flags = global i32 0, align 4
-@a_input = constant [22 x i64] [i64 9223090561878065152, i64 9218868437227405312, i64 9218868437227405312, i64 9218868437227405312, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4607182418800017408, i64 0, i64 -9223372036854775808, i64 4613937818241073152, i64 -4609434218613702656, i64 4613937818241073152, i64 -4609434218613702656, i64 4611686018427387904, i64 -4611686018427387904, i64 4611686018427387904, i64 -4611686018427387904, i64 4607182418800017408, i64 -4616189618054758400, i64 4607182418800017408, i64 -4616189618054758400], align 8
-@b_input = constant [22 x i64] [i64 4607182418800017408, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 9221120237041090560, i64 9218868437227405312, i64 0, i64 0, i64 4607182418800017408, i64 4607182418800017408, i64 4611686018427387904, i64 4611686018427387904, i64 -4611686018427387904, i64 -4611686018427387904, i64 4616189618054758400, i64 4616189618054758400, i64 -4607182418800017408, i64 -4607182418800017408, i64 4609434218613702656, i64 4609434218613702656, i64 -4613937818241073152, i64 -4613937818241073152], align 8
-@z_output = constant [22 x i64] [i64 9223090561878065152, i64 9221120237041090560, i64 9223372036854775807, i64 9218868437227405312, i64 9221120237041090560, i64 0, i64 9223372036854775807, i64 9218868437227405312, i64 0, i64 -9223372036854775808, i64 4609434218613702656, i64 -4613937818241073152, i64 -4613937818241073152, i64 4609434218613702656, i64 4602678819172646912, i64 -4620693217682128896, i64 -4620693217682128896, i64 4602678819172646912, i64 4604180019048437077, i64 -4619192017806338731, i64 -4619192017806338731, i64 4604180019048437077], align 8
+@a_input = constant [22 x i64] [i64 9223090561878065152, i64 9218868437227405312, i64 9218868437227405312, i64 9218868437227405312, i64 4607182418800017408, i64 4607182418800017408, i64 0, i64 4607182418800017408, i64 0, i64 -9223372036854775808, i64 4613937818241073152, i64 -4609434218613702656, i64 4613937818241073152, i64 -4609434218613702656, i64 4611686018427387904, i64 -4611686018427387904, i64 4611686018427387904, i64 -4611686018427387904, i64 4607182418800017408, i64 -4616189618054758400, i64 4607182418800017408, i64 -4616189618054758400], align 16
+@b_input = constant [22 x i64] [i64 4607182418800017408, i64 9221120237041090560, i64 9218868437227405312, i64 4607182418800017408, i64 9221120237041090560, i64 9218868437227405312, i64 0, i64 0, i64 4607182418800017408, i64 4607182418800017408, i64 4611686018427387904, i64 4611686018427387904, i64 -4611686018427387904, i64 -4611686018427387904, i64 4616189618054758400, i64 4616189618054758400, i64 -4607182418800017408, i64 -4607182418800017408, i64 4609434218613702656, i64 4609434218613702656, i64 -4613937818241073152, i64 -4613937818241073152], align 16
+@z_output = constant [22 x i64] [i64 9223090561878065152, i64 9221120237041090560, i64 9223372036854775807, i64 9218868437227405312, i64 9221120237041090560, i64 0, i64 9223372036854775807, i64 9218868437227405312, i64 0, i64 -9223372036854775808, i64 4609434218613702656, i64 -4613937818241073152, i64 -4613937818241073152, i64 4609434218613702656, i64 4602678819172646912, i64 -4620693217682128896, i64 -4620693217682128896, i64 4602678819172646912, i64 4604180019048437077, i64 -4619192017806338731, i64 -4619192017806338731, i64 4604180019048437077], align 16
 @.str = private unnamed_addr constant [71 x i8] c"a_input=%016llx b_input=%016llx expected=%016llx output=%016llx (%lf)\0A\00", align 1
 @.str.1 = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
-@countLeadingZeros32.countLeadingZerosHigh = internal constant [256 x i32] [i32 8, i32 7, i32 6, i32 6, i32 5, i32 5, i32 5, i32 5, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0], align 4
+@countLeadingZeros32.countLeadingZerosHigh = internal constant [256 x i32] [i32 8, i32 7, i32 6, i32 6, i32 5, i32 5, i32 5, i32 5, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 4, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 3, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 2, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 1, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0], align 16
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @shift64RightJamming(i64 %a, i32 %count, i64* %zPtr) #0 {
 entry:
   %a.addr = alloca i64, align 8
   %count.addr = alloca i32, align 4
-  %zPtr.addr = alloca i64*, align 4
+  %zPtr.addr = alloca i64*, align 8
   %z = alloca i64, align 8
   store i64 %a, i64* %a.addr, align 8
   store i32 %count, i32* %count.addr, align 4
-  store i64* %zPtr, i64** %zPtr.addr, align 4
+  store i64* %zPtr, i64** %zPtr.addr, align 8
   %0 = load i32, i32* %count.addr, align 4
   %cmp = icmp eq i32 %0, 0
   br i1 %cmp, label %if.then, label %if.else
@@ -69,34 +69,34 @@ if.end:                                           ; preds = %if.else6, %if.then2
 
 if.end10:                                         ; preds = %if.end, %if.then
   %8 = load i64, i64* %z, align 8
-  %9 = load i64*, i64** %zPtr.addr, align 4
-  store i64 %8, i64* %9, align 4
+  %9 = load i64*, i64** %zPtr.addr, align 8
+  store i64 %8, i64* %9, align 8
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @add128(i64 %a0, i64 %a1, i64 %b0, i64 %b1, i64* %z0Ptr, i64* %z1Ptr) #0 {
 entry:
   %a0.addr = alloca i64, align 8
   %a1.addr = alloca i64, align 8
   %b0.addr = alloca i64, align 8
   %b1.addr = alloca i64, align 8
-  %z0Ptr.addr = alloca i64*, align 4
-  %z1Ptr.addr = alloca i64*, align 4
+  %z0Ptr.addr = alloca i64*, align 8
+  %z1Ptr.addr = alloca i64*, align 8
   %z1 = alloca i64, align 8
   store i64 %a0, i64* %a0.addr, align 8
   store i64 %a1, i64* %a1.addr, align 8
   store i64 %b0, i64* %b0.addr, align 8
   store i64 %b1, i64* %b1.addr, align 8
-  store i64* %z0Ptr, i64** %z0Ptr.addr, align 4
-  store i64* %z1Ptr, i64** %z1Ptr.addr, align 4
+  store i64* %z0Ptr, i64** %z0Ptr.addr, align 8
+  store i64* %z1Ptr, i64** %z1Ptr.addr, align 8
   %0 = load i64, i64* %a1.addr, align 8
   %1 = load i64, i64* %b1.addr, align 8
   %add = add i64 %0, %1
   store i64 %add, i64* %z1, align 8
   %2 = load i64, i64* %z1, align 8
-  %3 = load i64*, i64** %z1Ptr.addr, align 4
-  store i64 %2, i64* %3, align 4
+  %3 = load i64*, i64** %z1Ptr.addr, align 8
+  store i64 %2, i64* %3, align 8
   %4 = load i64, i64* %a0.addr, align 8
   %5 = load i64, i64* %b0.addr, align 8
   %add1 = add i64 %4, %5
@@ -106,31 +106,31 @@ entry:
   %conv = zext i1 %cmp to i32
   %conv2 = sext i32 %conv to i64
   %add3 = add i64 %add1, %conv2
-  %8 = load i64*, i64** %z0Ptr.addr, align 4
-  store i64 %add3, i64* %8, align 4
+  %8 = load i64*, i64** %z0Ptr.addr, align 8
+  store i64 %add3, i64* %8, align 8
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @sub128(i64 %a0, i64 %a1, i64 %b0, i64 %b1, i64* %z0Ptr, i64* %z1Ptr) #0 {
 entry:
   %a0.addr = alloca i64, align 8
   %a1.addr = alloca i64, align 8
   %b0.addr = alloca i64, align 8
   %b1.addr = alloca i64, align 8
-  %z0Ptr.addr = alloca i64*, align 4
-  %z1Ptr.addr = alloca i64*, align 4
+  %z0Ptr.addr = alloca i64*, align 8
+  %z1Ptr.addr = alloca i64*, align 8
   store i64 %a0, i64* %a0.addr, align 8
   store i64 %a1, i64* %a1.addr, align 8
   store i64 %b0, i64* %b0.addr, align 8
   store i64 %b1, i64* %b1.addr, align 8
-  store i64* %z0Ptr, i64** %z0Ptr.addr, align 4
-  store i64* %z1Ptr, i64** %z1Ptr.addr, align 4
+  store i64* %z0Ptr, i64** %z0Ptr.addr, align 8
+  store i64* %z1Ptr, i64** %z1Ptr.addr, align 8
   %0 = load i64, i64* %a1.addr, align 8
   %1 = load i64, i64* %b1.addr, align 8
   %sub = sub i64 %0, %1
-  %2 = load i64*, i64** %z1Ptr.addr, align 4
-  store i64 %sub, i64* %2, align 4
+  %2 = load i64*, i64** %z1Ptr.addr, align 8
+  store i64 %sub, i64* %2, align 8
   %3 = load i64, i64* %a0.addr, align 8
   %4 = load i64, i64* %b0.addr, align 8
   %sub1 = sub i64 %3, %4
@@ -140,18 +140,18 @@ entry:
   %conv = zext i1 %cmp to i32
   %conv2 = sext i32 %conv to i64
   %sub3 = sub i64 %sub1, %conv2
-  %7 = load i64*, i64** %z0Ptr.addr, align 4
-  store i64 %sub3, i64* %7, align 4
+  %7 = load i64*, i64** %z0Ptr.addr, align 8
+  store i64 %sub3, i64* %7, align 8
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @mul64To128(i64 %a, i64 %b, i64* %z0Ptr, i64* %z1Ptr) #0 {
 entry:
   %a.addr = alloca i64, align 8
   %b.addr = alloca i64, align 8
-  %z0Ptr.addr = alloca i64*, align 4
-  %z1Ptr.addr = alloca i64*, align 4
+  %z0Ptr.addr = alloca i64*, align 8
+  %z1Ptr.addr = alloca i64*, align 8
   %aHigh = alloca i32, align 4
   %aLow = alloca i32, align 4
   %bHigh = alloca i32, align 4
@@ -162,8 +162,8 @@ entry:
   %z1 = alloca i64, align 8
   store i64 %a, i64* %a.addr, align 8
   store i64 %b, i64* %b.addr, align 8
-  store i64* %z0Ptr, i64** %z0Ptr.addr, align 4
-  store i64* %z1Ptr, i64** %z1Ptr.addr, align 4
+  store i64* %z0Ptr, i64** %z0Ptr.addr, align 8
+  store i64* %z1Ptr, i64** %z1Ptr.addr, align 8
   %0 = load i64, i64* %a.addr, align 8
   %conv = trunc i64 %0 to i32
   store i32 %conv, i32* %aLow, align 4
@@ -234,15 +234,15 @@ entry:
   %add26 = add i64 %23, %conv25
   store i64 %add26, i64* %z0, align 8
   %24 = load i64, i64* %z1, align 8
-  %25 = load i64*, i64** %z1Ptr.addr, align 4
-  store i64 %24, i64* %25, align 4
+  %25 = load i64*, i64** %z1Ptr.addr, align 8
+  store i64 %24, i64* %25, align 8
   %26 = load i64, i64* %z0, align 8
-  %27 = load i64*, i64** %z0Ptr.addr, align 4
-  store i64 %26, i64* %27, align 4
+  %27 = load i64*, i64** %z0Ptr.addr, align 8
+  store i64 %26, i64* %27, align 8
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define void @float_raise(i32 %flags) #0 {
 entry:
   %flags.addr = alloca i32, align 4
@@ -254,7 +254,7 @@ entry:
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @float64_is_nan(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -266,7 +266,7 @@ entry:
   ret i32 %conv
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @float64_is_signaling_nan(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -289,7 +289,7 @@ land.end:                                         ; preds = %land.rhs, %entry
   ret i32 %land.ext
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i64 @extractFloat64Frac(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -299,7 +299,7 @@ entry:
   ret i64 %and
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @extractFloat64Exp(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -311,7 +311,7 @@ entry:
   ret i32 %conv
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @extractFloat64Sign(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -322,7 +322,7 @@ entry:
   ret i32 %conv
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i64 @packFloat64(i32 %zSign, i32 %zExp, i64 %zSig) #0 {
 entry:
   %zSign.addr = alloca i32, align 4
@@ -343,10 +343,10 @@ entry:
   ret i64 %add3
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i64 @float64_div(i64 %a, i64 %b) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %a.addr = alloca i64, align 8
   %b.addr = alloca i64, align 8
   %aSign = alloca i32, align 4
@@ -399,7 +399,7 @@ if.then6:                                         ; preds = %if.then
   %10 = load i64, i64* %a.addr, align 8
   %11 = load i64, i64* %b.addr, align 8
   %call7 = call i64 @propagateFloat64NaN(i64 %10, i64 %11)
-  store i64 %call7, i64* %retval, align 4
+  store i64 %call7, i64* %retval, align 8
   br label %return
 
 if.end:                                           ; preds = %if.then
@@ -416,18 +416,18 @@ if.then11:                                        ; preds = %if.then9
   %14 = load i64, i64* %a.addr, align 8
   %15 = load i64, i64* %b.addr, align 8
   %call12 = call i64 @propagateFloat64NaN(i64 %14, i64 %15)
-  store i64 %call12, i64* %retval, align 4
+  store i64 %call12, i64* %retval, align 8
   br label %return
 
 if.end13:                                         ; preds = %if.then9
   call void @float_raise(i32 16)
-  store i64 9223372036854775807, i64* %retval, align 4
+  store i64 9223372036854775807, i64* %retval, align 8
   br label %return
 
 if.end14:                                         ; preds = %if.end
   %16 = load i32, i32* %zSign, align 4
   %call15 = call i64 @packFloat64(i32 %16, i32 2047, i64 0)
-  store i64 %call15, i64* %retval, align 4
+  store i64 %call15, i64* %retval, align 8
   br label %return
 
 if.end16:                                         ; preds = %entry
@@ -444,13 +444,13 @@ if.then20:                                        ; preds = %if.then18
   %19 = load i64, i64* %a.addr, align 8
   %20 = load i64, i64* %b.addr, align 8
   %call21 = call i64 @propagateFloat64NaN(i64 %19, i64 %20)
-  store i64 %call21, i64* %retval, align 4
+  store i64 %call21, i64* %retval, align 8
   br label %return
 
 if.end22:                                         ; preds = %if.then18
   %21 = load i32, i32* %zSign, align 4
   %call23 = call i64 @packFloat64(i32 %21, i32 0, i64 0)
-  store i64 %call23, i64* %retval, align 4
+  store i64 %call23, i64* %retval, align 8
   br label %return
 
 if.end24:                                         ; preds = %if.end16
@@ -473,14 +473,14 @@ if.then28:                                        ; preds = %if.then26
 
 if.then31:                                        ; preds = %if.then28
   call void @float_raise(i32 16)
-  store i64 9223372036854775807, i64* %retval, align 4
+  store i64 9223372036854775807, i64* %retval, align 8
   br label %return
 
 if.end32:                                         ; preds = %if.then28
   call void @float_raise(i32 2)
   %26 = load i32, i32* %zSign, align 4
   %call33 = call i64 @packFloat64(i32 %26, i32 2047, i64 0)
-  store i64 %call33, i64* %retval, align 4
+  store i64 %call33, i64* %retval, align 8
   br label %return
 
 if.end34:                                         ; preds = %if.then26
@@ -501,7 +501,7 @@ if.then38:                                        ; preds = %if.end35
 if.then41:                                        ; preds = %if.then38
   %30 = load i32, i32* %zSign, align 4
   %call42 = call i64 @packFloat64(i32 %30, i32 0, i64 0)
-  store i64 %call42, i64* %retval, align 4
+  store i64 %call42, i64* %retval, align 8
   br label %return
 
 if.end43:                                         ; preds = %if.then38
@@ -589,15 +589,15 @@ if.end63:                                         ; preds = %while.end, %if.end5
   %57 = load i32, i32* %zExp, align 4
   %58 = load i64, i64* %zSig, align 8
   %call64 = call i64 @roundAndPackFloat64(i32 %56, i32 %57, i64 %58)
-  store i64 %call64, i64* %retval, align 4
+  store i64 %call64, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %if.end63, %if.then41, %if.end32, %if.then31, %if.end22, %if.then20, %if.end14, %if.end13, %if.then11, %if.then6
-  %59 = load i64, i64* %retval, align 4
+  %59 = load i64, i64* %retval, align 8
   ret i64 %59
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @propagateFloat64NaN(i64 %a, i64 %b) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -680,16 +680,16 @@ cond.end15:                                       ; preds = %cond.end13, %cond.t
   ret i64 %cond16
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal void @normalizeFloat64Subnormal(i64 %aSig, i32* %zExpPtr, i64* %zSigPtr) #0 {
 entry:
   %aSig.addr = alloca i64, align 8
-  %zExpPtr.addr = alloca i32*, align 4
-  %zSigPtr.addr = alloca i64*, align 4
+  %zExpPtr.addr = alloca i32*, align 8
+  %zSigPtr.addr = alloca i64*, align 8
   %shiftCount = alloca i32, align 4
   store i64 %aSig, i64* %aSig.addr, align 8
-  store i32* %zExpPtr, i32** %zExpPtr.addr, align 4
-  store i64* %zSigPtr, i64** %zSigPtr.addr, align 4
+  store i32* %zExpPtr, i32** %zExpPtr.addr, align 8
+  store i64* %zSigPtr, i64** %zSigPtr.addr, align 8
   %0 = load i64, i64* %aSig.addr, align 8
   %call = call i32 @countLeadingZeros64(i64 %0)
   %sub = sub nsw i32 %call, 11
@@ -698,19 +698,19 @@ entry:
   %2 = load i32, i32* %shiftCount, align 4
   %sh_prom = zext i32 %2 to i64
   %shl = shl i64 %1, %sh_prom
-  %3 = load i64*, i64** %zSigPtr.addr, align 4
-  store i64 %shl, i64* %3, align 4
+  %3 = load i64*, i64** %zSigPtr.addr, align 8
+  store i64 %shl, i64* %3, align 8
   %4 = load i32, i32* %shiftCount, align 4
   %sub1 = sub nsw i32 1, %4
-  %5 = load i32*, i32** %zExpPtr.addr, align 4
+  %5 = load i32*, i32** %zExpPtr.addr, align 8
   store i32 %sub1, i32* %5, align 4
   ret void
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @estimateDiv128To64(i64 %a0, i64 %a1, i64 %b) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %a0.addr = alloca i64, align 8
   %a1.addr = alloca i64, align 8
   %b.addr = alloca i64, align 8
@@ -730,7 +730,7 @@ entry:
   br i1 %cmp, label %if.then, label %if.end
 
 if.then:                                          ; preds = %entry
-  store i64 -1, i64* %retval, align 4
+  store i64 -1, i64* %retval, align 8
   br label %return
 
 if.end:                                           ; preds = %entry
@@ -813,18 +813,18 @@ cond.end12:                                       ; preds = %cond.false10, %cond
   %or14 = or i64 %26, %cond13
   store i64 %or14, i64* %z, align 8
   %27 = load i64, i64* %z, align 8
-  store i64 %27, i64* %retval, align 4
+  store i64 %27, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %cond.end12, %if.then
-  %28 = load i64, i64* %retval, align 4
+  %28 = load i64, i64* %retval, align 8
   ret i64 %28
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i64 @roundAndPackFloat64(i32 %zSign, i32 %zExp, i64 %zSig) #0 {
 entry:
-  %retval = alloca i64, align 4
+  %retval = alloca i64, align 8
   %zSign.addr = alloca i32, align 4
   %zExp.addr = alloca i32, align 4
   %zSig.addr = alloca i64, align 8
@@ -930,7 +930,7 @@ if.then30:                                        ; preds = %land.lhs.true, %if.
   %conv32 = zext i1 %cmp31 to i32
   %conv33 = sext i32 %conv32 to i64
   %sub = sub i64 %call, %conv33
-  store i64 %sub, i64* %retval, align 4
+  store i64 %sub, i64* %retval, align 8
   br label %return
 
 if.end34:                                         ; preds = %land.lhs.true, %lor.lhs.false
@@ -1010,29 +1010,29 @@ if.end61:                                         ; preds = %if.then60, %if.end5
   %30 = load i32, i32* %zExp.addr, align 4
   %31 = load i64, i64* %zSig.addr, align 8
   %call62 = call i64 @packFloat64(i32 %29, i32 %30, i64 %31)
-  store i64 %call62, i64* %retval, align 4
+  store i64 %call62, i64* %retval, align 8
   br label %return
 
 return:                                           ; preds = %if.end61, %if.then30
-  %32 = load i64, i64* %retval, align 4
+  %32 = load i64, i64* %retval, align 8
   ret i64 %32
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define double @ullong_to_double(i64 %x) #0 {
 entry:
   %x.addr = alloca i64, align 8
-  %t = alloca %union.anon, align 4
+  %t = alloca %union.anon, align 8
   store i64 %x, i64* %x.addr, align 8
   %0 = load i64, i64* %x.addr, align 8
   %ll = bitcast %union.anon* %t to i64*
-  store i64 %0, i64* %ll, align 4
+  store i64 %0, i64* %ll, align 8
   %d = bitcast %union.anon* %t to double*
-  %1 = load double, double* %d, align 4
+  %1 = load double, double* %d, align 8
   ret double %1
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define i32 @main() #0 {
 entry:
   %retval = alloca i32, align 4
@@ -1053,12 +1053,14 @@ for.cond:                                         ; preds = %for.inc, %entry
 
 for.body:                                         ; preds = %for.cond
   %1 = load i32, i32* %i, align 4
-  %arrayidx = getelementptr inbounds [22 x i64], [22 x i64]* @a_input, i32 0, i32 %1
+  %idxprom = sext i32 %1 to i64
+  %arrayidx = getelementptr inbounds [22 x i64], [22 x i64]* @a_input, i64 0, i64 %idxprom
   %2 = load i64, i64* %arrayidx, align 8
   store i64 %2, i64* %x1, align 8
   %3 = load i32, i32* %i, align 4
-  %arrayidx1 = getelementptr inbounds [22 x i64], [22 x i64]* @b_input, i32 0, i32 %3
-  %4 = load i64, i64* %arrayidx1, align 8
+  %idxprom1 = sext i32 %3 to i64
+  %arrayidx2 = getelementptr inbounds [22 x i64], [22 x i64]* @b_input, i64 0, i64 %idxprom1
+  %4 = load i64, i64* %arrayidx2, align 8
   store i64 %4, i64* %x2, align 8
   %5 = load i64, i64* %x1, align 8
   %6 = load i64, i64* %x2, align 8
@@ -1066,26 +1068,30 @@ for.body:                                         ; preds = %for.cond
   store i64 %call, i64* %result, align 8
   %7 = load i64, i64* %result, align 8
   %8 = load i32, i32* %i, align 4
-  %arrayidx2 = getelementptr inbounds [22 x i64], [22 x i64]* @z_output, i32 0, i32 %8
-  %9 = load i64, i64* %arrayidx2, align 8
-  %cmp3 = icmp ne i64 %7, %9
-  %conv = zext i1 %cmp3 to i32
+  %idxprom3 = sext i32 %8 to i64
+  %arrayidx4 = getelementptr inbounds [22 x i64], [22 x i64]* @z_output, i64 0, i64 %idxprom3
+  %9 = load i64, i64* %arrayidx4, align 8
+  %cmp5 = icmp ne i64 %7, %9
+  %conv = zext i1 %cmp5 to i32
   %10 = load i32, i32* %main_result, align 4
   %add = add nsw i32 %10, %conv
   store i32 %add, i32* %main_result, align 4
   %11 = load i32, i32* %i, align 4
-  %arrayidx4 = getelementptr inbounds [22 x i64], [22 x i64]* @a_input, i32 0, i32 %11
-  %12 = load i64, i64* %arrayidx4, align 8
+  %idxprom6 = sext i32 %11 to i64
+  %arrayidx7 = getelementptr inbounds [22 x i64], [22 x i64]* @a_input, i64 0, i64 %idxprom6
+  %12 = load i64, i64* %arrayidx7, align 8
   %13 = load i32, i32* %i, align 4
-  %arrayidx5 = getelementptr inbounds [22 x i64], [22 x i64]* @b_input, i32 0, i32 %13
-  %14 = load i64, i64* %arrayidx5, align 8
+  %idxprom8 = sext i32 %13 to i64
+  %arrayidx9 = getelementptr inbounds [22 x i64], [22 x i64]* @b_input, i64 0, i64 %idxprom8
+  %14 = load i64, i64* %arrayidx9, align 8
   %15 = load i32, i32* %i, align 4
-  %arrayidx6 = getelementptr inbounds [22 x i64], [22 x i64]* @z_output, i32 0, i32 %15
-  %16 = load i64, i64* %arrayidx6, align 8
+  %idxprom10 = sext i32 %15 to i64
+  %arrayidx11 = getelementptr inbounds [22 x i64], [22 x i64]* @z_output, i64 0, i64 %idxprom10
+  %16 = load i64, i64* %arrayidx11, align 8
   %17 = load i64, i64* %result, align 8
   %18 = load i64, i64* %result, align 8
-  %call7 = call double @ullong_to_double(i64 %18)
-  %call8 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([71 x i8], [71 x i8]* @.str, i32 0, i32 0), i64 %12, i64 %14, i64 %16, i64 %17, double %call7)
+  %call12 = call double @ullong_to_double(i64 %18)
+  %call13 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([71 x i8], [71 x i8]* @.str, i32 0, i32 0), i64 %12, i64 %14, i64 %16, i64 %17, double %call12)
   br label %for.inc
 
 for.inc:                                          ; preds = %for.body
@@ -1096,14 +1102,14 @@ for.inc:                                          ; preds = %for.body
 
 for.end:                                          ; preds = %for.cond
   %20 = load i32, i32* %main_result, align 4
-  %call9 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), i32 %20)
+  %call14 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), i32 %20)
   %21 = load i32, i32* %main_result, align 4
   ret i32 %21
 }
 
 declare i32 @printf(i8*, ...) #1
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i32 @countLeadingZeros64(i64 %a) #0 {
 entry:
   %a.addr = alloca i64, align 8
@@ -1137,7 +1143,7 @@ if.end:                                           ; preds = %if.else, %if.then
   ret i32 %5
 }
 
-; Function Attrs: noinline nounwind ssp
+; Function Attrs: noinline nounwind ssp uwtable
 define internal i32 @countLeadingZeros32(i32 %a) #0 {
 entry:
   %a.addr = alloca i32, align 4
@@ -1174,7 +1180,8 @@ if.then2:                                         ; preds = %if.end
 if.end5:                                          ; preds = %if.then2, %if.end
   %6 = load i32, i32* %a.addr, align 4
   %shr = lshr i32 %6, 24
-  %arrayidx = getelementptr inbounds [256 x i32], [256 x i32]* @countLeadingZeros32.countLeadingZerosHigh, i32 0, i32 %shr
+  %idxprom = zext i32 %shr to i64
+  %arrayidx = getelementptr inbounds [256 x i32], [256 x i32]* @countLeadingZeros32.countLeadingZerosHigh, i64 0, i64 %idxprom
   %7 = load i32, i32* %arrayidx, align 4
   %8 = load i32, i32* %shiftCount, align 4
   %add6 = add nsw i32 %8, %7
@@ -1183,7 +1190,7 @@ if.end5:                                          ; preds = %if.then2, %if.end
   ret i32 %9
 }
 
-attributes #0 = { noinline nounwind ssp "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
+attributes #0 = { noinline nounwind ssp uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="true" "no-frame-pointer-elim-non-leaf" "no-infs-fp-math"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="penryn" "target-features"="+cx16,+fxsr,+mmx,+sse,+sse2,+sse3,+sse4.1,+ssse3,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 
 !llvm.module.flags = !{!0}

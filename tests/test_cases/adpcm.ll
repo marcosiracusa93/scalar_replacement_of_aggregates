@@ -1,5 +1,5 @@
-; ModuleID = 'adpcm.c'
-source_filename = "adpcm.c"
+; ModuleID = 'adpcm/adpcm.c'
+source_filename = "adpcm/adpcm.c"
 target datalayout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-apple-macosx10.13.0"
 
@@ -98,7 +98,7 @@ target triple = "x86_64-apple-macosx10.13.0"
 @test_result = constant [100 x i32] [i32 0, i32 -1, i32 -1, i32 0, i32 0, i32 -1, i32 0, i32 0, i32 -1, i32 -1, i32 0, i32 0, i32 1, i32 1, i32 0, i32 -2, i32 -1, i32 -2, i32 0, i32 -4, i32 1, i32 1, i32 1, i32 -5, i32 2, i32 2, i32 3, i32 11, i32 20, i32 20, i32 22, i32 24, i32 32, i32 33, i32 38, i32 39, i32 46, i32 47, i32 51, i32 50, i32 53, i32 51, i32 54, i32 52, i32 55, i32 52, i32 55, i32 53, i32 56, i32 54, i32 57, i32 56, i32 59, i32 58, i32 63, i32 63, i32 64, i32 58, i32 61, i32 62, i32 65, i32 60, i32 62, i32 63, i32 66, i32 62, i32 59, i32 55, i32 59, i32 62, i32 65, i32 59, i32 59, i32 58, i32 59, i32 54, i32 57, i32 59, i32 63, i32 60, i32 59, i32 55, i32 59, i32 61, i32 65, i32 61, i32 62, i32 60, i32 62, i32 59, i32 58, i32 55, i32 59, i32 62, i32 65, i32 60, i32 59, i32 57, i32 58, i32 54], align 16
 @compressed = common global [100 x i32] zeroinitializer, align 16
 @result = common global [100 x i32] zeroinitializer, align 16
-@.str = private unnamed_addr constant [12 x i8] c"Result: %d\0A\00", align 1
+@.str = private unnamed_addr constant [4 x i8] c"%d\0A\00", align 1
 
 ; Function Attrs: noinline nounwind readnone ssp uwtable
 define i32 @abs(i32 %n) #0 {
@@ -1694,7 +1694,7 @@ for.inc15:                                        ; preds = %if.end14
 
 for.end17:                                        ; preds = %for.cond4
   %14 = load i32, i32* %main_result, align 4
-  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([12 x i8], [12 x i8]* @.str, i32 0, i32 0), i32 %14)
+  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i32 0, i32 0), i32 %14)
   %15 = load i32, i32* %main_result, align 4
   ret i32 %15
 }
