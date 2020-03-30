@@ -1399,7 +1399,7 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
       bool inst_limit = inst_count <= 32;
 
       llvm::MDNode *loopID = nullptr;
-      if (false and cost_threshold and trip_count_limit and inst_limit) { // TODO REMOVE FALSE
+      if (cost_threshold and trip_count_limit and inst_limit) {
          loopID = llvm::MDNode::get(function.getContext(), llvm::MDString::get(function.getContext(), "llvm.loop.unroll.full"));
          llvm::dbgs() << "INFO: Force unroll of loop " << loop->getName() << " in function " << function.getName() << "(TripCount: " << trip_count << ", CostValue: " << cost_value << ", InstCount: " << inst_count << ")\n";
       } else {
@@ -1557,8 +1557,8 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
       }
       case SROA_ptrIteratorSimplification: {
          // Check CHStone adpcm for examples
-         llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
-         result = false;//ptr_iterator_simplification(function, LI); // TODO REMOVE
+         //llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
+         result = false;//ptr_iterator_simplification(function, LI);
          break;
       }
       case SROA_chunkOperationsLowering:
