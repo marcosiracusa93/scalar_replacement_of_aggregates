@@ -203,6 +203,8 @@ Expandability compute_function_versioning_cost(llvm::Function *function)
       }
    }
 
+   area_cost = 0;
+
    return Expandability(true, area_cost, latency_cost);
 }
 
