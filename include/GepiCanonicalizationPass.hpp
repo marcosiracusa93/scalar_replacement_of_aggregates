@@ -52,7 +52,8 @@ enum SROA_optimizations
    SROA_bitcastVectorRemoval,
    SROA_removeLifetime,
    SROA_selectLowering,
-   SROA_canonicalIdxs
+   SROA_canonicalIdxs,
+   SROA_removeMeta
 };
 
 
@@ -64,7 +65,8 @@ static const char* optimization_names[] = {"LCSSA cleanup",
                                            "Bitcast vector removal",
                                            "Remove lifetime intrinsic",
                                            "Select lowering",
-                                           "Canonical indexes"};
+                                           "Canonical indexes",
+                                           "Remove metadata"};
 
 class GepiCanonicalizationPass : public llvm::FunctionPass
 {
@@ -109,6 +111,8 @@ GepiCanonicalizationPass* createRemoveIntrinsicPass();
 
 GepiCanonicalizationPass* createSelectLoweringPass();
 
-GepiCanonicalizationPass* createGepiCanonicalIdxs();
+GepiCanonicalizationPass* createGepiCanonicalIdxsPass();
+
+GepiCanonicalizationPass* createRemoveMetaPass();
 
 #endif // SCALAR_REPLACEMENT_OF_AGGREGATES_GEPICANONICALIZATIONPASS_HPP

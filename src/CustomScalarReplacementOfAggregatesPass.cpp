@@ -70,7 +70,7 @@ STATISTIC(DisaggregatedAllocaBytes, "Disaggregated amount of aggregate bytes by 
 STATISTIC(DisaggregatedGlobalBytes, "Disaggregated amount of aggregate bytes by Global variables");
 STATISTIC(DisaggregatedOperandBytes, "Disaggregated amount of aggregate bytes as function operands");
 
-#define FPGA
+#define CPU
 
 #ifdef CPU
 #include "cpu_callbacks.hpp"

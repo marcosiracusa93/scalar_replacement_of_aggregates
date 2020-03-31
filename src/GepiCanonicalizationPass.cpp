@@ -1254,31 +1254,32 @@ bool select_lowering(llvm::Function& function)
                         for (auto idx = gepi->idx_begin(); idx < gepi->idx_end(); ++idx) {
                            gepi_idxs.push_back(idx->get());
                         }
-                        llvm::GetElementPtrInst *true_gepi = llvm::GetElementPtrInst::CreateInBounds(nullptr,
-                                                                                             select_inst->getTrueValue(),
-                                                                                             gepi_idxs,
-                                                                                             gepi->getName().str() +
-                                                                                             ".true",
-                                                                                             select_inst);
-                        llvm::GetElementPtrInst *false_gepi = llvm::GetElementPtrInst::CreateInBounds(nullptr,
-                                                                                              select_inst->getFalseValue(),
-                                                                                              gepi_idxs,
-                                                                                              gepi->getName().str() +
-                                                                                              ".false",
-                                                                                              select_inst);
 
                         if (llvm::LoadInst *load_inst = llvm::dyn_cast<llvm::LoadInst>(gepi->use_begin()->getUser())) {
+                           llvm::GetElementPtrInst *true_gepi = llvm::GetElementPtrInst::CreateInBounds(nullptr,
+                                                                                                        select_inst->getTrueValue(),
+                                                                                                        gepi_idxs,
+                                                                                                        gepi->getName().str() +
+                                                                                                        ".true",
+                                                                                                        gepi);
+                           llvm::GetElementPtrInst *false_gepi = llvm::GetElementPtrInst::CreateInBounds(nullptr,
+                                                                                                         select_inst->getFalseValue(),
+                                                                                                         gepi_idxs,
+                                                                                                         gepi->getName().str() +
+                                                                                                         ".false",
+                                                                                                         gepi);
+
                            llvm::LoadInst *true_load = new llvm::LoadInst(true_gepi,
                                                                          load_inst->getName().str() + ".lowered.true",
-                                                                         select_inst);
+                                                                         gepi);
                            llvm::LoadInst *false_load = new llvm::LoadInst(false_gepi,
                                                                           load_inst->getName().str() + ".lowered.false",
-                                                                          select_inst);
+                                                                          gepi);
                            llvm::SelectInst *new_select_inst = llvm::SelectInst::Create(select_inst->getCondition(),
                                                                                         true_load, false_load,
                                                                                         select_inst->getName().str() +
                                                                                         ".lowered",
-                                                                                        select_inst);
+                                                                                        gepi);
 
                            load_inst->replaceAllUsesWith(new_select_inst);
 
@@ -1458,6 +1459,17 @@ bool code_simplification(llvm::Function &function, llvm::LoopInfo &LI, llvm::Sca
    return inlined_count > 0;
 }
 
+bool remove_meta(llvm::Function &function) {
+
+   for (llvm::BasicBlock &bb : function) {
+      llvm::TerminatorInst *terminator = bb.getTerminator();
+
+      terminator->setMetadata("llvm.loop", nullptr);
+   }
+
+   return false;
+}
+
 bool gepi_explicitation(llvm::Function &function) {
    std::vector<llvm::Use*> ops_to_explicit;
    for (llvm::BasicBlock &bb : function) {
@@ -1576,6 +1588,9 @@ bool GepiCanonicalizationPass::runOnFunction(llvm::Function& function)
       case SROA_canonicalIdxs:
          result = canonical_idxs(function);
          break;
+      case SROA_removeMeta:
+         result = remove_meta(function);
+         break;
       default:
          llvm::errs() << "ERR: No optimization found\n";
          exit(-1);
@@ -1623,7 +1638,12 @@ GepiCanonicalizationPass* createSelectLoweringPass()
    return new GepiCanonicalizationPass(SROA_selectLowering);
 }
 
-GepiCanonicalizationPass* createGepiCanonicalIdxs()
+GepiCanonicalizationPass* createGepiCanonicalIdxsPass()
 {
    return new GepiCanonicalizationPass(SROA_canonicalIdxs);
+}
+
+GepiCanonicalizationPass* createRemoveMetaPass()
+{
+   return new GepiCanonicalizationPass(SROA_removeMeta);
 }
