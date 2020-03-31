@@ -55,7 +55,7 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
              }
           } else if (llvm::PHINode *user_as_phi = llvm::dyn_cast<llvm::PHINode>(use_rec->getUser())) {
 
-             /// Go through the uses and check if some external
+             /// Go through the Operands and check if some external
              for (llvm::Use &phi_operand : user_as_phi->operands()) {
                 if (llvm::Instruction *operand_as_inst = llvm::dyn_cast<llvm::Instruction>(phi_operand.get())) {
                    if (blocks.count(operand_as_inst->getParent()) == 0) {
@@ -82,6 +82,27 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
                    get_reachables_and_externals(&phi_use, blocks, reachables, externals);
                 }
              }
+          } else if (llvm::CmpInst *user_as_cmp = llvm::dyn_cast<llvm::CmpInst>(use_rec->getUser())) {
+
+             /// Go through the Operands and check if some external
+             for (llvm::Use &phi_operand : user_as_cmp->operands()) {
+                if (llvm::Instruction *operand_as_inst = llvm::dyn_cast<llvm::Instruction>(phi_operand.get())) {
+                   if (blocks.count(operand_as_inst->getParent()) == 0) {
+                      externals.insert(&phi_operand);
+                   }
+
+                   if (!llvm::isa<llvm::PHINode>(operand_as_inst) and !llvm::isa<llvm::GEPOperator>(operand_as_inst)) {
+                      return false;
+                   }
+
+                } else {
+                   externals.insert(&phi_operand);
+
+                   if (!llvm::isa<llvm::Argument>(phi_operand.get()) and !llvm::isa<llvm::GlobalValue>(phi_operand.get()) and !llvm::isa<llvm::PHINode>(phi_operand.get())) {
+                      return false;
+                   }
+                }
+             }
           } else {
              /// Don't care, it's gonna be relpaced by the transformation
           }
@@ -90,18 +111,19 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
        return true;
     }
 
-    llvm::Value *accumulate_index(llvm::Value *lhs_idx, llvm::Value *rhs_idx, llvm::Instruction *insert_point, llvm::Type *idx_ty) {
+    llvm::Value *operate_on_index(llvm::BinaryOperator::BinaryOps bin_op, llvm::Value *lhs_idx, llvm::Value *rhs_idx, llvm::Instruction *insert_point,
+                                  llvm::Type *idx_ty) {
 
        if (llvm::ConstantInt *constant_lhs = llvm::dyn_cast<llvm::ConstantInt>(lhs_idx)) {
           if (llvm::ConstantInt *constant_rhs = llvm::dyn_cast<llvm::ConstantInt>(rhs_idx)) {
              unsigned long value = constant_lhs->getSExtValue() + constant_rhs->getSExtValue();
-             return llvm::ConstantInt::get(idx_ty, 0);
+             return llvm::ConstantInt::get(idx_ty, value);
           } else {
              if (constant_lhs->getSExtValue() == 0) {
                 return rhs_idx;
              } else {
                 llvm::BinaryOperator *add_op = llvm::BinaryOperator::Create(
-                        llvm::BinaryOperator::BinaryOps::Add,
+                        bin_op,
                         lhs_idx,
                         rhs_idx,
                         "offset",
@@ -115,7 +137,7 @@ class PtrIteratorSimplifyPass : public llvm::LoopPass {
                 return lhs_idx;
              } else {
                 llvm::BinaryOperator *add_op = llvm::BinaryOperator::Create(
-                        llvm::BinaryOperator::BinaryOps::Add,
+                        bin_op,
                         lhs_idx,
                         rhs_idx,
                         "offset",
@@ -200,7 +222,10 @@ public:
                          erase_set.insert(val);
                       }
                    }
-                   intersection.erase(erase_set.begin(), erase_set.end());
+
+                   for (llvm::Value *val : erase_set) {
+                      intersection.erase(val);
+                   }
 
                    /// Add the base pointer to the set if value is a gepi
                    if (llvm::GetElementPtrInst *gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr_addr_set_pair.first)) {
@@ -241,10 +266,14 @@ public:
 
                    llvm::Use* use_rec = external_use;
                    while (llvm::GetElementPtrInst *use_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_rec->get())) {
+                      if (use_as_gepi == common_external) {
+                         break;
+                      }
+
                       llvm::Use &single_idx = *use_as_gepi->idx_begin();
                       use_rec = &use_as_gepi->getOperandUse(use_as_gepi->getPointerOperandIndex());
 
-                      external_offset_ref = accumulate_index(external_offset_ref, single_idx, use_as_gepi, idx_ty);
+                      external_offset_ref = operate_on_index(llvm::BinaryOperator::BinaryOps::Add, external_offset_ref, single_idx, use_as_gepi, idx_ty);
                    }
                 }
 
@@ -306,6 +335,9 @@ public:
                                                                                                  phi_iter->getName().str() +
                                                                                                  ".firstgepi",
                                                                                                  &*phi_iter->getParent()->getFirstInsertionPt());
+
+                   llvm::dbgs() << "      Assigning first gepi " << get_val_string(first_gepi) << " to phi " << get_val_string(phi_index) << "\n";
+
                    phi_iter->replaceAllUsesWith(first_gepi);
                    for (llvm::Use &gepi_use : first_gepi->uses()) {
                       uses_to_process.push_back(&gepi_use);
@@ -329,7 +361,8 @@ public:
                          }
                          uses_to_set.erase(use_to_process);
                       } else if (llvm::GetElementPtrInst *user_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_to_process->getUser())) {
-                         llvm::Value *new_idx = accumulate_index(use_as_gepi->getOperand(1),
+                         llvm::Value *new_idx = operate_on_index(llvm::BinaryOperator::BinaryOps::Add,
+                                                                 use_as_gepi->getOperand(1),
                                                                  user_as_gepi->getOperand(1),
                                                                  user_as_gepi,
                                                                  idx_ty);
@@ -363,15 +396,14 @@ public:
 
                          } else {
                             while (llvm::GetElementPtrInst *use_as_gepi = llvm::dyn_cast<llvm::GetElementPtrInst>(use_rec->get())) {
+                               if (use_as_gepi == common_external) {
+                                  break;
+                               }
                                llvm::Use &single_idx = *use_as_gepi->idx_begin();
                                use_rec = &use_as_gepi->getOperandUse(use_as_gepi->getPointerOperandIndex());
-
-                               offset = accumulate_index(offset, single_idx, use_as_gepi, idx_ty);
-
-                               if (use_as_gepi->getPointerOperand() == common_external) {
-                                  continue;
-                               }
+                               offset = operate_on_index(llvm::BinaryOperator::BinaryOps::Add, offset, single_idx, use_as_gepi, idx_ty);
                             }
+
                          }
 
                          llvm::CmpInst *new_cmp = llvm::CmpInst::Create(llvm::CmpInst::ICmp,
@@ -380,6 +412,8 @@ public:
                                                                         offset,
                                                                         user_as_cmp->getName() + ".idx",
                                                                         user_as_cmp);
+
+                         llvm::dbgs() << "            as " << get_val_string(new_cmp) << "\n";
 
                          user_as_cmp->replaceAllUsesWith(new_cmp);
                          inst_to_remove.insert(user_as_cmp);
