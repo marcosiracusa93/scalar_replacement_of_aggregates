@@ -128,7 +128,7 @@ int main(int argc, char** argv)
       passManager->add(createGepiCanonicalIdxsPass());
       passManager->add(llvm::createExpandMemOpsPass());
       passManager->add(createPtrIteratorSimplifyPass());
-      passManager->add(createCleanLCSSA());
+      //passManager->add(createCleanLCSSA());
       passManager->add(createChunkOperationsLoweringPass());
       passManager->add(createBitcastVectorRemovalPass());
       passManager->add(createSelectLoweringPass());

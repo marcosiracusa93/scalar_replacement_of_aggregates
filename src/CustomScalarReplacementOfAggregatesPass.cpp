@@ -1971,8 +1971,8 @@ void propagate_constant_arguments(const std::set<llvm::Function*>& function_work
                }
                else
                {
-                  llvm::errs() << "ERR: use not call\n";
-                  exit(-1);
+                  can_propagate = false;
+                  break;
                }
             }
 
@@ -4240,6 +4240,7 @@ void cleanup(llvm::Module& module,
 
    std::vector<llvm::GlobalVariable *> globals_to_del;
 
+   std::set<llvm::LoadInst*> loads_to_del;
    for(llvm::GlobalVariable& g_var : module.globals())
    {
       if(!g_var.getType()->getPointerElementType()->isAggregateType())
@@ -4269,10 +4270,10 @@ void cleanup(llvm::Module& module,
             {
                for(auto& u : g_var.uses())
                {
-                  if(llvm::LoadInst* load_isnt = llvm::dyn_cast<llvm::LoadInst>(u.getUser()))
+                  if(llvm::LoadInst* load_inst = llvm::dyn_cast<llvm::LoadInst>(u.getUser()))
                   {
-                     load_isnt->replaceAllUsesWith(g_var.getInitializer());
-                     load_isnt->eraseFromParent();
+                     load_inst->replaceAllUsesWith(g_var.getInitializer());
+                     loads_to_del.insert(load_inst);
                   }
                   else
                   {
@@ -4288,6 +4289,10 @@ void cleanup(llvm::Module& module,
       {
          globals_to_del.push_back(&g_var);
       }
+   }
+
+   for (llvm::LoadInst *load_inst : loads_to_del) {
+      load_inst->eraseFromParent();
    }
 
    for(llvm::GlobalVariable *g_var : globals_to_del) {
