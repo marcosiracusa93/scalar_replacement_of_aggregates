@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
    time_taken = (time_taken + (end.tv_usec - start.tv_usec)) * 1e-6;
    time_taken /= (double) iters;
 
-   printf("Time: %f\n", time_taken);
+   printf("Time: %.5e\n", time_taken);
    printf("Result: %d\n", main_result);
    return main_result;
 }

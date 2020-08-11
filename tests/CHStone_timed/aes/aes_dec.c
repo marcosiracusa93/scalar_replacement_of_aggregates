@@ -128,6 +128,7 @@ decrypt (int statemt[32], int key[32], int type)
 	printf ("0");
       printf ("%x", statemt[i]);
     }
+  printf("\n");
 
   for (i = 0; i < 16; i++)
     main_result += (statemt[i] != out_dec_statemt[i]);

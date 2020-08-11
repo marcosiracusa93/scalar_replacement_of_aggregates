@@ -3537,7 +3537,7 @@ void process_arg_pointer(llvm::Use* ptr_u,
          }
          else
          {
-            idx_chain.erase(idx_chain.begin());
+            //idx_chain.erase(idx_chain.begin());
 
             if(idx_chain.empty())
             {
@@ -3603,11 +3603,15 @@ void process_arg_pointer(llvm::Use* ptr_u,
                }
                else
                {
+                  exp_idx_chain.pop_back();
+
                   llvm::ConstantInt* c_idx = llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(bitwidth, (unsigned long long)exp_arg_u_idx));
                   exp_idx_chain.push_back(std::make_pair(exp_arg_u->getType()->getPointerElementType(), c_idx));
 
                   std::string gepi_name = base_address->getName().str() + ".gepi";
                   std::vector<llvm::Value*> gepi_idxs;
+
+                  gepi_idxs.push_back(llvm::ConstantInt::get(base_address->getContext(), llvm::APInt(32, (unsigned long long)0)));
 
                   for(const std::pair<llvm::Type*, llvm::Value*>& idx : exp_idx_chain)
                   {
@@ -3759,7 +3763,7 @@ void cleanup(llvm::Module& module,
    // Map specifying the expanded arguments for each function
    // std::map<llvm::Function*, std::set<unsigned long long>> exp_idx_args_map;
 
-   for(auto& i : inst_to_remove)
+   for(llvm::Instruction* i : inst_to_remove)
    {
       i->replaceAllUsesWith(llvm::UndefValue::get(i->getType()));
       i->eraseFromParent();
@@ -4447,6 +4451,34 @@ llvm::Function* get_top_function(llvm::Module& module, std::string top_name)
 
 bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 {
+/*
+   for (llvm::Function &function : module) {
+      std::map<llvm::BasicBlock*, unsigned long> bb_occurrences;
+      llvm::ScalarEvolution &SE = getAnalysis<llvm::ScalarEvolutionWrapperPass>(function).getSE();
+      llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>(function).getLoopInfo();
+
+      for (llvm::BasicBlock &bb : function) {
+         bb_occurrences[&bb] = 1;
+      }
+
+      std::vector<llvm::Loop*> loops;
+      for (llvm::Loop *loop : LI) {
+         loops.push_back(loop);
+      }
+      for (unsigned long long idx = 0; idx < loops.size(); ++idx) {
+         llvm::Loop *loop = loops.at(idx);
+         unsigned long long trip_count = SE.getSmallConstantTripCount(loop);
+
+         for (llvm::BasicBlock *bb : loop->blocks()) {
+            bb_occurrences[bb] *= trip_count;
+         }
+
+         for (llvm::Loop *subloop : loop->getSubLoops()) {
+            loops.push_back(subloop);
+         }
+      }
+   }
+*/
    llvm::Function* kernel_function = get_top_function(module, kernel_name);
 #ifdef DEBUG_CSROA
    recorded_expanded_aggregates.clear();
@@ -4462,6 +4494,7 @@ bool CustomScalarReplacementOfAggregatesPass::runOnModule(llvm::Module& module)
 
       exit(-1);
    }
+
    if(sroa_phase == SROA_functionVersioning)
    {
       llvm::dbgs() << "\n ***********************************************";

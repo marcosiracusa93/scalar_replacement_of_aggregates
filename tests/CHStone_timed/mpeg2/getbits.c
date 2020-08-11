@@ -53,147 +53,133 @@
 
 /* initialize buffer, call once before first getbits or showbits */
 int
-read (unsigned char *s1, const unsigned char *s2, int n)
-{
-  unsigned char *p1;
-  const unsigned char *p2;
-  int n_tmp;
-  
-p1 = s1;
-  p2 = s2;
-  n_tmp = n;
-  
-while (n_tmp-- > 0)
-    {
+read(unsigned char *s1, const unsigned char *s2, int n) {
+   unsigned char *p1;
+   const unsigned char *p2;
+   int n_tmp;
+
+   p1 = s1;
+   p2 = s2;
+   n_tmp = n;
+
+   while (n_tmp-- > 0) {
       *p1 = *p2;
-      
-p1++;
-      
-p2++;
-    
-}
-  
-return n;
+
+      p1++;
+
+      p2++;
+
+   }
+
+   return n;
 }
 
 void
-Fill_Buffer ()
-{
-  int Buffer_Level;
-  unsigned char *p;
-  p = ld_Rdbfr;
+Fill_Buffer() {
+   int Buffer_Level;
+   unsigned char *p;
+   p = ld_Rdbfr;
 
 
-  Buffer_Level = read (ld_Rdbfr, inRdbfr, 2048);
-  ld_Rdptr = ld_Rdbfr;
+   Buffer_Level = read(ld_Rdbfr, inRdbfr, 2048);
+   ld_Rdptr = ld_Rdbfr;
 
-  if (System_Stream_Flag)
-    ld_Rdmax -= 2048;
+   if (System_Stream_Flag)
+      ld_Rdmax -= 2048;
 
 
-  /* end of the bitstream file */
-  if (Buffer_Level < 2048)
-    {
+   /* end of the bitstream file */
+   if (Buffer_Level < 2048) {
       /* just to be safe */
       if (Buffer_Level < 0)
-	Buffer_Level = 0;
+         Buffer_Level = 0;
 
       /* pad until the next to the next 32-bit word boundary */
       while (Buffer_Level & 3)
-	ld_Rdbfr[Buffer_Level++] = 0;
+         ld_Rdbfr[Buffer_Level++] = 0;
 
       /* pad the buffer with sequence end codes */
-      while (Buffer_Level < 2048)
-	{
-	  ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE >> 24;
-	  ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE >> 16;
-	  ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE >> 8;
-	  ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE & 0xff;
-	}
-    }
+      while (Buffer_Level < 2048) {
+         ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE >> 24;
+         ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE >> 16;
+         ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE >> 8;
+         ld_Rdbfr[Buffer_Level++] = SEQUENCE_END_CODE & 0xff;
+      }
+   }
 }
 
 unsigned int
-Show_Bits (N)
-     int N;
+Show_Bits(N)
+        int N;
 {
-  return ld_Bfr >> (unsigned)(32-N)%32;
+   return ld_Bfr >> (unsigned) (32 - N) % 32;
 }
 
 
 /* return next bit (could be made faster than Get_Bits(1)) */
 
 unsigned int
-Get_Bits1 ()
-{
-  return Get_Bits (1);
+Get_Bits1() {
+   return Get_Bits(1);
 }
 
 
 /* advance by n bits */
 
 void
-Flush_Buffer (N)
-     int N;
+Flush_Buffer(N)
+        int N;
 {
-  int Incnt;
+   int Incnt;
 
-#ifdef RAND_VAL 
-	/* N is between 0 and 20 with realistic input sets, while it may become larger than the width of the integer type when using randomly generated input sets which are used in the contained input set. The following is to avoid this.  */
-	ld_Bfr <<= (N%20);
+#ifdef RAND_VAL
+   /* N is between 0 and 20 with realistic input sets, while it may become larger than the width of the integer type when using randomly generated input sets which are used in the contained input set. The following is to avoid this.  */
+   ld_Bfr <<= (N%20);
 #else
-  ld_Bfr <<= N;
+   ld_Bfr <<= N;
 #endif
-	
-  Incnt = ld_Incnt -= N;
 
-  if (Incnt <= 24)
-    {
-      if (ld_Rdptr < ld_Rdbfr + 2044)
-	{
-	  do
-	    {
-#ifdef RAND_VAL 
-	/* N is between 0 and 20 with realistic input sets, while it may become larger than the width of the integer type when using randomly generated input sets which are used in the contained input set. The following is to avoid this.  */
-	    	ld_Bfr |= *ld_Rdptr++ << ((24 - Incnt)%20);
+   Incnt = ld_Incnt -= N;
+
+   if (Incnt <= 24) {
+      if (ld_Rdptr < ld_Rdbfr + 2044) {
+         do {
+#ifdef RAND_VAL
+            /* N is between 0 and 20 with realistic input sets, while it may become larger than the width of the integer type when using randomly generated input sets which are used in the contained input set. The following is to avoid this.  */
+                   ld_Bfr |= *ld_Rdptr++ << ((24 - Incnt)%20);
 #else
-	    	ld_Bfr |= *ld_Rdptr++ << (24 - Incnt);
+            ld_Bfr |= *ld_Rdptr++ << (24 - Incnt);
 #endif
-	    	Incnt += 8;
-	    }
-	  while (Incnt <= 24);
-	}
-      else
-	{
-	  do
-	    {
-	      if (ld_Rdptr >= ld_Rdbfr + 2048)
-		Fill_Buffer ();
-#ifdef RAND_VAL 
-	/* N is between 0 and 20 with realistic input sets, while it may become larger than the width of the integer type when using randomly generated input sets which are used in the contained input set. The following is to avoid this.  */
-	      ld_Bfr |= *ld_Rdptr++ << ((24 - Incnt)%20);
+            Incnt += 8;
+         } while (Incnt <= 24);
+      } else {
+         do {
+            if (ld_Rdptr >= ld_Rdbfr + 2048)
+               Fill_Buffer();
+#ifdef RAND_VAL
+            /* N is between 0 and 20 with realistic input sets, while it may become larger than the width of the integer type when using randomly generated input sets which are used in the contained input set. The following is to avoid this.  */
+                  ld_Bfr |= *ld_Rdptr++ << ((24 - Incnt)%20);
 #else
-	      ld_Bfr |= *ld_Rdptr++ << (24 - Incnt);
+            ld_Bfr |= *ld_Rdptr++ << (24 - Incnt);
 #endif
-	      Incnt += 8;
-	    }
-	  while (Incnt <= 24);
-	}
+            Incnt += 8;
+         } while (Incnt <= 24);
+      }
       ld_Incnt = Incnt;
-    }
+   }
 }
 
 
 /* return next n bits (right adjusted) */
 
 unsigned int
-Get_Bits (N)
-     int N;
+Get_Bits(N)
+        int N;
 {
-  unsigned int Val;
+   unsigned int Val;
 
-  Val = Show_Bits (N);
-  Flush_Buffer (N);
+   Val = Show_Bits(N);
+   Flush_Buffer(N);
 
-  return Val;
+   return Val;
 }

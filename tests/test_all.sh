@@ -20,13 +20,14 @@ for filename in *.ll; do
 
     cd ../tests/"$test_folder"
 
-    cp ../../bin/f0_first.ll ../bins/first_"$filename"
-    cp ../../bin/f9_final.ll ../bins/final_"$filename"
-    echo COMPILING DOWN
-    clang -O3 ../bins/first_"$filename" -o ../bins/first_"$filename".out
-    clang -O3 ../bins/final_"$filename" -o ../bins/final_"$filename".out
-
-    echo RUNNING TEST
-    ../bins/first_"$filename".out 100000 | grep -- 'Time:\|Result:'
-    ../bins/final_"$filename".out 100000 | grep -- 'Time:\|Result:'
+    for ir_filename in ../../bin/*.ll; do
+        f="$(basename -- $ir_filename)"
+        echo TESTING "$f"
+        sleep 1
+        #clang -O3 ../../bin/"$f" -o ../bins/"$f".out
+        /usr/local/llvm-4.0.0/bin/clang ../../bin/"$f" -o ../bins/"$f".out
+        sleep 1
+        #../bins/"$f".out 1000000 | grep -- 'Time:\|Result:'
+        ../bins/"$f".out 1 | grep -- 'Time:\|Result:'
+    done
 done

@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
 
   clock_t t_end = clock();
   double time_taken = ((double)t_end - (double)t_begin)/CLOCKS_PER_SEC;
-  printf("\nTime: %f\n", time_taken);
+  printf("\nTime: %.5e\n", time_taken);
   printf("\nResult: %d\n", main_result);
   return main_result;
 }
